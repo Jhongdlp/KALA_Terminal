@@ -396,19 +396,35 @@ class DistroService {
   }
 
   /// Everything flutter_pty needs to spawn an interactive shell inside [d].
-  static Future<ProotLaunch> launch(Distro d, {String shell = '/bin/sh'}) async {
+  ///
+  /// When [shell] is null the best available interactive shell is picked: bash
+  /// if the rootfs ships it, otherwise `/bin/sh`. This matters for Tab
+  /// completion — Ubuntu/Debian's `/bin/sh` is dash, which has no line editing
+  /// or completion at all, whereas their `/bin/bash` does; Alpine has no bash
+  /// but its BusyBox `/bin/sh` (ash) already completes.
+  static Future<ProotLaunch> launch(Distro d, {String? shell}) async {
     final rootfs = await rootfsDir(d);
+    final resolvedShell = shell ?? _bestShell(rootfs);
     return ProotLaunch(
       executable: await _prootPath(),
       arguments: [
         ..._prootBaseArgs(d, rootfs, await sharedDir()),
         '/usr/bin/env', '-i', ..._guestEnv,
         'PS1=\\w \\\$ ',
-        shell, '-l', // login shell: sources /etc/profile (welcome banner)
+        resolvedShell, '-l', // login shell: sources /etc/profile (welcome banner)
       ],
       environment: await _prootEnv(),
       workingDirectory: rootfs,
     );
+  }
+
+  /// Pick the interactive shell with the best line-editing/completion support
+  /// available in [rootfs]: prefer bash, then fall back to `/bin/sh`.
+  static String _bestShell(String rootfs) {
+    for (final candidate in const ['/bin/bash', '/usr/bin/bash']) {
+      if (File('$rootfs$candidate').existsSync()) return candidate;
+    }
+    return '/bin/sh';
   }
 
   // Base proot args shared by the interactive shell and one-off commands:

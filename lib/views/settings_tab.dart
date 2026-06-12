@@ -16,7 +16,8 @@ class SettingsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     // Only the theme and font size affect this screen; select them so it isn't
     // rebuilt by unrelated notifications.
-    final themeMode = context.select<AppState, ThemeMode>((s) => s.themeMode);
+    final themeChoice =
+        context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
     final terminalFontSize =
         context.select<AppState, double>((s) => s.terminalFontSize);
     final state = context.read<AppState>();
@@ -43,8 +44,8 @@ class SettingsTab extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 child: _ThemeSelector(
-                  value: themeMode,
-                  onChanged: state.setThemeMode,
+                  value: themeChoice,
+                  onChanged: state.setThemeChoice,
                 ),
               ),
             ],
@@ -133,19 +134,20 @@ class SettingsTab extends StatelessWidget {
   }
 }
 
-/// Three-way segmented control: Sistema / Claro / Oscuro.
+/// Four-way segmented control: Sistema / Claro / Oscuro / OLED.
 class _ThemeSelector extends StatelessWidget {
-  final ThemeMode value;
-  final ValueChanged<ThemeMode> onChanged;
+  final AppThemeChoice value;
+  final ValueChanged<AppThemeChoice> onChanged;
 
   const _ThemeSelector({required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
-    const options = <(ThemeMode, String, IconData)>[
-      (ThemeMode.system, 'SISTEMA', Icons.brightness_auto_outlined),
-      (ThemeMode.light, 'CLARO', Icons.light_mode_outlined),
-      (ThemeMode.dark, 'OSCURO', Icons.dark_mode_outlined),
+    const options = <(AppThemeChoice, String, IconData)>[
+      (AppThemeChoice.system, 'SISTEMA', Icons.brightness_auto_outlined),
+      (AppThemeChoice.light, 'CLARO', Icons.light_mode_outlined),
+      (AppThemeChoice.dark, 'OSCURO', Icons.dark_mode_outlined),
+      (AppThemeChoice.oled, 'OLED', Icons.contrast_outlined),
     ];
 
     return Container(

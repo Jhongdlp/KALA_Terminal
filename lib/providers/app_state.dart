@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import '../models/connection_profile.dart';
+import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/distro_service.dart';
 import '../services/secure_store.dart';
@@ -174,18 +175,29 @@ class AppState extends ChangeNotifier {
   // ---- Settings State ------------------------------------------------------
   // Persisted user preferences. Keep every configurable option here so the
   // settings screen has a single source of truth.
+  // Persisted as the enum index. Old builds stored a ThemeMode index here
+  // (system=0/light=1/dark=2); those line up 1:1 with the first three
+  // AppThemeChoice values, so existing preferences migrate transparently.
   static const String _kThemeMode = 'settings_theme_mode';
   static const String _kTerminalFontSize = 'settings_terminal_font_size';
+  static const String _kEditorFontSize = 'settings_editor_font_size';
   static const String _kActiveDistro = 'active_distro';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
 
-  ThemeMode _themeMode = ThemeMode.system;
-  ThemeMode get themeMode => _themeMode;
+  static const double minEditorFontSize = 8;
+  static const double maxEditorFontSize = 30;
+
+  AppThemeChoice _themeChoice = AppThemeChoice.system;
+  AppThemeChoice get themeChoice => _themeChoice;
 
   double _terminalFontSize = 13;
   double get terminalFontSize => _terminalFontSize;
+
+  // Code editor font size, adjusted by the +/- buttons in the editor header.
+  double _editorFontSize = 13;
+  double get editorFontSize => _editorFontSize;
 
   // ---- Linux distro selector ----------------------------------------------
   // The local Android terminal runs inside a proot'd Linux userland. Alpine is
@@ -241,14 +253,20 @@ class AppState extends ChangeNotifier {
     final modeIndex = prefs.getInt(_kThemeMode);
     if (modeIndex != null &&
         modeIndex >= 0 &&
-        modeIndex < ThemeMode.values.length) {
-      _themeMode = ThemeMode.values[modeIndex];
+        modeIndex < AppThemeChoice.values.length) {
+      _themeChoice = AppThemeChoice.values[modeIndex];
     }
 
     final fontSize = prefs.getDouble(_kTerminalFontSize);
     if (fontSize != null) {
       _terminalFontSize =
           fontSize.clamp(minTerminalFontSize, maxTerminalFontSize);
+    }
+
+    final editorFontSize = prefs.getDouble(_kEditorFontSize);
+    if (editorFontSize != null) {
+      _editorFontSize =
+          editorFontSize.clamp(minEditorFontSize, maxEditorFontSize);
     }
 
     final mdScale = prefs.getDouble(_kMarkdownScale);
@@ -273,12 +291,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    if (_themeMode == mode) return;
-    _themeMode = mode;
+  Future<void> setThemeChoice(AppThemeChoice choice) async {
+    if (_themeChoice == choice) return;
+    _themeChoice = choice;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_kThemeMode, mode.index);
+    await prefs.setInt(_kThemeMode, choice.index);
   }
 
   Future<void> setTerminalFontSize(double size) async {
@@ -292,6 +310,18 @@ class AppState extends ChangeNotifier {
 
   void bumpTerminalFontSize(double delta) =>
       setTerminalFontSize(_terminalFontSize + delta);
+
+  Future<void> setEditorFontSize(double size) async {
+    final clamped = size.clamp(minEditorFontSize, maxEditorFontSize);
+    if (clamped == _editorFontSize) return;
+    _editorFontSize = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kEditorFontSize, clamped);
+  }
+
+  void bumpEditorFontSize(double delta) =>
+      setEditorFontSize(_editorFontSize + delta);
 
   // ---- Distro actions ------------------------------------------------------
 

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:re_editor/re_editor.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../theme/code_highlight.dart';
 import '../widgets/swiss.dart';
 import 'markdown_view.dart';
 import 'pdf_view.dart';
@@ -52,9 +53,11 @@ class _EditorTabState extends State<EditorTab> {
         context.select<AppState, bool>((s) => s.isMarkdownPreview);
     final isViewingPdf =
         context.select<AppState, bool>((s) => s.isViewingPdf);
+    final editorFontSize =
+        context.select<AppState, double>((s) => s.editorFontSize);
     // AppColors is a global, mutable palette swapped on theme change; depend on
-    // themeMode so this isolated tab rebuilds and re-reads the new colors.
-    context.select<AppState, ThemeMode>((s) => s.themeMode);
+    // themeChoice so this isolated tab rebuilds and re-reads the new colors.
+    context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
 
     if (editingFilePath == null) {
       return Container(
@@ -134,6 +137,20 @@ class _EditorTabState extends State<EditorTab> {
                   ),
                   const SizedBox(width: 6),
                 ],
+                // Editor font-size controls.
+                _ZoomButton(
+                  icon: Icons.remove,
+                  onPressed: editorFontSize > AppState.minEditorFontSize
+                      ? () => context.read<AppState>().bumpEditorFontSize(-1)
+                      : null,
+                ),
+                _ZoomButton(
+                  icon: Icons.add,
+                  onPressed: editorFontSize < AppState.maxEditorFontSize
+                      ? () => context.read<AppState>().bumpEditorFontSize(1)
+                      : null,
+                ),
+                const SizedBox(width: 8),
                 InvertedButton(
                   label: 'Guardar',
                   icon: Icons.save_outlined,
@@ -151,18 +168,52 @@ class _EditorTabState extends State<EditorTab> {
           Expanded(
             child: CodeEditor(
               controller: _controller!,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              wordWrap: false,
+              // Hairline divider between the line-number gutter and the code.
+              sperator: Container(width: 1, color: AppColors.hairline),
               style: CodeEditorStyle(
-                fontSize: 13,
+                fontSize: editorFontSize,
+                fontHeight: 1.45,
                 fontFamily: AppText.cascadiaFamily,
                 fontFamilyFallback: const ['monospace'],
                 textColor: AppColors.bone,
                 backgroundColor: AppColors.ink,
                 cursorColor: AppColors.bone,
-                selectionColor: AppColors.hairline,
-                cursorLineColor: AppColors.panel,
+                selectionColor: AppColors.bone.withValues(alpha: 0.18),
+                cursorLineColor: AppColors.panelHi,
                 chunkIndicatorColor: AppColors.muted,
-                codeTheme: CodeHighlightTheme(languages: {}, theme: {}),
+                // Syntax highlighting tuned to the open file's type; null for
+                // unknown types falls back to the flat textColor above.
+                codeTheme: CodeHighlight.themeFor(filename),
               ),
+              // Line-number gutter + code-folding indicator, themed to match.
+              indicatorBuilder:
+                  (context, editingController, chunkController, notifier) {
+                final numberStyle = TextStyle(
+                  fontSize: editorFontSize,
+                  height: 1.45,
+                  fontFamily: AppText.cascadiaFamily,
+                  fontFamilyFallback: const ['monospace'],
+                  color: AppColors.faint,
+                );
+                return Row(
+                  children: [
+                    DefaultCodeLineNumber(
+                      controller: editingController,
+                      notifier: notifier,
+                      textStyle: numberStyle,
+                      focusedTextStyle:
+                          numberStyle.copyWith(color: AppColors.bone),
+                    ),
+                    DefaultCodeChunkIndicator(
+                      width: 18,
+                      controller: chunkController,
+                      notifier: notifier,
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],

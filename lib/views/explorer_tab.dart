@@ -18,8 +18,8 @@ class ExplorerTab extends StatelessWidget {
     final files = context
         .select<AppState, List<FileSystemEntityInfo>>((s) => s.files);
     // AppColors is a global, mutable palette swapped on theme change; depend on
-    // themeMode so this isolated tab rebuilds and re-reads the new colors.
-    context.select<AppState, ThemeMode>((s) => s.themeMode);
+    // themeChoice so this isolated tab rebuilds and re-reads the new colors.
+    context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
 
     return Container(
       color: AppColors.ink,

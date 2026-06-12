@@ -27,10 +27,10 @@ class HomeView extends StatelessWidget {
     final activeTabIndex = context.select<AppState, int>((s) => s.activeTabIndex);
     final isFileDirty = context.select<AppState, bool>((s) => s.isFileDirty);
     // AppColors is a global, mutable palette swapped on theme change (see
-    // app_theme.dart). Depend on themeMode so this subtree rebuilds and re-reads
-    // the new colors; without it an isolated tab keeps the old theme's colors
-    // until something else happens to rebuild it.
-    context.select<AppState, ThemeMode>((s) => s.themeMode);
+    // app_theme.dart). Depend on themeChoice so this subtree rebuilds and
+    // re-reads the new colors; without it an isolated tab keeps the old theme's
+    // colors until something else happens to rebuild it.
+    context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
 
     const tabs = [
       ConnectionsTab(),

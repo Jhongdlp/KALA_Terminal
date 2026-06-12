@@ -44,26 +44,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // Watch only the theme mode, not the whole AppState. Otherwise every
+    // Watch only the theme choice, not the whole AppState. Otherwise every
     // notifyListeners() (file loads, editor edits, session changes…) would
     // rebuild MaterialApp and reallocate ThemeData for the entire app.
-    final themeMode = context.select<AppState, ThemeMode>((s) => s.themeMode);
-
-    final brightness = switch (themeMode) {
-      ThemeMode.light => Brightness.light,
-      ThemeMode.dark => Brightness.dark,
-      ThemeMode.system =>
-        WidgetsBinding.instance.platformDispatcher.platformBrightness,
-    };
+    final themeChoice =
+        context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
 
     // Keep the static palette in sync with the active theme before the tree
     // builds, since widgets read AppColors.* directly.
-    AppColors.apply(brightness);
+    AppColors.apply(themeChoice, platformBrightness);
 
     return MaterialApp(
       title: 'KALA',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.themeFor(brightness),
+      theme: AppTheme.themeFor(themeChoice, platformBrightness),
       home: const HomeView(),
     );
   }

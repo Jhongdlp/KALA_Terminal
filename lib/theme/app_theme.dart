@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:xterm/xterm.dart';
 
-/// One full set of chrome colors. The app ships two: the original monochrome
-/// "DARKROOM" dark palette and an inverted "PAPER" light palette.
+/// User-selectable chrome theme. `system` tracks the OS light/dark setting; the
+/// rest pin a specific palette. `oled` is a true-black variant of the dark
+/// theme tuned for OLED panels (pure #000000 surfaces leave pixels unlit).
+enum AppThemeChoice { system, light, dark, oled }
+
+/// One full set of chrome colors. The app ships three: the original monochrome
+/// "DARKROOM" dark palette, an inverted "PAPER" light palette, and a true-black
+/// "OLED" variant of the dark theme.
 class _Palette {
   final Color ink;
   final Color panel;
@@ -58,6 +64,19 @@ class AppColors {
     faint: Color(0xFFA9A294), // faint icons / dividers
   );
 
+  /// True-black "OLED" palette. Keeps DARKROOM's ink/bone contrast but pushes
+  /// every surface to pure black so OLED pixels switch fully off; panels are
+  /// delineated by the hairline borders rather than by elevation.
+  static const _Palette _oled = _Palette(
+    ink: Color(0xFF000000), // pure black background
+    panel: Color(0xFF000000), // panel surface — also pure black
+    panelHi: Color(0xFF101010), // barely-elevated row within a panel
+    hairline: Color(0xFF262626), // 1px borders carry the structure here
+    bone: Color(0xFFECE7DD), // primary text / element (hueso)
+    muted: Color(0xFF7A766E), // secondary text, metadata, inactive
+    faint: Color(0xFF4A4742), // faint icons / dividers
+  );
+
   static Color ink = _dark.ink;
   static Color panel = _dark.panel;
   static Color panelHi = _dark.panelHi;
@@ -72,11 +91,43 @@ class AppColors {
 
   static Brightness brightness = Brightness.dark;
 
-  /// Swap the active chrome palette. Call before building the [MaterialApp] so
-  /// that the static color references resolve to the chosen theme.
-  static void apply(Brightness b) {
-    brightness = b;
-    final p = b == Brightness.light ? _light : _dark;
+  /// Whether the active palette is the true-black OLED variant. The terminal
+  /// theme reads this to pick a pure-black background while keeping the dark
+  /// [Brightness] shared with DARKROOM.
+  static bool oledActive = false;
+
+  /// The [Brightness] that pairs with [choice]; only [AppThemeChoice.system]
+  /// consults the OS [platformBrightness]. OLED is a dark theme.
+  static Brightness brightnessFor(
+      AppThemeChoice choice, Brightness platformBrightness) {
+    switch (choice) {
+      case AppThemeChoice.light:
+        return Brightness.light;
+      case AppThemeChoice.dark:
+      case AppThemeChoice.oled:
+        return Brightness.dark;
+      case AppThemeChoice.system:
+        return platformBrightness;
+    }
+  }
+
+  /// Swap the active chrome palette for [choice]. [platformBrightness] resolves
+  /// the `system` option. Call before building the [MaterialApp] so the static
+  /// color references resolve to the chosen theme.
+  static void apply(AppThemeChoice choice, Brightness platformBrightness) {
+    oledActive = choice == AppThemeChoice.oled;
+    final _Palette p;
+    switch (choice) {
+      case AppThemeChoice.light:
+        p = _light;
+      case AppThemeChoice.dark:
+        p = _dark;
+      case AppThemeChoice.oled:
+        p = _oled;
+      case AppThemeChoice.system:
+        p = platformBrightness == Brightness.light ? _light : _dark;
+    }
+    brightness = brightnessFor(choice, platformBrightness);
     ink = p.ink;
     panel = p.panel;
     panelHi = p.panelHi;
@@ -165,8 +216,13 @@ class AppText {
 class AppTerminalTheme {
   AppTerminalTheme._();
 
-  static TerminalTheme forBrightness(Brightness b) =>
-      b == Brightness.light ? paper : warp;
+  /// Picks the terminal palette that pairs with the active chrome: PAPER on a
+  /// light theme, the true-black [oled] variant when the OLED palette is
+  /// active, otherwise the standard [warp] dark theme.
+  static TerminalTheme forBrightness(Brightness b) {
+    if (b == Brightness.light) return paper;
+    return AppColors.oledActive ? oled : warp;
+  }
 
   /// Dark terminal (Tokyo Night / Warp-like). Colors are literal so this stays
   /// a compile-time constant independent of the chrome palette.
@@ -194,6 +250,34 @@ class AppTerminalTheme {
     searchHitBackground: Color(0xFFE0AF68),
     searchHitBackgroundCurrent: Color(0xFFECE7DD),
     searchHitForeground: Color(0xFF0A0A0A),
+  );
+
+  /// True-black terminal for the OLED chrome: identical to [warp] but with a
+  /// pure #000000 background so the terminal blends into the unlit panel.
+  static const TerminalTheme oled = TerminalTheme(
+    cursor: Color(0xFFECE7DD),
+    selection: Color(0x33ECE7DD),
+    foreground: Color(0xFFECE7DD),
+    background: Color(0xFF000000),
+    black: Color(0xFF000000),
+    red: Color(0xFFF7768E),
+    green: Color(0xFF9ECE6A),
+    yellow: Color(0xFFE0AF68),
+    blue: Color(0xFF7AA2F7),
+    magenta: Color(0xFFBB9AF7),
+    cyan: Color(0xFF7DCFFF),
+    white: Color(0xFFA9B1D6),
+    brightBlack: Color(0xFF565F89),
+    brightRed: Color(0xFFFF8B9C),
+    brightGreen: Color(0xFFB9F27C),
+    brightYellow: Color(0xFFF2C26B),
+    brightBlue: Color(0xFF9CB8FF),
+    brightMagenta: Color(0xFFD2B8FF),
+    brightCyan: Color(0xFFA2E3FF),
+    brightWhite: Color(0xFFECE7DD),
+    searchHitBackground: Color(0xFFE0AF68),
+    searchHitBackgroundCurrent: Color(0xFFECE7DD),
+    searchHitForeground: Color(0xFF000000),
   );
 
   /// Light terminal (paper background, ink text, darkened ANSI palette tuned
@@ -228,11 +312,13 @@ class AppTerminalTheme {
 class AppTheme {
   AppTheme._();
 
-  /// Builds the Material [ThemeData] for [brightness]. Also calls
-  /// [AppColors.apply] so the static palette and the returned theme stay in
-  /// sync no matter the call order.
-  static ThemeData themeFor(Brightness brightness) {
-    AppColors.apply(brightness);
+  /// Builds the Material [ThemeData] for [choice]. [platformBrightness]
+  /// resolves the `system` option. Also calls [AppColors.apply] so the static
+  /// palette and the returned theme stay in sync no matter the call order.
+  static ThemeData themeFor(
+      AppThemeChoice choice, Brightness platformBrightness) {
+    AppColors.apply(choice, platformBrightness);
+    final brightness = AppColors.brightness;
     const radius = BorderRadius.zero; // Swiss precision: sharp corners
     return ThemeData(
       brightness: brightness,
@@ -300,5 +386,6 @@ class AppTheme {
   }
 
   /// Backwards-compatible dark theme accessor.
-  static ThemeData get dark => themeFor(Brightness.dark);
+  static ThemeData get dark =>
+      themeFor(AppThemeChoice.dark, Brightness.dark);
 }
