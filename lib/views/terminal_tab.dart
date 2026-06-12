@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/command_bar.dart';
 import '../widgets/swiss.dart';
+import '../widgets/terminal_selection.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -21,6 +22,12 @@ class _TerminalTabState extends State<TerminalTab> {
   // toolbar button can read it. Shared across sessions; the selection is
   // cleared whenever the active terminal changes (see [_syncTerminalObserver]).
   final TerminalController _terminalController = TerminalController();
+
+  // Give the selection overlay access to the terminal's render object (for
+  // cell↔pixel mapping) and its scroll position (for auto-scroll on drag).
+  final GlobalKey<TerminalViewState> _terminalViewKey =
+      GlobalKey<TerminalViewState>();
+  final ScrollController _terminalScrollController = ScrollController();
 
   bool _showKeys = true;
   bool _showCmdBar = true;
@@ -40,6 +47,7 @@ class _TerminalTabState extends State<TerminalTab> {
     _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
     _terminalController.dispose();
+    _terminalScrollController.dispose();
     super.dispose();
   }
 
@@ -105,21 +113,34 @@ class _TerminalTabState extends State<TerminalTab> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () => _terminalFocusNode.requestFocus(),
-                    child: TerminalView(
-                      state.terminal,
+                    child: TerminalSelectionArea(
+                      terminal: state.terminal,
                       controller: _terminalController,
-                      focusNode: _terminalFocusNode,
-                      autofocus: true,
-                      theme: AppTerminalTheme.forBrightness(
-                          Theme.of(context).brightness),
-                      cursorType: TerminalCursorType.block,
-                      backgroundOpacity: 1,
-                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                      textStyle: TerminalStyle(
-                        fontSize: state.terminalFontSize,
-                        height: 1.3,
-                        fontFamily: AppText.cascadiaFamily,
-                        fontFamilyFallback: const ['monospace'],
+                      terminalViewKey: _terminalViewKey,
+                      scrollController: _terminalScrollController,
+                      onSendInput: (text) {
+                        state.sendTerminalInput(text);
+                        _terminalFocusNode.requestFocus();
+                      },
+                      onToast: _toast,
+                      child: TerminalView(
+                        state.terminal,
+                        key: _terminalViewKey,
+                        controller: _terminalController,
+                        scrollController: _terminalScrollController,
+                        focusNode: _terminalFocusNode,
+                        autofocus: true,
+                        theme: AppTerminalTheme.forBrightness(
+                            Theme.of(context).brightness),
+                        cursorType: TerminalCursorType.block,
+                        backgroundOpacity: 1,
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                        textStyle: TerminalStyle(
+                          fontSize: state.terminalFontSize,
+                          height: 1.3,
+                          fontFamily: AppText.cascadiaFamily,
+                          fontFamilyFallback: const ['monospace'],
+                        ),
                       ),
                     ),
                   ),
