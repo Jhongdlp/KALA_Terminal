@@ -1,0 +1,16 @@
+{
+  // The Microsoft C/C++ extension is needed for the native Linux runner
+  // (linux/*.cc). Stop it from indexing Flutter's generated folders, which
+  // contain non-C files like ".dart_tool/version" (just the SDK version
+  // string) that trigger bogus "expected a declaration" diagnostics.
+  "C_Cpp.files.exclude": {
+    "**/.dart_tool/**": true,
+    "**/build/**": true,
+    "**/.idea/**": true
+  },
+  // Don't let any language tooling treat extension-less generated files as C/C++.
+  "files.watcherExclude": {
+    "**/.dart_tool/**": true,
+    "**/build/**": true
+  }
+}

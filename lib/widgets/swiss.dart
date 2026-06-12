@@ -1,0 +1,312 @@
+import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
+
+/// 1px hairline divider.
+class Hairline extends StatelessWidget {
+  final double indent;
+  final double endIndent;
+  const Hairline({super.key, this.indent = 0, this.endIndent = 0});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: 1,
+        margin: EdgeInsets.only(left: indent, right: endIndent),
+        color: AppColors.hairline,
+      );
+}
+
+/// Giant uppercase Anton wordmark for a screen, with a small mono eyebrow.
+class ScreenHeader extends StatelessWidget {
+  final String title;
+  final String? eyebrow;
+  final Widget? trailing;
+  const ScreenHeader(this.title, {super.key, this.eyebrow, this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (eyebrow != null) ...[
+                  Text(eyebrow!.toUpperCase(),
+                      style: AppText.mono(9,
+                          color: AppColors.muted, spacing: 2)),
+                  const SizedBox(height: 6),
+                ],
+                Text(
+                  title.toUpperCase(),
+                  style: AppText.display(46),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+        ],
+      ),
+    );
+  }
+}
+
+/// A bordered "panel" (Photoshop-layers container) with a mono title bar.
+class SwissPanel extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
+  final List<Widget> children;
+  final EdgeInsetsGeometry margin;
+
+  const SwissPanel({
+    super.key,
+    required this.title,
+    required this.children,
+    this.trailing,
+    this.margin = const EdgeInsets.symmetric(horizontal: 16),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: margin,
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        border: Border.all(color: AppColors.hairline, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Title bar
+          Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: AppColors.hairline, width: 1),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(title.toUpperCase(),
+                      style: AppText.label(9,
+                          color: AppColors.muted, spacing: 1.6)),
+                ),
+                ?trailing,
+              ],
+            ),
+          ),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+/// A "layer" row: leading glyph, title, mono meta, optional trailing.
+/// When [active] the row inverts to a bone block with ink text.
+class LayerRow extends StatelessWidget {
+  final Widget glyph;
+  final String title;
+  final String? meta;
+  final Widget? trailing;
+  final bool active;
+  final VoidCallback? onTap;
+  final VoidCallback? onTrailingTap;
+
+  const LayerRow({
+    super.key,
+    required this.glyph,
+    required this.title,
+    this.meta,
+    this.trailing,
+    this.active = false,
+    this.onTap,
+    this.onTrailingTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = active ? AppColors.ink : AppColors.bone;
+    final metaFg = active ? AppColors.ink : AppColors.muted;
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        color: active ? AppColors.bone : Colors.transparent,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            IconTheme(
+              data: IconThemeData(color: fg, size: 16),
+              child: glyph,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: AppText.body(13, color: fg, weight: FontWeight.w700),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  if (meta != null) ...[
+                    const SizedBox(height: 3),
+                    Text(meta!,
+                        style: AppText.mono(10, color: metaFg, spacing: 0.2),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ],
+              ),
+            ),
+            if (trailing != null) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: onTrailingTap,
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: IconTheme(
+                    data: IconThemeData(
+                        color: active ? AppColors.ink : AppColors.muted,
+                        size: 16),
+                    child: trailing!,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Primary action: inverted bone block with ink label (the BOUNCE button).
+class InvertedButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+  final bool dense;
+  final bool expand;
+
+  const InvertedButton({
+    super.key,
+    required this.label,
+    this.onPressed,
+    this.icon,
+    this.dense = false,
+    this.expand = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    final bg = enabled ? AppColors.bone : AppColors.hairline;
+    final fg = enabled ? AppColors.ink : AppColors.muted;
+    final child = Material(
+      color: bg,
+      child: InkWell(
+        onTap: onPressed,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+              horizontal: dense ? 10 : 16, vertical: dense ? 7 : 12),
+          child: Row(
+            mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: dense ? 13 : 15, color: fg),
+                const SizedBox(width: 7),
+              ],
+              Text(label.toUpperCase(),
+                  style: AppText.label(dense ? 9 : 10,
+                      color: fg, weight: FontWeight.w800, spacing: 1.0)),
+            ],
+          ),
+        ),
+      ),
+    );
+    return expand ? SizedBox(width: double.infinity, child: child) : child;
+  }
+}
+
+/// Secondary action: hairline outline, bone label. [danger] thickens emphasis.
+class GhostButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+  final bool dense;
+  final bool danger;
+
+  const GhostButton({
+    super.key,
+    required this.label,
+    this.onPressed,
+    this.icon,
+    this.dense = false,
+    this.danger = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = danger ? AppColors.danger : AppColors.bone;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+                color: danger ? AppColors.danger : AppColors.hairline, width: 1),
+          ),
+          padding: EdgeInsets.symmetric(
+              horizontal: dense ? 10 : 16, vertical: dense ? 7 : 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: dense ? 13 : 15, color: fg),
+                const SizedBox(width: 7),
+              ],
+              Text(label.toUpperCase(),
+                  style: AppText.label(dense ? 9 : 10,
+                      color: fg, weight: FontWeight.w800, spacing: 1.0)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tiny mono uppercase tag (LOCAL / REMOTO (SFTP) / CARPETA / size).
+class MonoTag extends StatelessWidget {
+  final String text;
+  final bool bordered;
+  // Nullable so it can default to the (mutable, theme-dependent) AppColors.muted
+  // resolved at build time — a non-const default value isn't allowed here.
+  final Color? color;
+  const MonoTag(this.text,
+      {super.key, this.bordered = false, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? AppColors.muted;
+    final label = Text(text.toUpperCase(),
+        style: AppText.mono(8, color: c, spacing: 1.0));
+    if (!bordered) return label;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(border: Border.all(color: c, width: 1)),
+      child: label,
+    );
+  }
+}
