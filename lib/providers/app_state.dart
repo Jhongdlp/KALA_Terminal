@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_pty/flutter_pty.dart';
@@ -8,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import '../models/connection_profile.dart';
+import '../services/background_service.dart';
+import '../services/secure_store.dart';
 
 enum ConnectionStatus { disconnected, connecting, local, remote }
 
@@ -24,6 +28,9 @@ class TerminalSession {
   List<FileSystemEntityInfo> files;
   bool isLoadingFiles;
   List<ServerSocket> forwardServers;
+  // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
+  // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
+  final List<_TerminalWriter> _outputWriters = [];
 
   TerminalSession({
     required this.id,
@@ -67,13 +74,19 @@ class AppState extends ChangeNotifier {
       ? _sessions[_activeSessionIndex]
       : null;
 
-  // Delegates for active session to maintain compatibility with other views
-  Terminal get terminal => activeSession?.terminal ?? Terminal(maxLines: 10000);
+  // Delegates for active session to maintain compatibility with other views.
+  // The fallback is a shared singleton so the getter never allocates a fresh
+  // 10k-line Terminal on every access when there is (transiently) no session.
+  static final Terminal _fallbackTerminal = Terminal(maxLines: 10000);
+  Terminal get terminal => activeSession?.terminal ?? _fallbackTerminal;
   ConnectionStatus get connectionStatus => activeSession?.connectionStatus ?? ConnectionStatus.disconnected;
   ConnectionProfile? get activeProfile => activeSession?.activeProfile;
   bool get isTerminalInitialized => activeSession != null;
   String get currentPath => activeSession?.currentPath ?? '';
-  List<FileSystemEntityInfo> get files => activeSession?.files ?? [];
+  // const fallback so the getter returns a stable reference (a fresh `[]` each
+  // call would defeat the explorer's Selector equality check).
+  List<FileSystemEntityInfo> get files =>
+      activeSession?.files ?? const <FileSystemEntityInfo>[];
   bool get isLoadingFiles => activeSession?.isLoadingFiles ?? false;
 
   // Editor State (Global but tracks client used to load the file)
@@ -86,6 +99,66 @@ class AppState extends ChangeNotifier {
   bool _isEditingFileRemote = false;
   bool get isEditingFileRemote => _isEditingFileRemote;
   SSHClient? _editingSshClient;
+
+  // ---- Markdown viewer -----------------------------------------------------
+  // When the open file is markdown the editor tab can render a formatted
+  // preview instead of the raw code editor. [_isMarkdownPreview] tracks which
+  // mode is showing; [_markdownScale] is a persisted zoom multiplier driven by
+  // the +/- buttons in the preview header.
+  static const String _kMarkdownScale = 'settings_markdown_scale';
+  static const double minMarkdownScale = 0.6;
+  static const double maxMarkdownScale = 3.0;
+
+  static const Set<String> _markdownExtensions = {
+    '.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn'
+  };
+
+  /// Whether [path] should be treated as a markdown document (by extension).
+  static bool isMarkdownPath(String path) {
+    final lower = path.toLowerCase();
+    return _markdownExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  bool get isEditingFileMarkdown =>
+      _editingFilePath != null && isMarkdownPath(_editingFilePath!);
+
+  bool _isMarkdownPreview = false;
+  bool get isMarkdownPreview => _isMarkdownPreview;
+
+  // ---- PDF viewer ----------------------------------------------------------
+  // PDFs open in an embedded read-only viewer (pdfrx) on the editor tab instead
+  // of the code editor. The raw bytes are held in memory because SFTP-loaded
+  // files have no local path to hand to the viewer, and reading them once keeps
+  // the local/remote paths uniform.
+  static bool isPdfPath(String path) => path.toLowerCase().endsWith('.pdf');
+
+  Uint8List? _viewingPdfBytes;
+  Uint8List? get viewingPdfBytes => _viewingPdfBytes;
+  bool get isViewingPdf =>
+      _editingFilePath != null && _viewingPdfBytes != null;
+
+  double _markdownScale = 1.0;
+  double get markdownScale => _markdownScale;
+
+  void setMarkdownPreview(bool preview) {
+    if (_isMarkdownPreview == preview) return;
+    _isMarkdownPreview = preview;
+    notifyListeners();
+  }
+
+  void toggleMarkdownPreview() => setMarkdownPreview(!_isMarkdownPreview);
+
+  Future<void> setMarkdownScale(double scale) async {
+    final clamped = scale.clamp(minMarkdownScale, maxMarkdownScale);
+    if (clamped == _markdownScale) return;
+    _markdownScale = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kMarkdownScale, clamped);
+  }
+
+  void bumpMarkdownScale(double delta) =>
+      setMarkdownScale(_markdownScale + delta);
 
   // ---- Settings State ------------------------------------------------------
   // Persisted user preferences. Keep every configurable option here so the
@@ -102,10 +175,27 @@ class AppState extends ChangeNotifier {
   double _terminalFontSize = 13;
   double get terminalFontSize => _terminalFontSize;
 
+  // ---- Command history (smart command bar) --------------------------------
+  // Persisted, most-recent-first, de-duplicated list of commands the user has
+  // run through the command bar. Drives the bar's autosuggestion (ghost text)
+  // and suggestion dropdown. Capped so prefs stay small.
+  static const String _kCommandHistory = 'command_history';
+  static const int _maxCommandHistory = 300;
+
+  List<String> _commandHistory = [];
+  List<String> get commandHistory => _commandHistory;
+
   AppState() {
     _loadSettings();
     _loadProfiles();
+    _loadCommandHistory();
     createNewSession(); // Start a local terminal by default
+    // Keep the process alive in the background (Termux-style) so shells survive
+    // when the app is minimized. No-op on platforms other than Android. Deferred
+    // to the first frame so the native MethodChannel handler is registered.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      BackgroundService.start();
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -122,6 +212,11 @@ class AppState extends ChangeNotifier {
     if (fontSize != null) {
       _terminalFontSize =
           fontSize.clamp(minTerminalFontSize, maxTerminalFontSize);
+    }
+
+    final mdScale = prefs.getDouble(_kMarkdownScale);
+    if (mdScale != null) {
+      _markdownScale = mdScale.clamp(minMarkdownScale, maxMarkdownScale);
     }
 
     notifyListeners();
@@ -183,6 +278,7 @@ class AppState extends ChangeNotifier {
   // Initialize a local PTY session
   void _initLocalSession(TerminalSession session) {
     try {
+      _disposeWriters(session);
       session.connectionStatus = ConnectionStatus.local;
       
       session.terminal.write('Iniciando terminal local...\r\n');
@@ -206,12 +302,12 @@ class AppState extends ChangeNotifier {
         },
       );
 
-      session.localPty!.output.listen((data) {
-        session.terminal.write(utf8.decode(data, allowMalformed: true));
-      });
+      final writer = _TerminalWriter(session.terminal);
+      session._outputWriters.add(writer);
+      session.localPty!.output.listen(writer.add);
 
       session.terminal.onOutput = (data) {
-        session.localPty!.write(utf8.encode(data));
+        session.localPty!.write(utf8.encode(_applyCtrlModifier(data)));
       };
 
       // Keep the PTY's window size in sync with the rendered terminal so
@@ -239,12 +335,53 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Load Connection Profiles from Local Storage
+  // Load Connection Profiles. Metadata comes from shared_preferences; secrets
+  // (password/privateKey) come from secure storage and are merged back in.
+  // Profiles persisted by an older build still carry plaintext secrets inside
+  // the prefs JSON — those are migrated to secure storage on first load.
   Future<void> _loadProfiles() async {
     final prefs = await SharedPreferences.getInstance();
     final profilesJson = prefs.getStringList('ssh_profiles') ?? [];
-    _profiles = profilesJson.map((json) => ConnectionProfile.fromJson(json)).toList();
+
+    final loaded = <ConnectionProfile>[];
+    var needsMigration = false;
+
+    for (final raw in profilesJson) {
+      final base = ConnectionProfile.fromJson(raw);
+
+      // Legacy entries embed the secrets directly in the prefs JSON.
+      final hasLegacySecret =
+          (base.password != null && base.password!.isNotEmpty) ||
+              (base.privateKey != null && base.privateKey!.isNotEmpty);
+      if (hasLegacySecret) {
+        await SecureStore.instance.writeSecrets(
+          base.id,
+          password: base.password,
+          privateKey: base.privateKey,
+        );
+        needsMigration = true;
+      }
+
+      final password =
+          await SecureStore.instance.readPassword(base.id) ?? base.password;
+      final privateKey =
+          await SecureStore.instance.readPrivateKey(base.id) ?? base.privateKey;
+      loaded.add(base.copyWith(password: password, privateKey: privateKey));
+    }
+
+    _profiles = loaded;
+
+    // Rewrite prefs without secrets if we migrated any (or just to strip them).
+    if (needsMigration) {
+      await prefs.setStringList(
+          'ssh_profiles', _profiles.map((p) => p.toJsonPublic()).toList());
+    }
     notifyListeners();
+  }
+
+  Future<void> _persistProfiles(SharedPreferences prefs) async {
+    await prefs.setStringList(
+        'ssh_profiles', _profiles.map((p) => p.toJsonPublic()).toList());
   }
 
   Future<void> saveProfile(ConnectionProfile profile) async {
@@ -254,20 +391,27 @@ class AppState extends ChangeNotifier {
     } else {
       _profiles.add(profile);
     }
+    await SecureStore.instance.writeSecrets(
+      profile.id,
+      password: profile.password,
+      privateKey: profile.privateKey,
+    );
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('ssh_profiles', _profiles.map((p) => p.toJson()).toList());
+    await _persistProfiles(prefs);
     notifyListeners();
   }
 
   Future<void> deleteProfile(String id) async {
     _profiles.removeWhere((p) => p.id == id);
+    await SecureStore.instance.deleteSecrets(id);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('ssh_profiles', _profiles.map((p) => p.toJson()).toList());
+    await _persistProfiles(prefs);
     notifyListeners();
   }
 
   // Connect a session to a remote SSH server
   Future<void> _connectSessionToSSH(TerminalSession session, ConnectionProfile profile) async {
+    _disposeWriters(session);
     session.connectionStatus = ConnectionStatus.connecting;
     notifyListeners();
 
@@ -301,15 +445,17 @@ class AppState extends ChangeNotifier {
 
       await _setupForwards(session, profile);
 
-      session.sshSession!.stdout.listen((data) {
-        session.terminal.write(utf8.decode(data, allowMalformed: true));
-      });
-      session.sshSession!.stderr.listen((data) {
-        session.terminal.write(utf8.decode(data, allowMalformed: true));
-      });
+      // Separate batched writers for stdout/stderr: each keeps its own UTF-8
+      // decoder so a multi-byte glyph split across packets is reassembled
+      // instead of mangled, and bursts are coalesced into one write per frame.
+      final stdoutWriter = _TerminalWriter(session.terminal);
+      final stderrWriter = _TerminalWriter(session.terminal);
+      session._outputWriters.addAll([stdoutWriter, stderrWriter]);
+      session.sshSession!.stdout.listen(stdoutWriter.add);
+      session.sshSession!.stderr.listen(stderrWriter.add);
 
       session.terminal.onOutput = (data) {
-        session.sshSession!.write(utf8.encode(data));
+        session.sshSession!.write(utf8.encode(_applyCtrlModifier(data)));
       };
 
       session.currentPath = '.';
@@ -408,7 +554,17 @@ class AppState extends ChangeNotifier {
     _initLocalSession(session);
   }
 
+  // Flush and tear down a session's batched output writers (cancels their
+  // pending flush timers so no work is scheduled after teardown).
+  void _disposeWriters(TerminalSession session) {
+    for (final writer in session._outputWriters) {
+      writer.dispose();
+    }
+    session._outputWriters.clear();
+  }
+
   void _cleanupSession(TerminalSession session) {
+    _disposeWriters(session);
     for (final server in session.forwardServers) {
       server.close();
     }
@@ -423,14 +579,81 @@ class AppState extends ChangeNotifier {
     session.activeProfile = null;
   }
 
+  // ---- Sticky CTRL modifier ------------------------------------------------
+  // The smart-keyboard CTRL key is a "sticky" modifier (Termux-style): tapping
+  // it arms the modifier, then the next character typed — from the system
+  // keyboard or a quick key — is folded into its control code (Ctrl+C == 0x03)
+  // and the modifier disarms.
+
+  bool _ctrlArmed = false;
+  bool get ctrlArmed => _ctrlArmed;
+
+  void toggleCtrl() {
+    _ctrlArmed = !_ctrlArmed;
+    notifyListeners();
+  }
+
+  /// If CTRL is armed, fold the first character of [data] into its control code
+  /// and disarm; otherwise return [data] unchanged. Control codes are the low
+  /// 5 bits of the ASCII letter (`'c' & 0x1f == 0x03`).
+  String _applyCtrlModifier(String data) {
+    if (!_ctrlArmed || data.isEmpty) return data;
+    _ctrlArmed = false;
+    notifyListeners();
+    final ctrl = String.fromCharCode(data.codeUnitAt(0) & 0x1f);
+    return ctrl + data.substring(1);
+  }
+
+  // ---- Command history / smart command bar ---------------------------------
+  Future<void> _loadCommandHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    _commandHistory = prefs.getStringList(_kCommandHistory) ?? [];
+    notifyListeners();
+  }
+
+  /// Sends a full command line to the active session's shell (local PTY or SSH)
+  /// followed by a carriage return, and records it in the persisted history.
+  /// This is the entry point used by the smart command bar; unlike
+  /// [sendTerminalInput] it never folds the sticky CTRL modifier into the text.
+  void submitCommand(String command) {
+    final session = activeSession;
+    if (session == null) return;
+
+    final bytes = utf8.encode('$command\r');
+    if (session.connectionStatus == ConnectionStatus.remote &&
+        session.sshSession != null) {
+      session.sshSession!.write(bytes);
+    } else if (session.localPty != null) {
+      session.localPty!.write(bytes);
+    }
+
+    final trimmed = command.trim();
+    if (trimmed.isNotEmpty) _recordCommand(trimmed);
+  }
+
+  /// Moves [command] to the front of the history (de-duplicating), caps the
+  /// list and persists it. Does not notify: the command bar recomputes its
+  /// suggestions from the in-memory list on the next keystroke, and we don't
+  /// want to rebuild the terminal on every command.
+  void _recordCommand(String command) {
+    _commandHistory.remove(command);
+    _commandHistory.insert(0, command);
+    if (_commandHistory.length > _maxCommandHistory) {
+      _commandHistory.removeRange(_maxCommandHistory, _commandHistory.length);
+    }
+    SharedPreferences.getInstance().then(
+        (prefs) => prefs.setStringList(_kCommandHistory, _commandHistory));
+  }
+
   // Send input directly to terminal
   void sendTerminalInput(String text) {
     final session = activeSession;
     if (session == null) return;
+    final out = _applyCtrlModifier(text);
     if (session.connectionStatus == ConnectionStatus.remote && session.sshSession != null) {
-      session.sshSession!.write(utf8.encode(text));
+      session.sshSession!.write(utf8.encode(out));
     } else if (session.connectionStatus == ConnectionStatus.local && session.localPty != null) {
-      session.localPty!.write(utf8.encode(text));
+      session.localPty!.write(utf8.encode(out));
     }
   }
 
@@ -471,18 +694,20 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadFilesForSession(TerminalSession session) async {
     session.isLoadingFiles = true;
-    session.files.clear();
+    // Build into a fresh list and assign it at the end, so consumers that
+    // compare by reference (the explorer's Selector) detect the change.
+    final loaded = <FileSystemEntityInfo>[];
 
     try {
       if (session.connectionStatus == ConnectionStatus.remote && session.sshClient != null) {
         final sftp = await session.sshClient!.sftp();
         final list = await sftp.listdir(session.currentPath);
-        
+
         for (final item in list) {
           if (item.filename == '.' || item.filename == '..') continue;
-          
+
           final isDir = item.attr.isDirectory;
-          session.files.add(FileSystemEntityInfo(
+          loaded.add(FileSystemEntityInfo(
             name: item.filename,
             path: '${session.currentPath}/${item.filename}'.replaceAll('//', '/'),
             isDirectory: isDir,
@@ -498,7 +723,7 @@ class AppState extends ChangeNotifier {
           for (final entity in list) {
             final stat = entity.statSync();
             final name = entity.path.split(Platform.pathSeparator).last;
-            session.files.add(FileSystemEntityInfo(
+            loaded.add(FileSystemEntityInfo(
               name: name,
               path: entity.path,
               isDirectory: entity is Directory,
@@ -508,8 +733,8 @@ class AppState extends ChangeNotifier {
           }
         }
       }
-      
-      session.files.sort((a, b) {
+
+      loaded.sort((a, b) {
         if (a.isDirectory && !b.isDirectory) return -1;
         if (!a.isDirectory && b.isDirectory) return 1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -517,6 +742,7 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       session.terminal.write('Error al cargar archivos: $e\r\n');
     } finally {
+      session.files = loaded;
       session.isLoadingFiles = false;
     }
   }
@@ -537,18 +763,40 @@ class AppState extends ChangeNotifier {
       // Read the content *before* updating _editingFilePath so the editor only
       // rebuilds (and initializes its controller) once the content is ready.
       // Otherwise the editor inits with empty content and never refreshes.
-      final String content;
-      if (isRemote && sshClient != null) {
-        final sftp = await sshClient.sftp();
-        final fileStream = await sftp.open(file.path, mode: SftpFileOpenMode.read);
-        final bytes = await fileStream.readBytes();
-        content = utf8.decode(bytes, allowMalformed: true);
+      if (isPdfPath(file.path)) {
+        // PDFs are read as raw bytes and handed to the embedded viewer; there
+        // is no text content or editing involved.
+        final Uint8List bytes;
+        if (isRemote && sshClient != null) {
+          final sftp = await sshClient.sftp();
+          final fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read);
+          bytes = await fileStream.readBytes();
+        } else {
+          bytes = await File(file.path).readAsBytes();
+        }
+        _viewingPdfBytes = bytes;
+        _editingFileContent = '';
+        _isMarkdownPreview = false;
       } else {
-        final localFile = File(file.path);
-        content = await localFile.readAsString();
+        final String content;
+        if (isRemote && sshClient != null) {
+          final sftp = await sshClient.sftp();
+          final fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read);
+          final bytes = await fileStream.readBytes();
+          content = utf8.decode(bytes, allowMalformed: true);
+        } else {
+          final localFile = File(file.path);
+          content = await localFile.readAsString();
+        }
+        _viewingPdfBytes = null;
+        _editingFileContent = content;
+        // Markdown files open in the formatted preview by default; everything
+        // else goes straight to the raw code editor.
+        _isMarkdownPreview = isMarkdownPath(file.path);
       }
 
-      _editingFileContent = content;
       _editingFilePath = file.path;
       _isEditingFileRemote = isRemote;
       _editingSshClient = sshClient;
@@ -564,8 +812,13 @@ class AppState extends ChangeNotifier {
   }
 
   void updateFileContent(String content) {
-    if (_editingFileContent != content) {
-      _editingFileContent = content;
+    if (_editingFileContent == content) return;
+    _editingFileContent = content;
+    // The editor's own controller drives the CodeEditor surface; the only
+    // observed state here is the dirty flag (save button + nav dot). Notify
+    // only on the false→true transition so we don't rebuild every tab on each
+    // keystroke once the file is already marked dirty.
+    if (!_isFileDirty) {
       _isFileDirty = true;
       notifyListeners();
     }
@@ -612,6 +865,7 @@ class AppState extends ChangeNotifier {
   void closeFile() {
     _editingFilePath = null;
     _editingFileContent = '';
+    _viewingPdfBytes = null;
     _isFileDirty = false;
     _editingSshClient = null;
     _activeTabIndex = 2; // Go back to files tab
@@ -625,6 +879,62 @@ class AppState extends ChangeNotifier {
     }
     super.dispose();
   }
+}
+
+/// Coalesces a stream of raw output bytes into a small number of
+/// [Terminal.write] calls.
+///
+/// Two wins over decoding+writing each chunk straight from the stream:
+///  * A single persistent [Utf8Decoder] spans chunk boundaries, so a multi-byte
+///    glyph split across two packets (common over SSH) is decoded correctly
+///    instead of turning into replacement characters.
+///  * Bursts of tiny packets (logs, `ls -R`, builds) are buffered and flushed
+///    at most once per frame, collapsing many parse/repaint cycles into one.
+class _TerminalWriter {
+  final Terminal terminal;
+  final StringBuffer _buffer = StringBuffer();
+  late final Sink<List<int>> _decoder;
+  Timer? _flushTimer;
+  bool _disposed = false;
+
+  _TerminalWriter(this.terminal) {
+    _decoder = utf8.decoder.startChunkedConversion(_StringBufferSink(_buffer));
+  }
+
+  void add(List<int> data) {
+    if (_disposed) return;
+    _decoder.add(data);
+    // Debounce to the next frame interval; cheap no-op if one is already armed.
+    _flushTimer ??= Timer(const Duration(milliseconds: 16), _flush);
+  }
+
+  void _flush() {
+    _flushTimer = null;
+    if (_buffer.isEmpty) return;
+    final text = _buffer.toString();
+    _buffer.clear();
+    terminal.write(text);
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _flush(); // Drain anything already decoded so no output is lost.
+  }
+}
+
+/// Minimal [Sink] that appends decoded strings into a [StringBuffer].
+class _StringBufferSink implements Sink<String> {
+  final StringBuffer _buffer;
+  _StringBufferSink(this._buffer);
+
+  @override
+  void add(String data) => _buffer.write(data);
+
+  @override
+  void close() {}
 }
 
 class FileSystemEntityInfo {

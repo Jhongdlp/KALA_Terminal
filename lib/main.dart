@@ -44,9 +44,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
+    // Watch only the theme mode, not the whole AppState. Otherwise every
+    // notifyListeners() (file loads, editor edits, session changes…) would
+    // rebuild MaterialApp and reallocate ThemeData for the entire app.
+    final themeMode = context.select<AppState, ThemeMode>((s) => s.themeMode);
 
-    final brightness = switch (state.themeMode) {
+    final brightness = switch (themeMode) {
       ThemeMode.light => Brightness.light,
       ThemeMode.dark => Brightness.dark,
       ThemeMode.system =>

@@ -37,7 +37,7 @@ class ConnectionsTab extends StatelessWidget {
               LayerRow(
                 glyph: const Icon(Icons.terminal_outlined),
                 title: 'Shell del dispositivo',
-                meta: 'EJECUTAR COMANDOS EN EL SISTEMA LOCAL',
+                meta: 'COMANDOS EN EL SISTEMA LOCAL',
                 active: isLocalActive,
                 trailing: const Icon(Icons.arrow_forward),
                 onTap: () {
@@ -65,7 +65,7 @@ class ConnectionsTab extends StatelessWidget {
                 )
               else
                 for (int i = 0; i < state.profiles.length; i++) ...[
-                  if (i > 0) const Hairline(),
+                  if (i > 0) Hairline(),
                   _buildProfileRow(context, state, state.profiles[i]),
                 ],
             ],
@@ -116,7 +116,7 @@ class ConnectionsTab extends StatelessWidget {
                   style:
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
-            const Hairline(),
+            Hairline(),
             _actionTile(sheetCtx, Icons.bolt_outlined,
                 isConnected ? 'IR A LA CONSOLA' : 'CONECTAR', () {
               if (isConnected) {
@@ -125,16 +125,16 @@ class ConnectionsTab extends StatelessWidget {
                 state.connectToSSH(profile);
               }
             }),
-            const Hairline(),
+            Hairline(),
             _actionTile(sheetCtx, Icons.edit_outlined, 'EDITAR', () {
               _showProfileDialog(context, profile);
             }),
             if (isConnected) ...[
-              const Hairline(),
+              Hairline(),
               _actionTile(sheetCtx, Icons.power_settings_new, 'DESCONECTAR',
                   () => state.disconnect()),
             ],
-            const Hairline(),
+            Hairline(),
             _actionTile(sheetCtx, Icons.delete_outline, 'ELIMINAR', () {
               _showDeleteConfirmation(context, state, profile);
             }, danger: true),
@@ -215,6 +215,11 @@ class ConnectionsTab extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.panel,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height -
+            MediaQuery.of(context).padding.top -
+            12,
+      ),
       builder: (sheetCtx) => StatefulBuilder(
         builder: (sheetCtx, setSheetState) => Padding(
           padding: EdgeInsets.only(
@@ -232,7 +237,7 @@ class ConnectionsTab extends StatelessWidget {
                     style: AppText.label(10,
                         color: AppColors.bone, spacing: 1.6)),
                 const SizedBox(height: 4),
-                const Hairline(),
+                Hairline(),
                 const SizedBox(height: 16),
 
                 // ---- Paste full ssh command -> autofill ------------------
@@ -277,7 +282,7 @@ class ConnectionsTab extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 16),
-                const Hairline(),
+                Hairline(),
                 const SizedBox(height: 16),
 
                 _field(nameController, 'NOMBRE DEL PERFIL'),

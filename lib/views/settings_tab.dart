@@ -11,7 +11,12 @@ class SettingsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = Provider.of<AppState>(context);
+    // Only the theme and font size affect this screen; select them so it isn't
+    // rebuilt by unrelated notifications.
+    final themeMode = context.select<AppState, ThemeMode>((s) => s.themeMode);
+    final terminalFontSize =
+        context.select<AppState, double>((s) => s.terminalFontSize);
+    final state = context.read<AppState>();
 
     return Container(
       color: AppColors.ink,
@@ -35,7 +40,7 @@ class SettingsTab extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 child: _ThemeSelector(
-                  value: state.themeMode,
+                  value: themeMode,
                   onChanged: state.setThemeMode,
                 ),
               ),
@@ -55,7 +60,7 @@ class SettingsTab extends StatelessWidget {
                       child: Text('TAMAÑO DE FUENTE',
                           style: AppText.label(9, color: AppColors.muted)),
                     ),
-                    Text('${state.terminalFontSize.toStringAsFixed(0)} PT',
+                    Text('${terminalFontSize.toStringAsFixed(0)} PT',
                         style: AppText.mono(12, color: AppColors.bone)),
                   ],
                 ),
@@ -70,7 +75,7 @@ class SettingsTab extends StatelessWidget {
                     ),
                     Expanded(
                       child: Slider(
-                        value: state.terminalFontSize,
+                        value: terminalFontSize,
                         min: AppState.minTerminalFontSize,
                         max: AppState.maxTerminalFontSize,
                         divisions: (AppState.maxTerminalFontSize -
@@ -96,7 +101,7 @@ class SettingsTab extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                 child: Text(
                   r'user@aiterminal:~$ echo "Hola"',
-                  style: AppText.mono(state.terminalFontSize,
+                  style: AppText.mono(terminalFontSize,
                       color: AppColors.bone),
                 ),
               ),

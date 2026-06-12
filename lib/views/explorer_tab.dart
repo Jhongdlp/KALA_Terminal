@@ -9,7 +9,17 @@ class ExplorerTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = Provider.of<AppState>(context);
+    // Listen only to the slices the explorer renders, so unrelated state
+    // changes (terminal output, editor edits…) don't rebuild this tab. The
+    // `files` reference changes on each reload (see AppState._loadFilesForSession).
+    final currentPath = context.select<AppState, String>((s) => s.currentPath);
+    final isLoadingFiles =
+        context.select<AppState, bool>((s) => s.isLoadingFiles);
+    final files = context
+        .select<AppState, List<FileSystemEntityInfo>>((s) => s.files);
+    // AppColors is a global, mutable palette swapped on theme change; depend on
+    // themeMode so this isolated tab rebuilds and re-reads the new colors.
+    context.select<AppState, ThemeMode>((s) => s.themeMode);
 
     return Container(
       color: AppColors.ink,
@@ -29,7 +39,7 @@ class ExplorerTab extends StatelessWidget {
                 IconButton(
                   icon: Icon(Icons.arrow_upward,
                       color: AppColors.muted, size: 16),
-                  onPressed: () => state.navigateUp(),
+                  onPressed: () => context.read<AppState>().navigateUp(),
                   tooltip: 'Subir un nivel',
                 ),
                 Expanded(
@@ -37,7 +47,7 @@ class ExplorerTab extends StatelessWidget {
                     scrollDirection: Axis.horizontal,
                     reverse: true,
                     child: Text(
-                      state.currentPath.isEmpty ? '~' : state.currentPath,
+                      currentPath.isEmpty ? '~' : currentPath,
                       style: AppText.mono(11, color: AppColors.bone),
                     ),
                   ),
@@ -45,21 +55,23 @@ class ExplorerTab extends StatelessWidget {
                 IconButton(
                   icon: Icon(Icons.refresh,
                       color: AppColors.muted, size: 16),
-                  onPressed: () => state.changeDirectory(state.currentPath),
+                  onPressed: () =>
+                      context.read<AppState>().changeDirectory(currentPath),
                   tooltip: 'Actualizar',
                 ),
               ],
             ),
           ),
 
-          Expanded(child: _buildBody(state)),
+          Expanded(child: _buildBody(context, isLoadingFiles, files)),
         ],
       ),
     );
   }
 
-  Widget _buildBody(AppState state) {
-    if (state.isLoadingFiles) {
+  Widget _buildBody(
+      BuildContext context, bool isLoadingFiles, List<FileSystemEntityInfo> files) {
+    if (isLoadingFiles) {
       return Center(
         child: SizedBox(
           width: 16,
@@ -70,7 +82,7 @@ class ExplorerTab extends StatelessWidget {
       );
     }
 
-    if (state.files.isEmpty) {
+    if (files.isEmpty) {
       return Center(
         child: Text('DIRECTORIO VACÍO',
             style: AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
@@ -78,10 +90,10 @@ class ExplorerTab extends StatelessWidget {
     }
 
     return ListView.separated(
-      itemCount: state.files.length,
-      separatorBuilder: (_, _) => const Hairline(),
+      itemCount: files.length,
+      separatorBuilder: (_, _) => Hairline(),
       itemBuilder: (context, index) {
-        final item = state.files[index];
+        final item = files[index];
         return LayerRow(
           glyph: Icon(item.isDirectory
               ? Icons.folder_outlined
@@ -92,6 +104,7 @@ class ExplorerTab extends StatelessWidget {
               : '${_formatBytes(item.size)} · ${_formatDate(item.modified)}',
           trailing: item.isDirectory ? const Icon(Icons.chevron_right) : null,
           onTap: () {
+            final state = context.read<AppState>();
             if (item.isDirectory) {
               state.changeDirectory(item.path);
             } else {

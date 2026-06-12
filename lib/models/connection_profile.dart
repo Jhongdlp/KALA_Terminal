@@ -91,6 +91,35 @@ class ConnectionProfile {
     };
   }
 
+  /// Same as [toMap] but without secrets ([password]/[privateKey]). Used to
+  /// persist profile metadata to plain shared_preferences while the secrets are
+  /// kept in secure storage.
+  Map<String, dynamic> toMapPublic() {
+    final map = toMap();
+    map.remove('password');
+    map.remove('privateKey');
+    return map;
+  }
+
+  String toJsonPublic() => json.encode(toMapPublic());
+
+  ConnectionProfile copyWith({
+    String? password,
+    String? privateKey,
+  }) {
+    return ConnectionProfile(
+      id: id,
+      name: name,
+      host: host,
+      port: port,
+      username: username,
+      password: password ?? this.password,
+      privateKey: privateKey ?? this.privateKey,
+      isLocal: isLocal,
+      forwards: forwards,
+    );
+  }
+
   factory ConnectionProfile.fromMap(Map<String, dynamic> map) {
     return ConnectionProfile(
       id: map['id'] ?? '',

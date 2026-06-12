@@ -21,7 +21,16 @@ class HomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = Provider.of<AppState>(context);
+    // The shell only depends on the active tab and the editor dirty dot. Select
+    // just those so unrelated notifications (terminal output, file listings…)
+    // don't rebuild the nav bar and IndexedStack.
+    final activeTabIndex = context.select<AppState, int>((s) => s.activeTabIndex);
+    final isFileDirty = context.select<AppState, bool>((s) => s.isFileDirty);
+    // AppColors is a global, mutable palette swapped on theme change (see
+    // app_theme.dart). Depend on themeMode so this subtree rebuilds and re-reads
+    // the new colors; without it an isolated tab keeps the old theme's colors
+    // until something else happens to rebuild it.
+    context.select<AppState, ThemeMode>((s) => s.themeMode);
 
     const tabs = [
       ConnectionsTab(),
@@ -54,9 +63,9 @@ class HomeView extends StatelessWidget {
                     return Expanded(
                       child: _TopNavItem(
                         spec: _items[i],
-                        active: state.activeTabIndex == i,
-                        dirty: i == 3 && state.isFileDirty,
-                        onTap: () => state.setActiveTabIndex(i),
+                        active: activeTabIndex == i,
+                        dirty: i == 3 && isFileDirty,
+                        onTap: () => context.read<AppState>().setActiveTabIndex(i),
                       ),
                     );
                   }),
@@ -64,7 +73,7 @@ class HomeView extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: IndexedStack(index: state.activeTabIndex, children: tabs),
+              child: IndexedStack(index: activeTabIndex, children: tabs),
             ),
           ],
         ),

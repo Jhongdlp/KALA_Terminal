@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/command_bar.dart';
 import '../widgets/swiss.dart';
 
 class TerminalTab extends StatefulWidget {
@@ -16,17 +17,48 @@ class _TerminalTabState extends State<TerminalTab> {
   final FocusNode _terminalFocusNode = FocusNode();
 
   bool _showKeys = true;
+  bool _showCmdBar = true;
   bool _fullscreen = false;
+
+  // Tracks whether the active terminal is in the alternate screen buffer (a
+  // full-screen TUI like vim/htop/claude is running). The smart command bar is
+  // a line-based input that makes no sense — and looks like a duplicate input
+  // box — over such apps, so it is hidden while [_altScreen] is true and the
+  // raw terminal takes all keystrokes. We observe the Terminal directly because
+  // its alt-buffer changes don't flow through AppState's notifications.
+  Terminal? _observedTerminal;
+  bool _altScreen = false;
 
   @override
   void dispose() {
+    _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Re-point the alt-buffer listener at [terminal] (called on every build so it
+  /// follows session switches). Cheap no-op when the instance is unchanged.
+  void _syncTerminalObserver(Terminal terminal) {
+    if (identical(_observedTerminal, terminal)) return;
+    _observedTerminal?.removeListener(_onTerminalChanged);
+    _observedTerminal = terminal;
+    terminal.addListener(_onTerminalChanged);
+    _altScreen = terminal.isUsingAltBuffer;
+  }
+
+  void _onTerminalChanged() {
+    final alt = _observedTerminal?.isUsingAltBuffer ?? false;
+    if (alt == _altScreen) return;
+    setState(() => _altScreen = alt);
+    // Entering a full-screen app: hand keyboard focus to the terminal so it
+    // receives keys without the user having to tap it first.
+    if (alt) _terminalFocusNode.requestFocus();
   }
 
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppState>(context);
+    _syncTerminalObserver(state.terminal);
 
     if (!state.isTerminalInitialized) {
       return Container(
@@ -81,6 +113,8 @@ class _TerminalTabState extends State<TerminalTab> {
                     ),
                   ),
                 ),
+                if (!_fullscreen && _showCmdBar && !_altScreen)
+                  const CommandBar(),
                 if (!_fullscreen && _showKeys) _buildKeys(state),
               ],
             ),
@@ -117,6 +151,11 @@ class _TerminalTabState extends State<TerminalTab> {
               () => state.bumpTerminalFontSize(-1)),
           _toolbarIcon(Icons.text_increase, 'Aumentar letra',
               () => state.bumpTerminalFontSize(1)),
+          _toolbarIcon(
+            _showCmdBar ? Icons.bolt : Icons.bolt_outlined,
+            'Barra inteligente',
+            () => setState(() => _showCmdBar = !_showCmdBar),
+          ),
           _toolbarIcon(
             _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
             'Teclas rápidas',
@@ -226,19 +265,19 @@ class _TerminalTabState extends State<TerminalTab> {
                   ],
                 ),
               ),
-              const Hairline(),
+              Hairline(),
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
                   itemCount: s.sessions.length,
-                  separatorBuilder: (_, _) => const Hairline(),
+                  separatorBuilder: (_, _) => Hairline(),
                   itemBuilder: (ctx, i) => _sessionSheetRow(sheetCtx, s, i),
                 ),
               ),
-              const Hairline(),
+              Hairline(),
               _menuTile(sheetCtx, Icons.add, 'NUEVA TERMINAL LOCAL',
                   () => s.createNewSession()),
-              const Hairline(),
+              Hairline(),
               _menuTile(sheetCtx, Icons.dns_outlined, 'CONECTAR POR SSH…',
                   () => s.setActiveTabIndex(0)),
             ],
@@ -357,7 +396,7 @@ class _TerminalTabState extends State<TerminalTab> {
           children: [
             _menuTile(sheetCtx, Icons.terminal_outlined,
                 'NUEVA TERMINAL LOCAL', () => state.createNewSession()),
-            const Hairline(),
+            Hairline(),
             _menuTile(sheetCtx, Icons.dns_outlined, 'CONECTAR POR SSH…',
                 () => state.setActiveTabIndex(0)),
           ],
@@ -390,80 +429,91 @@ class _TerminalTabState extends State<TerminalTab> {
   // ---- Smart keyboard (extra keys, Termux-style) ---------------------------
 
   Widget _buildKeys(AppState state) {
+    // Two fixed rows, each an Expanded Row so every key shares the available
+    // width evenly: the strip is always exactly two lines, never wraps to a
+    // third, and stays compact regardless of screen width.
     return Container(
       decoration: BoxDecoration(
         color: AppColors.ink,
         border: Border(top: BorderSide(color: AppColors.hairline, width: 1)),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-      child: Column(
-        children: [
-          // Control + confirmation keys.
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: [
-              _key('y', () => state.sendTerminalInput('y'), inverted: true),
-              _key('n', () => state.sendTerminalInput('n'), inverted: true),
-              _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
-              _key('TAB', () => state.sendTerminalInput('\t')),
-              _key('ESC', () => state.sendTerminalInput('\x1b')),
-              // ALT acts as the Meta prefix: it sends ESC, so pressing ALT and
-              // then a letter on the system keyboard produces Alt+<letter>.
-              _key('ALT', () => state.sendTerminalInput('\x1b')),
-              _key('^D', () => state.sendTerminalInput('\x04')),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Navigation, symbols and quick commands.
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: [
-              _key('↑', () => state.sendTerminalInput('\x1b[A')),
-              _key('↓', () => state.sendTerminalInput('\x1b[B')),
-              _key('←', () => state.sendTerminalInput('\x1b[D')),
-              _key('→', () => state.sendTerminalInput('\x1b[C')),
-              _key('~', () => state.sendTerminalInput('~')),
-              _key('/', () => state.sendTerminalInput('/')),
-              _key('-', () => state.sendTerminalInput('-')),
-            ],
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            // Row 1 — modifiers + signals.
+            Row(
+              children: [
+                _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed),
+                _key('ESC', () => state.sendTerminalInput('\x1b')),
+                _key('TAB', () => state.sendTerminalInput('\t')),
+                // ALT acts as the Meta prefix: it sends ESC, so pressing ALT
+                // then a letter on the system keyboard yields Alt+<letter>.
+                _key('ALT', () => state.sendTerminalInput('\x1b')),
+                _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
+                _key('^D', () => state.sendTerminalInput('\x04'), inverted: true),
+                _key('^Z', () => state.sendTerminalInput('\x1a'), inverted: true),
+              ],
+            ),
+            const SizedBox(height: 5),
+            // Row 2 — navigation, confirmations, symbols.
+            Row(
+              children: [
+                _key('↑', () => state.sendTerminalInput('\x1b[A')),
+                _key('↓', () => state.sendTerminalInput('\x1b[B')),
+                _key('←', () => state.sendTerminalInput('\x1b[D')),
+                _key('→', () => state.sendTerminalInput('\x1b[C')),
+                _key('~', () => state.sendTerminalInput('~')),
+                _key('/', () => state.sendTerminalInput('/')),
+                _key('-', () => state.sendTerminalInput('-')),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _key(String label, VoidCallback onPressed, {bool inverted = false}) {
-    final bg = inverted ? AppColors.bone : Colors.transparent;
-    final fg = inverted ? AppColors.ink : AppColors.bone;
-    return Material(
-      color: bg,
-      child: InkWell(
-          onTap: onPressed,
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: inverted ? Colors.transparent : AppColors.hairline,
-                width: 1,
+  Widget _key(
+    String label,
+    VoidCallback onPressed, {
+    bool inverted = false,
+    bool armed = false,
+  }) {
+    // `armed` (the live CTRL toggle) wins over the static `inverted` accent.
+    final highlighted = armed || inverted;
+    final bg = highlighted ? AppColors.bone : Colors.transparent;
+    final fg = highlighted ? AppColors.ink : AppColors.bone;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Material(
+          color: bg,
+          child: InkWell(
+            onTap: onPressed,
+            child: Container(
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: highlighted ? Colors.transparent : AppColors.hairline,
+                  width: 1,
+                ),
               ),
-            ),
-            // NOTE: no `alignment` here — inside a Wrap children receive a
-            // bounded maxWidth, and a Container with alignment would expand to
-            // fill it (one key per row). Shrink-wrap instead; center via Text.
-            constraints: const BoxConstraints(minWidth: 40),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: AppText.mono(11,
-                  color: fg,
-                  weight: inverted ? FontWeight.w700 : FontWeight.w500,
-                  spacing: 0.3),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: AppText.mono(11,
+                    color: fg,
+                    weight: highlighted ? FontWeight.w700 : FontWeight.w500,
+                    spacing: 0.3),
+              ),
             ),
           ),
         ),
-      );
+      ),
+    );
   }
 }
 

@@ -24,9 +24,11 @@ class BackgroundService {
     try {
       await _channel.invokeMethod('startBackgroundService');
       _running = true;
-    } on PlatformException {
-      // Service couldn't start (e.g. notifications blocked). The app keeps
-      // working; it just won't survive aggressive background kills.
+    } catch (_) {
+      // Service couldn't start (e.g. notifications blocked, or the native
+      // handler wasn't ready yet). The app keeps working; it just won't survive
+      // aggressive background kills. Caught broadly to also swallow
+      // MissingPluginException, which isn't a PlatformException.
     }
   }
 
@@ -37,7 +39,7 @@ class BackgroundService {
     try {
       await _channel.invokeMethod('stopBackgroundService');
       _running = false;
-    } on PlatformException {
+    } catch (_) {
       // Ignore — nothing actionable.
     }
   }
