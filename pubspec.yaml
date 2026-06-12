@@ -79,6 +79,14 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  assets:
+    # Linux userland (proot + Alpine rootfs) bundled for the Android terminal.
+    - assets/distro/proot
+    - assets/distro/loader
+    - assets/distro/libtalloc.so.2
+    - assets/distro/libandroid-shmem.so
+    - assets/distro/alpine-minirootfs.tar.gz
+
   fonts:
     - family: CascadiaCode
       fonts:

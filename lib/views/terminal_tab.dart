@@ -192,6 +192,20 @@ class _TerminalTabState extends State<TerminalTab> {
     }
   }
 
+  /// Status glyph for a session: an animated spinner while the SSH handshake is
+  /// in flight ([ConnectionStatus.connecting]), otherwise the static dot icon.
+  Widget _statusGlyph(TerminalSession s,
+      {required double size, required Color color}) {
+    if (s.connectionStatus == ConnectionStatus.connecting) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
+      );
+    }
+    return Icon(_statusIcon(s), size: size, color: color);
+  }
+
   String _sessionMeta(TerminalSession s) {
     switch (s.connectionStatus) {
       case ConnectionStatus.remote:
@@ -215,8 +229,9 @@ class _TerminalTabState extends State<TerminalTab> {
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(
           children: [
-            Icon(active != null ? _statusIcon(active) : Icons.circle_outlined,
-                size: 8, color: AppColors.bone),
+            active != null
+                ? _statusGlyph(active, size: 11, color: AppColors.bone)
+                : Icon(Icons.circle_outlined, size: 11, color: AppColors.bone),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
@@ -304,7 +319,7 @@ class _TerminalTabState extends State<TerminalTab> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              Icon(_statusIcon(session), size: 9, color: fg),
+              _statusGlyph(session, size: 12, color: fg),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(

@@ -214,6 +214,11 @@ class InvertedButton extends StatelessWidget {
       color: bg,
       child: InkWell(
         onTap: onPressed,
+        // Don't steal focus when tapped: otherwise tapping this button while a
+        // TextField is focused (e.g. inside the SSH profile sheet) dismisses the
+        // keyboard, the sheet reflows on the shrinking viewInsets, and the
+        // in-flight tap is cancelled — so the first tap appears to do nothing.
+        canRequestFocus: false,
         child: Padding(
           padding: EdgeInsets.symmetric(
               horizontal: dense ? 10 : 16, vertical: dense ? 7 : 12),
@@ -261,6 +266,9 @@ class GhostButton extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
+        // See InvertedButton: keep focus on the active TextField so tapping this
+        // button doesn't close the keyboard and cancel its own tap.
+        canRequestFocus: false,
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(

@@ -20,7 +20,14 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Pinned to 28 on purpose. Android assigns the app's SELinux domain from
+        // targetSdkVersion; at API 29+ the app lands in the stricter
+        // `untrusted_app_29+` domain that blocks fork/exec of child binaries,
+        // which kills the local PTY shell (every command -> "Permission denied").
+        // Termux pins to 28 for the same reason. Keep this until the terminal is
+        // reworked to exec from nativeLibraryDir. Play Store upload needs >=34,
+        // but this app is sideloaded via `flutter run`/`build apk`.
+        targetSdk = 28
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

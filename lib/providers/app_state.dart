@@ -11,6 +11,7 @@ import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import '../models/connection_profile.dart';
 import '../services/background_service.dart';
+import '../services/distro_service.dart';
 import '../services/secure_store.dart';
 
 enum ConnectionStatus { disconnected, connecting, local, remote }
@@ -276,30 +277,75 @@ class AppState extends ChangeNotifier {
   }
 
   // Initialize a local PTY session
-  void _initLocalSession(TerminalSession session) {
+  Future<void> _initLocalSession(TerminalSession session) async {
     try {
       _disposeWriters(session);
       session.connectionStatus = ConnectionStatus.local;
-      
+
       session.terminal.write('Iniciando terminal local...\r\n');
 
-      String shell = '/bin/sh';
-      if (Platform.isWindows) {
-        shell = 'cmd.exe';
-      } else if (Platform.isAndroid) {
-        shell = '/system/bin/sh';
-      } else if (File('/bin/bash').existsSync()) {
-        shell = '/bin/bash';
-      } else if (File('/bin/sh').existsSync()) {
-        shell = '/bin/sh';
+      // What we ultimately hand to flutter_pty.
+      String executable;
+      List<String> arguments = const [];
+      String workingDir = Directory.current.path;
+      final environment = <String, String>{
+        'TERM': 'xterm-256color',
+        'LANG': 'en_US.UTF-8',
+      };
+
+      if (Platform.isAndroid) {
+        // On Android the "local terminal" is a full Linux userland (Alpine)
+        // running under proot — that's what gives a real package manager and a
+        // normal filesystem instead of the bare, mostly-unreadable system shell.
+        try {
+          if (!await DistroService.isInstalled()) {
+            session.terminal.write(
+                '\r\nPrimer arranque: instalando entorno Linux (Alpine)...\r\n');
+            await DistroService.install(log: session.terminal.write);
+          }
+          final launch = await DistroService.launch();
+          executable = launch.executable;
+          arguments = launch.arguments;
+          workingDir = launch.workingDirectory;
+          environment.addAll(launch.environment);
+        } catch (e) {
+          // Provisioning/launch failed — fall back to Android's system shell so
+          // the user still has *a* terminal, and surface why.
+          session.terminal.write(
+              '\r\nNo se pudo iniciar el entorno Linux ($e).\r\n'
+              'Usando el shell del sistema como respaldo.\r\n\r\n');
+          executable = '/system/bin/sh';
+          environment['PATH'] =
+              '/system/bin:/system/xbin:/vendor/bin:/product/bin';
+          try {
+            final docsDir = await getApplicationDocumentsDirectory();
+            workingDir = docsDir.path;
+            environment['HOME'] = docsDir.path;
+            environment['TMPDIR'] = docsDir.path;
+          } catch (_) {}
+        }
+      } else {
+        // Desktop (Linux/Windows): spawn the host shell directly.
+        if (Platform.isWindows) {
+          executable = 'cmd.exe';
+        } else if (File('/bin/bash').existsSync()) {
+          executable = '/bin/bash';
+        } else {
+          executable = '/bin/sh';
+        }
+        try {
+          final docsDir = await getApplicationDocumentsDirectory();
+          workingDir = docsDir.path;
+          environment['HOME'] = docsDir.path;
+          environment['TMPDIR'] = docsDir.path;
+        } catch (_) {}
       }
-      
+
       session.localPty = Pty.start(
-        shell,
-        environment: {
-          'TERM': 'xterm-256color',
-          'LANG': 'en_US.UTF-8',
-        },
+        executable,
+        arguments: arguments,
+        workingDirectory: workingDir,
+        environment: environment,
       );
 
       final writer = _TerminalWriter(session.terminal);
@@ -319,18 +365,26 @@ class AppState extends ChangeNotifier {
       session.localPty!.resize(
           session.terminal.viewHeight, session.terminal.viewWidth);
 
-      getApplicationDocumentsDirectory().then((dir) {
-        session.currentPath = dir.path;
-        if (activeSession == session) {
-          _loadFiles();
-        } else {
-          _loadFilesForSession(session);
-        }
-      });
+      session.currentPath = workingDir;
+      if (activeSession == session) {
+        _loadFiles();
+      } else {
+        _loadFilesForSession(session);
+      }
 
       notifyListeners();
     } catch (e) {
-      session.terminal.write('Error al iniciar terminal local: $e\r\n');
+      session.terminal.write('\r\nError al iniciar terminal local: $e\r\n\r\n');
+      if (Platform.isAndroid) {
+        session.terminal.write('⚠️ NOTA SOBRE ANDROID:\r\n');
+        session.terminal.write('Por motivos de seguridad (SELinux), Android bloquea la creación de\r\n');
+        session.terminal.write('terminales locales (acceso a /dev/ptmx o /system/bin/sh) en aplicaciones estándar.\r\n');
+        session.terminal.write('Usa la pestaña de "Conexiones" para iniciar sesión en un servidor remoto por SSH.\r\n');
+      } else if (Platform.isLinux) {
+        session.terminal.write('⚠️ NOTA SOBRE LINUX:\r\n');
+        session.terminal.write('Verifica que tu usuario tenga permisos para acceder a /dev/ptmx y /dev/pts/,\r\n');
+        session.terminal.write('y que el ejecutable de shell (/bin/bash o /bin/sh) sea accesible y ejecutable.\r\n');
+      }
       notifyListeners();
     }
   }
@@ -694,6 +748,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadFilesForSession(TerminalSession session) async {
     session.isLoadingFiles = true;
+    // Surface the loading state right away so the explorer can show its spinner
+    // while the listing (especially a slow SFTP `listdir`) is in flight. Only
+    // the active session drives the explorer, so don't rebuild for the others.
+    if (activeSession == session) notifyListeners();
     // Build into a fresh list and assign it at the end, so consumers that
     // compare by reference (the explorer's Selector) detect the change.
     final loaded = <FileSystemEntityInfo>[];
@@ -740,7 +798,10 @@ class AppState extends ChangeNotifier {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
     } catch (e) {
-      session.terminal.write('Error al cargar archivos: $e\r\n');
+      // Don't pollute the terminal with explorer errors (e.g. navigating up
+      // into directories Android won't let the app read). The file list just
+      // stays empty; surface it only to the debug log.
+      debugPrint('Error al cargar archivos: $e');
     } finally {
       session.files = loaded;
       session.isLoadingFiles = false;
