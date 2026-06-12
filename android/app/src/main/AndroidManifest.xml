@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access for SSH connections and distro downloads. Flutter only injects
+         this automatically in debug builds; release APKs need it declared here. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Keep the process (and its PTY/SSH shells) alive in the background, like Termux. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -8,7 +11,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="terminal_agent"
+        android:label="KALA"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

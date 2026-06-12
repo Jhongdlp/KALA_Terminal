@@ -14,7 +14,7 @@ import android.os.PowerManager
 
 /**
  * Foreground service that keeps the app process (and therefore every running
- * PTY/SSH shell) alive while AITerminal is in the background, mirroring the way
+ * PTY/SSH shell) alive while KALA is in the background, mirroring the way
  * Termux stays alive. It shows a persistent notification with two actions:
  *
  *  - "Adquirir/Liberar wakelock": toggles a partial wakelock so long-running
@@ -29,9 +29,9 @@ class TerminalService : Service() {
         const val ACTION_TOGGLE_WAKELOCK =
             "com.antigravity.terminalagent.action.TOGGLE_WAKELOCK"
 
-        private const val CHANNEL_ID = "aiterminal_background"
+        private const val CHANNEL_ID = "kala_background"
         private const val NOTIFICATION_ID = 1001
-        private const val WAKELOCK_TAG = "AITerminal::BackgroundWakeLock"
+        private const val WAKELOCK_TAG = "KALA::BackgroundWakeLock"
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -117,7 +117,7 @@ class TerminalService : Service() {
         }
 
         return builder
-            .setContentTitle("AITerminal activo")
+            .setContentTitle("KALA activo")
             .setContentText(
                 if (held) "Wakelock activo · las tareas siguen con la pantalla apagada"
                 else "Las sesiones siguen ejecutándose en segundo plano",

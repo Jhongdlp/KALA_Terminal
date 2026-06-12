@@ -39,6 +39,14 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    lint {
+        // targetSdk is intentionally pinned to 28 (see defaultConfig) so the local
+        // PTY terminal keeps working. Play Store's lint flags that as a fatal error
+        // in release builds; this app is sideloaded, not published, so silence just
+        // that check instead of raising targetSdk and breaking the terminal.
+        disable += "ExpiredTargetSdkVersion"
+    }
 }
 
 kotlin {

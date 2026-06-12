@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 import '../providers/app_state.dart';
@@ -15,6 +16,11 @@ class TerminalTab extends StatefulWidget {
 
 class _TerminalTabState extends State<TerminalTab> {
   final FocusNode _terminalFocusNode = FocusNode();
+
+  // Holds the current text selection of the active terminal so the "Copiar"
+  // toolbar button can read it. Shared across sessions; the selection is
+  // cleared whenever the active terminal changes (see [_syncTerminalObserver]).
+  final TerminalController _terminalController = TerminalController();
 
   bool _showKeys = true;
   bool _showCmdBar = true;
@@ -33,6 +39,7 @@ class _TerminalTabState extends State<TerminalTab> {
   void dispose() {
     _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
+    _terminalController.dispose();
     super.dispose();
   }
 
@@ -44,6 +51,9 @@ class _TerminalTabState extends State<TerminalTab> {
     _observedTerminal = terminal;
     terminal.addListener(_onTerminalChanged);
     _altScreen = terminal.isUsingAltBuffer;
+    // Selection anchors belong to the previous terminal's buffer; drop them so
+    // "Copiar" never reads a stale selection after a session switch.
+    _terminalController.clearSelection();
   }
 
   void _onTerminalChanged() {
@@ -97,6 +107,7 @@ class _TerminalTabState extends State<TerminalTab> {
                     onTap: () => _terminalFocusNode.requestFocus(),
                     child: TerminalView(
                       state.terminal,
+                      controller: _terminalController,
                       focusNode: _terminalFocusNode,
                       autofocus: true,
                       theme: AppTerminalTheme.forBrightness(
@@ -163,10 +174,46 @@ class _TerminalTabState extends State<TerminalTab> {
           ),
           _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
               () => setState(() => _fullscreen = true)),
-          _toolbarIcon(
-              Icons.add, 'Nueva sesión', () => _showAddSessionMenu(context, state)),
           const SizedBox(width: 4),
         ],
+      ),
+    );
+  }
+
+  /// Copies the active terminal's current selection to the clipboard. If
+  /// nothing is selected, nudges the user to long-press and drag first.
+  Future<void> _copySelection(AppState state) async {
+    final selection = _terminalController.selection;
+    if (selection == null) {
+      _toast('Mantén pulsado y arrastra para seleccionar texto');
+      return;
+    }
+    final text = state.terminal.buffer.getText(selection);
+    _terminalController.clearSelection();
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    _toast('Copiado al portapapeles');
+  }
+
+  /// Pastes clipboard text into the active shell as raw input.
+  Future<void> _paste(AppState state) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    state.sendTerminalInput(text);
+    _terminalFocusNode.requestFocus();
+  }
+
+  void _toast(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message,
+            style: AppText.mono(11, color: AppColors.bone, spacing: 0.3)),
+        backgroundColor: AppColors.panelHi,
+        duration: const Duration(milliseconds: 1400),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -400,26 +447,6 @@ class _TerminalTabState extends State<TerminalTab> {
     );
   }
 
-  void _showAddSessionMenu(BuildContext context, AppState state) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.panel,
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _menuTile(sheetCtx, Icons.terminal_outlined,
-                'NUEVA TERMINAL LOCAL', () => state.createNewSession()),
-            Hairline(),
-            _menuTile(sheetCtx, Icons.dns_outlined, 'CONECTAR POR SSH…',
-                () => state.setActiveTabIndex(0)),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _menuTile(
       BuildContext sheetCtx, IconData icon, String label, VoidCallback action) {
     return InkWell(
@@ -467,8 +494,10 @@ class _TerminalTabState extends State<TerminalTab> {
                 // then a letter on the system keyboard yields Alt+<letter>.
                 _key('ALT', () => state.sendTerminalInput('\x1b')),
                 _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
-                _key('^D', () => state.sendTerminalInput('\x04'), inverted: true),
-                _key('^Z', () => state.sendTerminalInput('\x1a'), inverted: true),
+                _key('COPIAR', () => _copySelection(state),
+                    icon: Icons.content_copy_outlined),
+                _key('PEGAR', () => _paste(state),
+                    icon: Icons.content_paste_outlined),
               ],
             ),
             const SizedBox(height: 5),
@@ -495,6 +524,7 @@ class _TerminalTabState extends State<TerminalTab> {
     VoidCallback onPressed, {
     bool inverted = false,
     bool armed = false,
+    IconData? icon,
   }) {
     // `armed` (the live CTRL toggle) wins over the static `inverted` accent.
     final highlighted = armed || inverted;
@@ -516,14 +546,17 @@ class _TerminalTabState extends State<TerminalTab> {
                   width: 1,
                 ),
               ),
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: AppText.mono(11,
-                    color: fg,
-                    weight: highlighted ? FontWeight.w700 : FontWeight.w500,
-                    spacing: 0.3),
-              ),
+              child: icon != null
+                  ? Icon(icon, size: 15, color: fg)
+                  : Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: AppText.mono(11,
+                          color: fg,
+                          weight:
+                              highlighted ? FontWeight.w700 : FontWeight.w500,
+                          spacing: 0.3),
+                    ),
             ),
           ),
         ),

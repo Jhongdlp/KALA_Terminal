@@ -61,7 +61,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     AppColors.apply(brightness);
 
     return MaterialApp(
-      title: 'AITerminal',
+      title: 'KALA',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.themeFor(brightness),
       home: const HomeView(),

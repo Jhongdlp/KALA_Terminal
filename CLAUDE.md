@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-"AITerminal" (package name `terminal_agent`) is a Flutter app that combines a terminal emulator (local PTY and SSH), an SSH connection manager, a remote/local file explorer, and a code editor into a single mobile-first IDE-like tool. Configured platforms are **Android** and **Linux** only.
+"KALA" (package name `terminal_agent`) is a Flutter app that combines a terminal emulator (local PTY and SSH), an SSH connection manager, a remote/local file explorer, and a code editor into a single mobile-first IDE-like tool. Configured platforms are **Android** and **Linux** only.
 
 ## Commands
 

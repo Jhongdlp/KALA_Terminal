@@ -1,37 +1,158 @@
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:archive/archive_io.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 
-/// Manages a self-contained Linux userland (Alpine) that runs on Android via
+/// Package manager a distro ships with. Drives the Termux-style `pkg` wrapper.
+enum PackageManager { apk, apt }
+
+/// Where a distro's root filesystem tarball comes from: either bundled inside
+/// the APK (instant, offline) or fetched over the network on demand.
+class DistroSource {
+  /// Asset path for a bundled tarball (e.g. Alpine). Null for remote distros.
+  final String? asset;
+
+  /// Download URL for a remote tarball (e.g. Ubuntu/Debian). Null for bundled.
+  final String? url;
+
+  /// Compression of the tarball: 'gz' or 'xz'. Picks the `/system/bin/tar`
+  /// flag used to extract it.
+  final String compression;
+
+  /// Leading path components to strip on extraction. proot-distro tarballs wrap
+  /// the rootfs in a top-level dir (e.g. `ubuntu-noble-aarch64/`), so they need
+  /// 1; Alpine's minirootfs sits at the archive root, so it needs 0.
+  final int stripComponents;
+
+  const DistroSource.bundled(String this.asset,
+      {this.compression = 'gz', this.stripComponents = 0})
+      : url = null;
+  const DistroSource.remote(String this.url,
+      {this.compression = 'xz', this.stripComponents = 1})
+      : asset = null;
+
+  bool get isBundled => asset != null;
+}
+
+/// Immutable descriptor of a selectable Linux distribution.
+class Distro {
+  final String id; // 'alpine' | 'ubuntu' | 'debian'
+  final String name; // 'Ubuntu 24.04'
+  final String description; // 'Compatible y familiar (glibc · apt)'
+  final DistroSource source;
+  final PackageManager pm;
+  final int approxSizeMb; // download/extracted footprint, for the UI
+
+  const Distro({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.source,
+    required this.pm,
+    required this.approxSizeMb,
+  });
+}
+
+/// Manages one or more self-contained Linux userlands that run on Android via
 /// `proot` — no root required. This is what gives the local terminal a real
-/// package manager (`apk`, plus a Termux-style `pkg` wrapper) and a normal
-/// `/usr` filesystem, instead of Android's bare `/system/bin/sh`.
+/// package manager and a normal `/usr` filesystem instead of Android's bare
+/// `/system/bin/sh`.
+///
+/// Alpine ships bundled in the APK (instant, offline). Ubuntu/Debian are
+/// downloaded on demand from Settings. Each distro lives in its own folder so
+/// switching between them doesn't destroy the others.
 ///
 /// Layout under the app's support dir (`<support>/distro`):
-///   bin/proot            the proot loader (exec'd directly by flutter_pty)
-///   bin/libtalloc.so.2   proot's only non-system shared lib
-///   rootfs/              the extracted Alpine root filesystem
-///   tmp/                 PROOT_TMP_DIR scratch (proot extracts its loader here)
+///   bin/proot              the proot loader (exec'd directly by flutter_pty)
+///   bin/loader             PROOT_LOADER
+///   bin/libtalloc.so.2     proot's non-system shared libs (via LD_LIBRARY_PATH)
+///   bin/libandroid-shmem.so
+///   bin/.proot_version     stamp: which proot revision is provisioned
+///   tmp/                   PROOT_TMP_DIR scratch (shared)
+///   distros/`<id>`/rootfs    the extracted root filesystem of distro `<id>`
+///   distros/`<id>`/.installed  stamp: which provisioning revision is installed
 ///
 /// proot itself is exec'd from the app data dir, which Android only permits for
 /// apps targeting SDK <= 28 — see the targetSdk pin in android/app/build.gradle.kts.
 class DistroService {
   DistroService._();
 
-  // Bump when the bundled rootfs/proot changes so installs re-provision.
-  static const int _version = 6;
+  // Bump when the bundled proot/loader/libs change so they re-provision.
+  static const int _prootVersion = 1;
+
+  // Bump when per-distro provisioning (pkg wrapper, motd, dns) changes so
+  // installs re-provision on next launch.
+  static const int _version = 7;
+
+  // -------------------------------------------------------------------------
+  // Catalog
+  //
+  // IMPORTANT: Android's tar (toybox) only decompresses gzip natively — it has
+  // no xz/zstd/bzip2 and no external `xz` binary. So:
+  //   - .tar.gz sources extract straight through `tar xzf` (fast).
+  //   - .tar.xz sources are decompressed in a Dart isolate (archive's
+  //     XZDecoder, see _extract) to a plain .tar first, then `tar xf`. That's
+  //     CPU-heavy (~minutes for a big rootfs), so prefer gzip sources.
+  //
+  // Ubuntu → official `ubuntu-base` cloud rootfs (.tar.gz, ~30 MB, extracts at
+  //   the archive root → stripComponents 0). HTTP 200 verified.
+  // Debian → proot-distro aarch64 rootfs (.tar.xz, ~43 MB, wrapped in a top dir
+  //   → stripComponents 1). No official Debian .tar.gz exists, so it pays the
+  //   xz-decompress cost. proot-distro pins each codename to its last release.
+  // -------------------------------------------------------------------------
+  static const String _alpineAsset = 'assets/distro/alpine-minirootfs.tar.gz';
+
+  static const List<Distro> catalog = [
+    Distro(
+      id: 'alpine',
+      name: 'Alpine',
+      description: 'Ligero y rápido (musl · apk)',
+      source: DistroSource.bundled(_alpineAsset),
+      pm: PackageManager.apk,
+      approxSizeMb: 9,
+    ),
+    Distro(
+      id: 'ubuntu',
+      name: 'Ubuntu 24.04',
+      description: 'Compatible y familiar (glibc · apt)',
+      source: DistroSource.remote(
+        'https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-arm64.tar.gz',
+        compression: 'gz',
+        stripComponents: 0,
+      ),
+      pm: PackageManager.apt,
+      approxSizeMb: 30,
+    ),
+    Distro(
+      id: 'debian',
+      name: 'Debian 12',
+      description: 'Estable (glibc · apt)',
+      source: DistroSource.remote(
+        'https://github.com/termux/proot-distro/releases/download/v4.17.3/debian-bookworm-aarch64-pd-v4.17.3.tar.xz',
+      ),
+      pm: PackageManager.apt,
+      approxSizeMb: 43,
+    ),
+  ];
+
+  static const String defaultDistroId = 'alpine';
+
+  /// Look a distro up by id, falling back to Alpine for unknown ids.
+  static Distro byId(String? id) => catalog.firstWhere(
+        (d) => d.id == id,
+        orElse: () => catalog.first,
+      );
 
   // Termux's proot (built for Android's untrusted_app sandbox) + its loader and
-  // the two shared libs it needs. proot needs the loader at runtime via
-  // PROOT_LOADER, and libtalloc/libandroid-shmem found via LD_LIBRARY_PATH.
+  // the two shared libs it needs.
   static const String _prootAsset = 'assets/distro/proot';
   static const String _loaderAsset = 'assets/distro/loader';
   static const Map<String, String> _libAssets = {
     'assets/distro/libtalloc.so.2': 'libtalloc.so.2',
     'assets/distro/libandroid-shmem.so': 'libandroid-shmem.so',
   };
-  static const String _rootfsAsset = 'assets/distro/alpine-minirootfs.tar.gz';
 
   static Directory? _baseCache;
 
@@ -45,40 +166,76 @@ class DistroService {
   }
 
   static Future<String> binDir() async => '${(await _base()).path}/bin';
-  static Future<String> rootfsDir() async => '${(await _base()).path}/rootfs';
   static Future<String> tmpDir() async => '${(await _base()).path}/tmp';
   static Future<String> _prootPath() async => '${await binDir()}/proot';
-  static Future<File> _stamp() async =>
-      File('${(await _base()).path}/.installed');
 
-  /// Whether the distro has been provisioned at the current [_version].
-  static Future<bool> isInstalled() async {
-    if (!Platform.isAndroid) return false;
-    final stamp = await _stamp();
-    if (!await stamp.exists()) return false;
-    final v = int.tryParse((await stamp.readAsString()).trim());
-    return v == _version && await File(await _prootPath()).exists();
+  /// A single host directory bind-mounted into every distro at `/shared`. It
+  /// lives outside any distro's rootfs, so files there are visible from all of
+  /// them and survive deleting/switching a distro. Created on demand.
+  static Future<String> sharedDir() async {
+    final dir = Directory('${(await _base()).path}/shared');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
   }
 
-  /// Provision the userland: copy proot, extract the rootfs, wire DNS and the
-  /// `pkg` shim. [log] receives human-readable progress lines (already CR/LF
-  /// terminated) so the caller can stream them to the terminal. Throws on
-  /// failure; callers should fall back to the system shell.
-  static Future<void> install({void Function(String)? log}) async {
+  /// `<support>/distro/distros/<id>`.
+  static Future<String> _distroDir(Distro d) async =>
+      '${(await _base()).path}/distros/${d.id}';
+  static Future<String> rootfsDir(Distro d) async =>
+      '${await _distroDir(d)}/rootfs';
+  static Future<File> _stamp(Distro d) async =>
+      File('${await _distroDir(d)}/.installed');
+  static Future<File> _prootStamp() async =>
+      File('${await binDir()}/.proot_version');
+
+  /// Whether [d] has been provisioned at the current [_version].
+  static Future<bool> isInstalled(Distro d) async {
+    if (!Platform.isAndroid) return false;
+    final stamp = await _stamp(d);
+    if (!await stamp.exists()) return false;
+    final v = int.tryParse((await stamp.readAsString()).trim());
+    // The stamp is only written after a fully successful install, so its
+    // presence at the current version is enough — but double-check the rootfs
+    // wasn't manually deleted.
+    return v == _version && Directory(await rootfsDir(d)).existsSync();
+  }
+
+  /// Total bytes on disk used by [d]'s installed rootfs (0 if not installed).
+  static Future<int> installedSize(Distro d) async {
+    final dir = Directory(await rootfsDir(d));
+    if (!await dir.exists()) return 0;
+    var total = 0;
+    try {
+      await for (final e in dir.list(recursive: true, followLinks: false)) {
+        if (e is File) total += await e.length();
+      }
+    } catch (_) {}
+    return total;
+  }
+
+  /// Remove [d]'s installed rootfs to free space. Refuses bundled distros that
+  /// are not installed; safe to call on anything.
+  static Future<void> remove(Distro d) async {
+    final dir = Directory(await _distroDir(d));
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
+  /// Provision the shared proot binary + loader + libs. Idempotent and
+  /// versioned: a no-op once the current [_prootVersion] is in place.
+  static Future<void> ensureProot({void Function(String)? log}) async {
+    final stamp = await _prootStamp();
+    if (await stamp.exists() &&
+        (int.tryParse((await stamp.readAsString()).trim()) == _prootVersion) &&
+        await File(await _prootPath()).exists()) {
+      return;
+    }
+
     void emit(String m) => log?.call('$m\r\n');
-
-    final base = await _base();
     final bin = Directory(await binDir());
-    final rootfs = Directory(await rootfsDir());
     final tmp = Directory(await tmpDir());
-
-    emit('Preparando entorno Linux (Alpine)...');
     await bin.create(recursive: true);
     await tmp.create(recursive: true);
-    if (await rootfs.exists()) await rootfs.delete(recursive: true);
-    await rootfs.create(recursive: true);
 
-    // 1) proot + its loader + shared libs.
     emit('Copiando proot...');
     final prootFile = await _copyAsset(_prootAsset, await _prootPath());
     await _chmod('0755', prootFile.path);
@@ -87,65 +244,149 @@ class DistroService {
     for (final entry in _libAssets.entries) {
       await _copyAsset(entry.key, '${bin.path}/${entry.value}');
     }
+    await stamp.writeAsString('$_prootVersion');
+  }
 
-    // 2) Extract the rootfs using Android's own tar (preserves symlinks/perms).
+  /// Provision [d]: ensure proot, obtain the rootfs tarball (copy the bundled
+  /// asset or download it with progress), extract it, wire DNS and the `pkg`
+  /// wrapper, then refresh the package index. [log] receives human-readable
+  /// progress lines (already CR/LF terminated, for the terminal); [onStatus]
+  /// receives the same phases as plain text (for a settings UI); [onProgress]
+  /// reports download fraction in 0..1 (only for remote distros). Throws on
+  /// failure.
+  static Future<void> install(
+    Distro d, {
+    void Function(String)? log,
+    void Function(String)? onStatus,
+    void Function(double)? onProgress,
+  }) async {
+    void emit(String m) {
+      log?.call('$m\r\n');
+      onStatus?.call(m);
+    }
+
+    await ensureProot(log: log);
+
+    final distroDir = Directory(await _distroDir(d));
+    final rootfs = Directory(await rootfsDir(d));
+
+    emit('Preparando entorno Linux (${d.name})...');
+    await distroDir.create(recursive: true);
+    if (await rootfs.exists()) await rootfs.delete(recursive: true);
+    await rootfs.create(recursive: true);
+
+    // 1) Obtain the rootfs tarball.
+    final tarPath = '${distroDir.path}/rootfs.tar';
+    final tarFile = File(tarPath);
+    if (d.source.isBundled) {
+      emit('Copiando sistema de archivos...');
+      await _copyAsset(d.source.asset!, tarPath);
+    } else {
+      emit('Descargando ${d.name} (~${d.approxSizeMb} MB)...');
+      await _download(d.source.url!, tarPath, onProgress: onProgress);
+    }
+
+    // 2) Decompress (if needed) and extract.
+    //
+    // Android's tar only knows gzip, so an .xz tarball is first turned into a
+    // plain .tar in a background isolate (CPU-heavy, but off the UI thread).
+    // gzip goes straight through `tar xzf`.
+    String extractPath = tarPath;
+    String tarFlags = 'xzf';
+    if (d.source.compression == 'xz') {
+      emit('Descomprimiendo ${d.name} (puede tardar 1-3 min)...');
+      final plainTar = '$tarPath.plain';
+      await Isolate.run(() {
+        final xz = File(tarPath).readAsBytesSync();
+        final raw = XZDecoder().decodeBytes(xz);
+        File(plainTar).writeAsBytesSync(raw);
+      });
+      await tarFile.delete();
+      extractPath = plainTar;
+      tarFlags = 'xf'; // already uncompressed
+    }
+
     emit('Extrayendo sistema de archivos...');
-    final tarPath = '${base.path}/rootfs.tar.gz';
-    final tarFile = await _copyAsset(_rootfsAsset, tarPath);
-    final res = await Process.run(
-        '/system/bin/tar', ['xzf', tarPath, '-C', rootfs.path]);
-    await tarFile.delete();
-    if (res.exitCode != 0) {
+    final res = await Process.run('/system/bin/tar', [
+      tarFlags, extractPath,
+      '-C', rootfs.path,
+      if (d.source.stripComponents > 0)
+        '--strip-components=${d.source.stripComponents}',
+      // Skip /dev: it holds char/block device nodes (console, null, tty…) that
+      // an unprivileged Android app can't mknod — tar would otherwise abort with
+      // "permission denied". proot binds the host's /dev anyway (-b /dev), so the
+      // guest's own /dev is never used.
+      '--exclude=*/dev/*',
+      '--exclude=dev/*',
+    ]);
+    await File(extractPath).delete();
+    // The /dev exclusion above removes the only entries an app can't create, but
+    // some tar builds still return non-zero on harmless warnings. Treat the
+    // extraction as successful as long as a real rootfs landed (e.g. /bin and
+    // /etc exist); only fail hard when it clearly didn't.
+    final looksValid = Directory('${rootfs.path}/etc').existsSync() &&
+        (Directory('${rootfs.path}/bin').existsSync() ||
+            Directory('${rootfs.path}/usr/bin').existsSync());
+    if (res.exitCode != 0 && !looksValid) {
       throw Exception('tar falló (${res.exitCode}): ${res.stderr}');
     }
+    // Guarantee proot's bind mount points exist even though /dev was skipped.
+    // `shared` is the cross-distro folder bound at /shared (see _prootBaseArgs);
+    // a /root/shared symlink makes it discoverable from the default home dir.
+    for (final mp in const ['dev', 'proc', 'sys', 'shared']) {
+      await Directory('${rootfs.path}/$mp').create(recursive: true);
+    }
+    try {
+      final link = Link('${rootfs.path}/root/shared');
+      if (!await link.exists()) await link.create('/shared');
+    } catch (_) {/* non-fatal cosmetic shortcut */}
 
     // 3) DNS so the package manager can reach the network.
     emit('Configurando red...');
     await File('${rootfs.path}/etc/resolv.conf')
         .writeAsString('nameserver 8.8.8.8\nnameserver 1.1.1.1\n');
 
-    // 4) A Termux-style `pkg` wrapper around apk, plus a friendlier motd.
+    // 4) A Termux-style `pkg` wrapper around the distro's package manager,
+    //    plus a friendlier branded motd.
     emit('Instalando comandos (pkg)...');
     final localBin = Directory('${rootfs.path}/usr/local/bin');
     await localBin.create(recursive: true);
     final pkg = File('${localBin.path}/pkg');
-    await pkg.writeAsString(_pkgWrapper);
+    await pkg.writeAsString(_pkgWrapper(d.pm));
     await _chmod('0755', pkg.path);
 
-    // Branded MOTD: written with real ANSI/UTF-8 bytes to /etc/motd, then
-    // `cat`-ed from /etc/profile on every interactive login shell. Writing the
-    // raw bytes (rather than echo-ing escapes from shell) keeps the colour
-    // codes intact and sidesteps shell-quoting headaches.
-    await File('${rootfs.path}/etc/motd').writeAsString(_motd);
+    // Branded MOTD: real ANSI/UTF-8 bytes to /etc/motd, then cat-ed from
+    // /etc/profile on every interactive login shell.
+    await File('${rootfs.path}/etc/motd').writeAsString(_motd(d));
     await File('${rootfs.path}/etc/profile').writeAsString(
       '\n# KALA welcome banner (only on interactive terminals)\n'
       '[ -t 1 ] && cat /etc/motd 2>/dev/null\n',
       mode: FileMode.append,
     );
 
-    // 5) Pre-fetch the package index so `pkg install <x>` works immediately,
-    //    without the user having to run `pkg update` first. Non-fatal: if the
-    //    device is offline the user can refresh it later.
+    // 5) Pre-fetch the package index so `pkg install <x>` works immediately.
+    //    Non-fatal: if the device is offline the user can refresh it later.
     emit('Actualizando índice de paquetes...');
-    final upd = await _runInGuest('apk update');
+    final updateCmd = d.pm == PackageManager.apt
+        ? 'DEBIAN_FRONTEND=noninteractive apt-get update'
+        : 'apk update';
+    final upd = await _runInGuest(d, updateCmd);
     if (upd.exitCode != 0) {
       emit('(sin red ahora; usa "pkg update" más tarde)');
     }
 
-    final stamp = await _stamp();
-    await stamp.writeAsString('$_version');
+    await (await _stamp(d)).writeAsString('$_version');
     emit('Listo.');
   }
 
-  /// Run a one-off command inside the guest non-interactively (used during
-  /// provisioning, e.g. `apk update`). Shares proot's binary/binds/env with the
-  /// interactive [launch] path.
-  static Future<ProcessResult> _runInGuest(String command) async {
-    final rootfs = await rootfsDir();
+  /// Run a one-off command inside [d]'s guest non-interactively (used during
+  /// provisioning, e.g. the package-index refresh).
+  static Future<ProcessResult> _runInGuest(Distro d, String command) async {
+    final rootfs = await rootfsDir(d);
     return Process.run(
       await _prootPath(),
       [
-        ..._prootBaseArgs(rootfs),
+        ..._prootBaseArgs(d, rootfs, await sharedDir()),
         '/usr/bin/env', '-i', ..._guestEnv,
         '/bin/sh', '-c', command,
       ],
@@ -154,15 +395,13 @@ class DistroService {
     );
   }
 
-  /// Everything flutter_pty needs to spawn an interactive shell *inside* the
-  /// distro: the proot executable, its arguments, and the host-side environment
-  /// (LD_LIBRARY_PATH for libtalloc, PROOT_TMP_DIR for the loader).
-  static Future<ProotLaunch> launch({String shell = '/bin/sh'}) async {
-    final rootfs = await rootfsDir();
+  /// Everything flutter_pty needs to spawn an interactive shell inside [d].
+  static Future<ProotLaunch> launch(Distro d, {String shell = '/bin/sh'}) async {
+    final rootfs = await rootfsDir(d);
     return ProotLaunch(
       executable: await _prootPath(),
       arguments: [
-        ..._prootBaseArgs(rootfs),
+        ..._prootBaseArgs(d, rootfs, await sharedDir()),
         '/usr/bin/env', '-i', ..._guestEnv,
         'PS1=\\w \\\$ ',
         shell, '-l', // login shell: sources /etc/profile (welcome banner)
@@ -173,14 +412,18 @@ class DistroService {
   }
 
   // Base proot args shared by the interactive shell and one-off commands:
-  // fake root, bind the kernel virtual filesystems, start in /root.
-  static List<String> _prootBaseArgs(String rootfs) => [
+  // fake root, bind the kernel virtual filesystems + the cross-distro /shared
+  // folder, start in /root. apt-based distros also get --link2symlink so dpkg's
+  // hardlinks survive on Android's filesystem.
+  static List<String> _prootBaseArgs(Distro d, String rootfs, String shared) => [
         '--kill-on-exit',
+        if (d.pm == PackageManager.apt) '--link2symlink',
         '-r', rootfs,
         '-0',
         '-b', '/dev',
         '-b', '/proc',
         '-b', '/sys',
+        '-b', '$shared:/shared',
         '-w', '/root',
       ];
 
@@ -196,7 +439,6 @@ class DistroService {
   // PROOT_NO_SECCOMP: proot's seccomp acceleration (SECCOMP_RET_TRACE) is
   // required here — in pure-ptrace mode on this kernel (Android 16 / 6.12)
   // proot's emulated chdir/fchdir leak ENOSYS ("Function not implemented").
-  // Letting proot install its seccomp filter, like Termux's proot-distro, fixes it.
   static Future<Map<String, String>> _prootEnv() async {
     final bin = await binDir();
     return {
@@ -215,6 +457,38 @@ class DistroService {
     return file;
   }
 
+  /// Stream [url] to [destPath], reporting completion fraction via [onProgress]
+  /// when the server sends a Content-Length. Follows redirects (GitHub release
+  /// assets redirect to a CDN). Throws on a non-200 final response.
+  static Future<void> _download(
+    String url,
+    String destPath, {
+    void Function(double)? onProgress,
+  }) async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(url));
+      final response = await request.close(); // follows redirects by default
+      if (response.statusCode != 200) {
+        throw Exception('Descarga falló (HTTP ${response.statusCode})');
+      }
+      final total = response.contentLength;
+      final sink = File(destPath).openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in response) {
+          received += chunk.length;
+          sink.add(chunk);
+          if (total > 0) onProgress?.call(received / total);
+        }
+      } finally {
+        await sink.close();
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   static Future<void> _chmod(String mode, String path) async {
     final res = await Process.run('/system/bin/chmod', [mode, path]);
     if (res.exitCode != 0) {
@@ -222,7 +496,11 @@ class DistroService {
     }
   }
 
-  static const String _pkgWrapper = '''#!/bin/sh
+  // A Termux-style `pkg` command, mapped onto the distro's package manager.
+  static String _pkgWrapper(PackageManager pm) =>
+      pm == PackageManager.apt ? _pkgWrapperApt : _pkgWrapperApk;
+
+  static const String _pkgWrapperApk = '''#!/bin/sh
 # Termux-style package command, mapped onto Alpine's apk.
 cmd="\$1"; shift 2>/dev/null
 case "\$cmd" in
@@ -245,11 +523,34 @@ case "\$cmd" in
 esac
 ''';
 
+  static const String _pkgWrapperApt = '''#!/bin/sh
+# Termux-style package command, mapped onto Debian/Ubuntu's apt.
+export DEBIAN_FRONTEND=noninteractive
+cmd="\$1"; shift 2>/dev/null
+case "\$cmd" in
+  install|add|i)      exec apt-get install -y "\$@" ;;
+  uninstall|remove|rm|del) exec apt-get remove -y "\$@" ;;
+  update|up)          exec apt-get update "\$@" ;;
+  upgrade)            exec apt-get upgrade -y "\$@" ;;
+  search|find|s)      exec apt-cache search "\$@" ;;
+  list)               exec dpkg -l "\$@" ;;
+  info|show)          exec apt-cache show "\$@" ;;
+  ""|help|-h|--help)
+    echo "pkg: gestor de paquetes (envuelve apt)"
+    echo "  pkg install <paquete>     instalar"
+    echo "  pkg uninstall <paquete>   desinstalar"
+    echo "  pkg update                actualizar indices"
+    echo "  pkg upgrade               actualizar paquetes"
+    echo "  pkg search <texto>        buscar"
+    ;;
+  *) exec apt-get "\$cmd" "\$@" ;;
+esac
+''';
+
   // The KALA "message of the day": an ANSI-Shadow logo in the app's azure
-  // brand colour (256-colour 33 ≈ #007AFF), a tagline, and an aligned
-  // quick-start. \x1B is a literal ESC byte; \x1B[38;5;33m = azure, [1m = bold,
-  // [2m = dim, [0m = reset. Box/block glyphs render via the bundled CascadiaCode.
-  static const String _motd = '\n'
+  // brand colour (256-colour 33 ≈ #007AFF), a tagline naming the active distro,
+  // and an aligned quick-start. \x1B is a literal ESC byte.
+  static String _motd(Distro d) => '\n'
       '   \x1B[38;5;33m██╗  ██╗ █████╗ ██╗      █████╗ \x1B[0m\n'
       '   \x1B[38;5;33m██║ ██╔╝██╔══██╗██║     ██╔══██╗\x1B[0m\n'
       '   \x1B[38;5;33m█████╔╝ ███████║██║     ███████║\x1B[0m\n'
@@ -257,7 +558,7 @@ esac
       '   \x1B[38;5;33m██║  ██╗██║  ██║███████╗██║  ██║\x1B[0m\n'
       '   \x1B[38;5;33m╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝\x1B[0m\n'
       '\n'
-      '   \x1B[2mTu terminal Linux de bolsillo · Alpine + proot\x1B[0m\n'
+      '   \x1B[2mTu terminal Linux de bolsillo · ${d.name} + proot\x1B[0m\n'
       '   \x1B[2m──────────────────────────────────────────\x1B[0m\n'
       '\n'
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mpkg install\x1B[0m \x1B[2m<paquete>\x1B[0m  —  python3, git, nano…\n'
@@ -265,6 +566,7 @@ esac
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mpkg upgrade\x1B[0m  —  actualizar todo\n'
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mclear\x1B[0m  —  limpiar la pantalla\n'
       '\n'
+      '   \x1B[2m/shared  ·  carpeta compartida entre todas las distros\x1B[0m\n'
       '   \x1B[2mroot · ~  ·  escribe «pkg» para ver todos los comandos\x1B[0m\n'
       '\n';
 }

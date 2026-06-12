@@ -1,6 +1,6 @@
 # Plan: Selector de distribución Linux (Alpine / Ubuntu / Debian)
 
-> **Estado:** propuesta / pendiente de implementar
+> **Estado:** ✅ implementado (falta confirmar las URLs de descarga reales — ver §5).
 > **Objetivo:** permitir, desde **Ajustes**, elegir qué distro Linux usa la terminal local — manteniendo Alpine empaquetado (instantáneo) y ofreciendo Ubuntu/Debian **descargables** bajo demanda.
 
 ---
@@ -79,17 +79,19 @@ Sin cambios de fondo. Mismos args/flags que ya funcionan, apuntando a `rootfs` d
 
 ## 4. Pasos de implementación (checklist)
 
-- [ ] Definir `Distro` + catálogo (Alpine bundled, Ubuntu 24.04, Debian 12).
-- [ ] Ajuste persistido `active_distro` en `AppState` + getters.
-- [ ] Generalizar `DistroService`:
-  - [ ] rutas por distro (`<support>/distros/<id>/...`).
-  - [ ] `install()` que acepte asset **o** descarga con progreso.
-  - [ ] wrapper `pkg` parametrizado por gestor (apk/apt).
-  - [ ] `apk update` / `apt-get update` automático según distro.
-- [ ] Descarga de tarball con **barra de progreso** + manejo de errores/reintento.
-- [ ] UI en **Ajustes**: lista de distros, estado, descargar, activar, borrar.
-- [ ] Al cambiar de distro activa: reiniciar la sesión local para que tome la nueva.
-- [ ] Probar en dispositivo (igual que con Alpine): `pkg install`, `cd`, `ls`, Python.
+- [x] Definir `Distro` + catálogo (Alpine bundled, Ubuntu 24.04, Debian 12).
+- [x] Ajuste persistido `active_distro` en `AppState` + getters.
+- [x] Generalizar `DistroService`:
+  - [x] rutas por distro (`<support>/distro/distros/<id>/...`).
+  - [x] `install()` que acepte asset **o** descarga con progreso.
+  - [x] wrapper `pkg` parametrizado por gestor (apk/apt).
+  - [x] `apk update` / `apt-get update` automático según distro.
+- [x] Descarga de tarball con **barra de progreso** + manejo de errores.
+- [x] UI en **Ajustes**: lista de distros, estado, descargar, activar, borrar.
+- [x] Al cambiar de distro activa: reiniciar las sesiones locales activas.
+- [x] URLs de descarga reales verificadas (HTTP 200): Ubuntu noble v4.18.0 (~64 MB) y Debian bookworm v4.17.3 (~43 MB), proot-distro aarch64.
+- [x] `--strip-components=1` al extraer los tarballs de proot-distro (traen carpeta superior `<distro>-aarch64/`, a diferencia de Alpine).
+- [ ] Probar en dispositivo (igual que con Alpine): descargar Ubuntu desde Ajustes, activar, `pkg install python3`, `cd`, `ls`. Vigilar que toybox `tar` soporte `xJf` + `--strip-components`, y apt bajo proot.
 
 ---
 

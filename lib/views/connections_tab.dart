@@ -21,7 +21,7 @@ class ConnectionsTab extends StatelessWidget {
         children: [
           ScreenHeader(
             'Workspace',
-            eyebrow: 'AITerminal',
+            eyebrow: 'KALA',
             trailing: InvertedButton(
               label: 'Nueva',
               icon: Icons.add,

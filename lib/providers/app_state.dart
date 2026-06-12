@@ -28,6 +28,11 @@ class TerminalSession {
   String currentPath;
   List<FileSystemEntityInfo> files;
   bool isLoadingFiles;
+  // Whether the underlying shell (local PTY or SSH) has actually been spawned.
+  // The initial local session is created lazily: the object exists so the UI's
+  // active-session delegates work, but proot/Alpine isn't booted until the user
+  // first opens the terminal or explorer tab. See [ensureActiveSessionStarted].
+  bool started;
   List<ServerSocket> forwardServers;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
   // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
@@ -45,6 +50,7 @@ class TerminalSession {
     required this.currentPath,
     List<FileSystemEntityInfo>? files,
     this.isLoadingFiles = false,
+    this.started = false,
     List<ServerSocket>? forwardServers,
   })  : files = files ?? [],
         forwardServers = forwardServers ?? [];
@@ -57,6 +63,10 @@ class AppState extends ChangeNotifier {
 
   void setActiveTabIndex(int index) {
     _activeTabIndex = index;
+    // Boot the deferred local shell the first time the user actually needs it —
+    // i.e. when they land on the terminal (1) or explorer (2) tab. The app opens
+    // on the connections tab, so this keeps proot/Alpine off the startup path.
+    if (index == 1 || index == 2) ensureActiveSessionStarted();
     notifyListeners();
   }
 
@@ -166,6 +176,7 @@ class AppState extends ChangeNotifier {
   // settings screen has a single source of truth.
   static const String _kThemeMode = 'settings_theme_mode';
   static const String _kTerminalFontSize = 'settings_terminal_font_size';
+  static const String _kActiveDistro = 'active_distro';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -175,6 +186,27 @@ class AppState extends ChangeNotifier {
 
   double _terminalFontSize = 13;
   double get terminalFontSize => _terminalFontSize;
+
+  // ---- Linux distro selector ----------------------------------------------
+  // The local Android terminal runs inside a proot'd Linux userland. Alpine is
+  // bundled (instant); Ubuntu/Debian are downloaded on demand. [_activeDistroId]
+  // is which one the local shell launches into; the maps track per-distro UI
+  // state (installed? currently downloading? at what %?).
+  String _activeDistroId = DistroService.defaultDistroId;
+  String get activeDistroId => _activeDistroId;
+  Distro get activeDistro => DistroService.byId(_activeDistroId);
+
+  List<Distro> get distroCatalog => DistroService.catalog;
+
+  final Map<String, bool> _distroInstalled = {};
+  final Map<String, double> _distroProgress = {}; // 0..1 while downloading
+  final Map<String, String> _distroStatus = {}; // current phase text
+  final Set<String> _distroBusy = {}; // installing/deleting in flight
+
+  bool isDistroInstalled(String id) => _distroInstalled[id] ?? false;
+  bool isDistroBusy(String id) => _distroBusy.contains(id);
+  double? distroProgress(String id) => _distroProgress[id];
+  String? distroStatus(String id) => _distroStatus[id];
 
   // ---- Command history (smart command bar) --------------------------------
   // Persisted, most-recent-first, de-duplicated list of commands the user has
@@ -190,7 +222,11 @@ class AppState extends ChangeNotifier {
     _loadSettings();
     _loadProfiles();
     _loadCommandHistory();
-    createNewSession(); // Start a local terminal by default
+    // Create the default local session as a lightweight placeholder only. The
+    // heavy part (booting proot/Alpine via flutter_pty) is deferred until the
+    // user first opens the terminal/explorer tab, so the app reaches the
+    // connections screen without paying for the shell up front.
+    createNewSession(lazy: true);
     // Keep the process alive in the background (Termux-style) so shells survive
     // when the app is minimized. No-op on platforms other than Android. Deferred
     // to the first frame so the native MethodChannel handler is registered.
@@ -220,6 +256,20 @@ class AppState extends ChangeNotifier {
       _markdownScale = mdScale.clamp(minMarkdownScale, maxMarkdownScale);
     }
 
+    final distroId = prefs.getString(_kActiveDistro);
+    if (distroId != null && DistroService.byId(distroId).id == distroId) {
+      _activeDistroId = distroId;
+    }
+
+    notifyListeners();
+    refreshDistroStatus();
+  }
+
+  /// Recompute which distros are installed on disk (drives the Settings list).
+  Future<void> refreshDistroStatus() async {
+    for (final d in DistroService.catalog) {
+      _distroInstalled[d.id] = await DistroService.isInstalled(d);
+    }
     notifyListeners();
   }
 
@@ -243,11 +293,95 @@ class AppState extends ChangeNotifier {
   void bumpTerminalFontSize(double delta) =>
       setTerminalFontSize(_terminalFontSize + delta);
 
-  // Create a new terminal session
-  void createNewSession({ConnectionProfile? profile}) {
+  // ---- Distro actions ------------------------------------------------------
+
+  /// Download + provision [id] (Ubuntu/Debian). Reports progress through
+  /// [distroProgress]/[isDistroBusy] so the Settings list can show a bar. Throws
+  /// on failure so the UI can surface it; the partial install is left removed.
+  Future<void> downloadDistro(String id) async {
+    if (_distroBusy.contains(id)) return;
+    final distro = DistroService.byId(id);
+    _distroBusy.add(id);
+    _distroProgress[id] = 0;
+    _distroStatus[id] = 'Iniciando…';
+    notifyListeners();
+    try {
+      await DistroService.install(
+        distro,
+        onStatus: (s) {
+          _distroStatus[id] = s;
+          notifyListeners();
+        },
+        onProgress: (p) {
+          _distroProgress[id] = p;
+          notifyListeners();
+        },
+      );
+      _distroInstalled[id] = true;
+    } catch (e) {
+      // Leave nothing half-installed behind.
+      await DistroService.remove(distro);
+      _distroInstalled[id] = false;
+      rethrow;
+    } finally {
+      _distroBusy.remove(id);
+      _distroProgress.remove(id);
+      _distroStatus.remove(id);
+      notifyListeners();
+    }
+  }
+
+  /// Delete [id]'s rootfs to free space. Refuses to delete the active distro.
+  Future<void> deleteDistro(String id) async {
+    if (id == _activeDistroId || _distroBusy.contains(id)) return;
+    _distroBusy.add(id);
+    notifyListeners();
+    try {
+      await DistroService.remove(DistroService.byId(id));
+      _distroInstalled[id] = false;
+    } finally {
+      _distroBusy.remove(id);
+      notifyListeners();
+    }
+  }
+
+  /// Make [id] the distro the local terminal launches into. Persists the choice
+  /// and restarts every local (non-SSH) session in place so they pick it up.
+  Future<void> setActiveDistro(String id) async {
+    if (id == _activeDistroId) return;
+    if (!(_distroInstalled[id] ?? false)) return; // must be installed first
+    _activeDistroId = id;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kActiveDistro, id);
+
+    // Restart already-running local shells so the new userland takes effect
+    // immediately. Sessions that were never started (lazy) will pick up the new
+    // active distro when they first boot, so leave them untouched.
+    for (final session in _sessions) {
+      if (session.started &&
+          session.activeProfile == null &&
+          session.connectionStatus != ConnectionStatus.remote) {
+        session.localPty?.kill();
+        session.terminal
+            .write('\r\n\x1B[2mCambiando a ${activeDistro.name}…\x1B[0m\r\n');
+        _initLocalSession(session);
+      }
+    }
+  }
+
+  // Create a new terminal session.
+  //
+  // When [lazy] is true the session object is created and made active but its
+  // shell is NOT spawned — used for the initial local session so app startup
+  // doesn't boot proot/Alpine. The shell starts on the first
+  // [ensureActiveSessionStarted] call (when the terminal/explorer tab opens).
+  // [lazy] is ignored for profile (SSH) sessions, which the user opens
+  // intentionally and expects to connect right away.
+  void createNewSession({ConnectionProfile? profile, bool lazy = false}) {
     final String id = const Uuid().v4();
     final Terminal terminal = Terminal(maxLines: 10000);
-    
+
     String name;
     if (profile != null) {
       name = profile.name;
@@ -271,14 +405,29 @@ class AppState extends ChangeNotifier {
 
     if (profile != null) {
       _connectSessionToSSH(session, profile);
-    } else {
+    } else if (!lazy) {
       _initLocalSession(session);
     }
+  }
+
+  /// Boots the active session's local shell if it hasn't been started yet.
+  /// No-op for sessions that are already running or are SSH profiles (those
+  /// connect on creation). This is the lazy-init entry point for the default
+  /// local session, called when the user first opens the terminal/explorer tab.
+  void ensureActiveSessionStarted() {
+    final session = activeSession;
+    if (session == null || session.started || session.activeProfile != null) {
+      return;
+    }
+    _initLocalSession(session);
   }
 
   // Initialize a local PTY session
   Future<void> _initLocalSession(TerminalSession session) async {
     try {
+      // Mark started up front so a concurrent ensureActiveSessionStarted (e.g.
+      // tapping terminal then explorer quickly) can't spawn a second shell.
+      session.started = true;
       _disposeWriters(session);
       session.connectionStatus = ConnectionStatus.local;
 
@@ -294,16 +443,18 @@ class AppState extends ChangeNotifier {
       };
 
       if (Platform.isAndroid) {
-        // On Android the "local terminal" is a full Linux userland (Alpine)
-        // running under proot — that's what gives a real package manager and a
-        // normal filesystem instead of the bare, mostly-unreadable system shell.
+        // On Android the "local terminal" is a full Linux userland (the active
+        // distro) running under proot — that's what gives a real package
+        // manager and a normal filesystem instead of the bare system shell.
+        final distro = activeDistro;
         try {
-          if (!await DistroService.isInstalled()) {
+          if (!await DistroService.isInstalled(distro)) {
             session.terminal.write(
-                '\r\nPrimer arranque: instalando entorno Linux (Alpine)...\r\n');
-            await DistroService.install(log: session.terminal.write);
+                '\r\nPrimer arranque: instalando entorno Linux (${distro.name})...\r\n');
+            await DistroService.install(distro, log: session.terminal.write);
+            _distroInstalled[distro.id] = true;
           }
-          final launch = await DistroService.launch();
+          final launch = await DistroService.launch(distro);
           executable = launch.executable;
           arguments = launch.arguments;
           workingDir = launch.workingDirectory;
@@ -397,10 +548,13 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final profilesJson = prefs.getStringList('ssh_profiles') ?? [];
 
-    final loaded = <ConnectionProfile>[];
     var needsMigration = false;
 
-    for (final raw in profilesJson) {
+    // Resolve every profile concurrently. Each profile does two Keystore reads
+    // (password + private key); on Android those are slow, so reading them in
+    // parallel — across profiles and across the two keys — instead of awaiting
+    // one at a time keeps the connections tab from stalling at startup.
+    final loaded = await Future.wait(profilesJson.map((raw) async {
       final base = ConnectionProfile.fromJson(raw);
 
       // Legacy entries embed the secrets directly in the prefs JSON.
@@ -416,12 +570,15 @@ class AppState extends ChangeNotifier {
         needsMigration = true;
       }
 
-      final password =
-          await SecureStore.instance.readPassword(base.id) ?? base.password;
-      final privateKey =
-          await SecureStore.instance.readPrivateKey(base.id) ?? base.privateKey;
-      loaded.add(base.copyWith(password: password, privateKey: privateKey));
-    }
+      final secrets = await Future.wait([
+        SecureStore.instance.readPassword(base.id),
+        SecureStore.instance.readPrivateKey(base.id),
+      ]);
+      return base.copyWith(
+        password: secrets[0] ?? base.password,
+        privateKey: secrets[1] ?? base.privateKey,
+      );
+    }));
 
     _profiles = loaded;
 
@@ -565,6 +722,9 @@ class AppState extends ChangeNotifier {
   void switchSession(int index) {
     if (index < 0 || index >= _sessions.length) return;
     _activeSessionIndex = index;
+    // Switching sessions happens from the terminal UI, so a deferred local
+    // session being switched to should boot now (it also kicks off _loadFiles).
+    ensureActiveSessionStarted();
     notifyListeners();
     _loadFiles();
   }
