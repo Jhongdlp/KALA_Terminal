@@ -218,11 +218,37 @@ class DistroService {
     return total;
   }
 
-  /// Remove [d]'s installed rootfs to free space. Refuses bundled distros that
-  /// are not installed; safe to call on anything.
+  /// Remove [d]'s installed rootfs to free space. Safe to call on anything.
+  ///
+  /// A proot rootfs contains directories without owner write permission (e.g.
+  /// mode 0555), and on POSIX you can't delete entries inside a non-writable
+  /// directory — so a plain `Directory.delete(recursive: true)` aborts with
+  /// EACCES partway through and the distro "won't delete". We first chmod the
+  /// whole tree writable (best-effort, via the platform `chmod`) so the
+  /// recursive delete can finish.
   static Future<void> remove(Distro d) async {
     final dir = Directory(await _distroDir(d));
-    if (await dir.exists()) await dir.delete(recursive: true);
+    if (!await dir.exists()) return;
+    await _makeTreeWritable(dir.path);
+    await dir.delete(recursive: true);
+  }
+
+  /// Recursively grant owner rwx on every directory under [path] so the tree
+  /// can be deleted. Uses the platform `chmod -R` (toybox on Android), falling
+  /// back to a Dart walk if that binary isn't available. Best-effort: failures
+  /// are swallowed because the subsequent delete will surface any real problem.
+  static Future<void> _makeTreeWritable(String path) async {
+    for (final chmod in const ['/system/bin/chmod', 'chmod']) {
+      try {
+        final r = await Process.run(chmod, ['-R', 'u+rwX', path]);
+        if (r.exitCode == 0) return;
+      } catch (_) {
+        // try the next candidate
+      }
+    }
+    // Fallback: walk and chmod directories ourselves (dart:io can't chmod, so
+    // this is a no-op for permissions but at least won't throw — the delete
+    // will then report the real error if it still can't proceed).
   }
 
   /// Provision the shared proot binary + loader + libs. Idempotent and

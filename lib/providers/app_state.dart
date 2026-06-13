@@ -31,6 +31,10 @@ class TerminalSession {
   SSHClient? sshClient;
   SSHSession? sshSession;
   Pty? localPty;
+  // Which Linux distro this local session's proot guest runs. Each terminal can
+  // run a different distro (see [AppState.createNewSession]); SSH sessions
+  // ignore it. Read by [_initLocalSession] when the shell boots.
+  String distroId;
   String currentPath;
   // Stack of previously visited directories for this session's explorer, used
   // by [AppState.navigateBack]. Pushed in [AppState.changeDirectory] and
@@ -57,6 +61,7 @@ class TerminalSession {
     this.sshClient,
     this.sshSession,
     this.localPty,
+    this.distroId = DistroService.defaultDistroId,
     required this.currentPath,
     List<FileSystemEntityInfo>? files,
     this.isLoadingFiles = false,
@@ -316,12 +321,14 @@ class AppState extends ChangeNotifier {
 
   // ---- Linux distro selector ----------------------------------------------
   // The local Android terminal runs inside a proot'd Linux userland. Alpine is
-  // bundled (instant); Ubuntu/Debian are downloaded on demand. [_activeDistroId]
-  // is which one the local shell launches into; the maps track per-distro UI
-  // state (installed? currently downloading? at what %?).
-  String _activeDistroId = DistroService.defaultDistroId;
-  String get activeDistroId => _activeDistroId;
-  Distro get activeDistro => DistroService.byId(_activeDistroId);
+  // bundled (instant); Ubuntu/Debian are downloaded on demand. Each terminal
+  // session carries its own [TerminalSession.distroId], so different tabs can
+  // run different distros at once. [_defaultDistroId] is just the one a *new*
+  // local terminal starts with — it tracks the last distro the user opened.
+  // The maps track per-distro UI state (installed? downloading? at what %?).
+  String _defaultDistroId = DistroService.defaultDistroId;
+  String get defaultDistroId => _defaultDistroId;
+  Distro get defaultDistro => DistroService.byId(_defaultDistroId);
 
   List<Distro> get distroCatalog => DistroService.catalog;
 
@@ -380,7 +387,14 @@ class AppState extends ChangeNotifier {
 
     final distroId = prefs.getString(_kActiveDistro);
     if (distroId != null && DistroService.byId(distroId).id == distroId) {
-      _activeDistroId = distroId;
+      _defaultDistroId = distroId;
+      // The initial local session is created (lazily) in the constructor before
+      // this runs, so it was stamped with the fallback default. Re-point any
+      // not-yet-booted local session at the persisted choice so the first
+      // terminal opens into the distro the user last used.
+      for (final s in _sessions) {
+        if (!s.started && s.activeProfile == null) s.distroId = _defaultDistroId;
+      }
     }
 
     final scheme = prefs.getString(_kTerminalScheme);
@@ -509,43 +523,37 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Delete [id]'s rootfs to free space. Refuses to delete the active distro.
+  /// True while at least one running local terminal is using distro [id], so the
+  /// Settings UI can keep its rootfs from being deleted out from under a session.
+  bool isDistroInUse(String id) => _sessions.any((s) =>
+      s.started &&
+      s.connectionStatus == ConnectionStatus.local &&
+      s.distroId == id);
+
+  /// Delete [id]'s rootfs to free space. Refuses while a running terminal still
+  /// uses it. Rethrows on failure so the UI can surface it; the installed flag
+  /// is recomputed from disk either way (the removal is best-effort: see
+  /// [DistroService.remove], which fixes up unwritable proot dirs first).
   Future<void> deleteDistro(String id) async {
-    if (id == _activeDistroId || _distroBusy.contains(id)) return;
+    if (_distroBusy.contains(id) || isDistroInUse(id)) return;
     _distroBusy.add(id);
     notifyListeners();
     try {
       await DistroService.remove(DistroService.byId(id));
-      _distroInstalled[id] = false;
     } finally {
+      _distroInstalled[id] = await DistroService.isInstalled(DistroService.byId(id));
       _distroBusy.remove(id);
       notifyListeners();
     }
   }
 
-  /// Make [id] the distro the local terminal launches into. Persists the choice
-  /// and restarts every local (non-SSH) session in place so they pick it up.
-  Future<void> setActiveDistro(String id) async {
-    if (id == _activeDistroId) return;
-    if (!(_distroInstalled[id] ?? false)) return; // must be installed first
-    _activeDistroId = id;
-    notifyListeners();
+  /// Remember [id] as the distro a *new* local terminal should start with (the
+  /// last one the user opened). Persisted; does not touch running sessions.
+  Future<void> _rememberDefaultDistro(String id) async {
+    if (id == _defaultDistroId) return;
+    _defaultDistroId = id;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kActiveDistro, id);
-
-    // Restart already-running local shells so the new userland takes effect
-    // immediately. Sessions that were never started (lazy) will pick up the new
-    // active distro when they first boot, so leave them untouched.
-    for (final session in _sessions) {
-      if (session.started &&
-          session.activeProfile == null &&
-          session.connectionStatus != ConnectionStatus.remote) {
-        session.localPty?.kill();
-        session.terminal
-            .write('\r\n\x1B[2mCambiando a ${activeDistro.name}…\x1B[0m\r\n');
-        _initLocalSession(session);
-      }
-    }
   }
 
   // Create a new terminal session.
@@ -556,7 +564,12 @@ class AppState extends ChangeNotifier {
   // [ensureActiveSessionStarted] call (when the terminal/explorer tab opens).
   // [lazy] is ignored for profile (SSH) sessions, which the user opens
   // intentionally and expects to connect right away.
-  void createNewSession({ConnectionProfile? profile, bool lazy = false}) {
+  //
+  // [distroId] picks which Linux userland a local terminal boots into; it
+  // defaults to [_defaultDistroId] (the last one opened) and, when given
+  // explicitly, becomes the new default. Ignored for SSH sessions.
+  void createNewSession(
+      {ConnectionProfile? profile, bool lazy = false, String? distroId}) {
     final String id = const Uuid().v4();
     // Bell (BEL / \a) → haptic tick, like Termux's vibrate-on-bell. No-op on
     // devices without a vibrator.
@@ -579,6 +592,7 @@ class AppState extends ChangeNotifier {
       terminal: terminal,
       connectionStatus: ConnectionStatus.disconnected,
       activeProfile: profile,
+      distroId: distroId ?? _defaultDistroId,
       currentPath: '',
     );
 
@@ -588,8 +602,11 @@ class AppState extends ChangeNotifier {
 
     if (profile != null) {
       _connectSessionToSSH(session, profile);
-    } else if (!lazy) {
-      _initLocalSession(session);
+    } else {
+      // Opening a local terminal with an explicit distro makes it the default
+      // for the next one (and survives restarts).
+      if (distroId != null) _rememberDefaultDistro(distroId);
+      if (!lazy) _initLocalSession(session);
     }
   }
 
@@ -629,10 +646,11 @@ class AppState extends ChangeNotifier {
       };
 
       if (Platform.isAndroid) {
-        // On Android the "local terminal" is a full Linux userland (the active
-        // distro) running under proot — that's what gives a real package
-        // manager and a normal filesystem instead of the bare system shell.
-        final distro = activeDistro;
+        // On Android the "local terminal" is a full Linux userland (this
+        // session's distro) running under proot — that's what gives a real
+        // package manager and a normal filesystem instead of the bare system
+        // shell. Each session can run a different distro.
+        final distro = DistroService.byId(session.distroId);
         try {
           if (!await DistroService.isInstalled(distro)) {
             session.terminal.write(
@@ -1536,7 +1554,7 @@ class AppState extends ChangeNotifier {
     String guestPath = path;
     if (Platform.isAndroid &&
         session.connectionStatus == ConnectionStatus.local) {
-      guestPath = await _hostToGuestPath(path);
+      guestPath = await _hostToGuestPath(path, session.distroId);
     }
 
     // Single-quote for the shell; embedded single quotes become '\''.
@@ -1563,7 +1581,7 @@ class AppState extends ChangeNotifier {
   ///
   /// Anything outside those zones is returned unchanged; the shell will report
   /// "no such directory" rather than silently navigating to the wrong place.
-  Future<String> _hostToGuestPath(String hostPath) async {
+  Future<String> _hostToGuestPath(String hostPath, String distroId) async {
     // Phone storage is bind-mounted at the same absolute path inside proot.
     if (hostPath.startsWith('/storage/') || hostPath.startsWith('/sdcard')) {
       return hostPath;
@@ -1574,8 +1592,8 @@ class AppState extends ChangeNotifier {
     if (hostPath.startsWith('$shared/')) {
       return '/shared${hostPath.substring(shared.length)}';
     }
-    // Active distro rootfs — the most common case.
-    final rootfs = await DistroService.rootfsDir(DistroService.byId(_activeDistroId));
+    // This session's distro rootfs — the most common case.
+    final rootfs = await DistroService.rootfsDir(DistroService.byId(distroId));
     if (hostPath == rootfs) return '/';
     if (hostPath.startsWith('$rootfs/')) {
       return hostPath.substring(rootfs.length); // keeps the leading '/'

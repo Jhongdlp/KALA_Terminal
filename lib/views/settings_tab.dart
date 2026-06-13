@@ -495,7 +495,11 @@ class _DistroRow extends StatelessWidget {
     final busy = state.isDistroBusy(id);
     final progress = state.distroProgress(id);
     final status = state.distroStatus(id);
-    final active = state.activeDistroId == id;
+    // [isDefault] = the distro a *new* local terminal starts with (the last one
+    // opened). [inUse] = a running terminal is currently on it, so it can't be
+    // deleted out from under that session.
+    final isDefault = state.defaultDistroId == id;
+    final inUse = state.isDistroInUse(id);
     // Show a determinate bar while bytes are streaming in (progress < ~100%),
     // then an indeterminate bar for the CPU phases (decompress/extract) where
     // there's no fraction to report.
@@ -506,15 +510,15 @@ class _DistroRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Selection indicator — filled azure when this distro is active.
+          // Status indicator — a check when the distro is installed.
           Padding(
             padding: const EdgeInsets.only(top: 2, right: 10),
             child: Icon(
-              active
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
+              installed
+                  ? Icons.check_circle
+                  : Icons.circle_outlined,
               size: 18,
-              color: active ? const Color(0xFF007AFF) : AppColors.faint,
+              color: installed ? const Color(0xFF007AFF) : AppColors.faint,
             ),
           ),
           Expanded(
@@ -527,13 +531,17 @@ class _DistroRow extends StatelessWidget {
                         style: AppText.body(13,
                             color: AppColors.bone, weight: FontWeight.w700)),
                     const SizedBox(width: 8),
-                    if (active)
-                      MonoTag('ACTIVA', color: const Color(0xFF007AFF))
+                    if (isDefault && installed)
+                      MonoTag('PREDET.', color: const Color(0xFF007AFF))
                     else if (installed)
                       MonoTag('INSTALADO', color: AppColors.muted)
                     else
                       MonoTag('~${distro.approxSizeMb} MB',
                           color: AppColors.faint),
+                    if (inUse) ...[
+                      const SizedBox(width: 6),
+                      MonoTag('EN USO', color: AppColors.muted),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -567,7 +575,7 @@ class _DistroRow extends StatelessWidget {
             state: state,
             installed: installed,
             busy: busy,
-            active: active,
+            inUse: inUse,
           ),
         ],
       ),
@@ -581,13 +589,13 @@ class _DistroActions extends StatelessWidget {
   final AppState state;
   final bool installed;
   final bool busy;
-  final bool active;
+  final bool inUse;
   const _DistroActions({
     required this.distro,
     required this.state,
     required this.installed,
     required this.busy,
-    required this.active,
+    required this.inUse,
   });
 
   @override
@@ -609,26 +617,15 @@ class _DistroActions extends StatelessWidget {
       );
     }
 
-    // Installed: offer to activate (if not already) and to delete (if not active).
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (!active)
-          InvertedButton(
-            label: 'Activar',
-            dense: true,
-            onPressed: () => state.setActiveDistro(distro.id),
-          ),
-        if (!active) const SizedBox(height: 6),
-        if (!active)
-          GhostButton(
-            label: 'Borrar',
-            icon: Icons.delete_outline,
-            dense: true,
-            danger: true,
-            onPressed: () => _confirmDelete(context),
-          ),
-      ],
+    // Installed: offer to delete, unless a running terminal is using it (then
+    // the EN USO tag in the row explains why the action is unavailable).
+    if (inUse) return const SizedBox.shrink();
+    return GhostButton(
+      label: 'Borrar',
+      icon: Icons.delete_outline,
+      dense: true,
+      danger: true,
+      onPressed: () => _confirmDelete(context),
     );
   }
 
@@ -645,6 +642,7 @@ class _DistroActions extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -670,7 +668,15 @@ class _DistroActions extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true) await state.deleteDistro(distro.id);
+    if (ok != true) return;
+    try {
+      await state.deleteDistro(distro.id);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('No se pudo borrar ${distro.name}: $e'),
+        backgroundColor: AppColors.danger,
+      ));
+    }
   }
 }
 
