@@ -6,9 +6,11 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/code_highlight.dart';
 import '../widgets/swiss.dart';
+import 'audio_view.dart';
 import 'image_view.dart';
 import 'markdown_view.dart';
 import 'pdf_view.dart';
+import 'video_view.dart';
 
 class EditorTab extends StatefulWidget {
   const EditorTab({super.key});
@@ -58,6 +60,10 @@ class _EditorTabState extends State<EditorTab> {
         context.select<AppState, bool>((s) => s.isViewingPdf);
     final isViewingImage =
         context.select<AppState, bool>((s) => s.isViewingImage);
+    final isViewingVideo =
+        context.select<AppState, bool>((s) => s.isViewingVideo);
+    final isViewingAudio =
+        context.select<AppState, bool>((s) => s.isViewingAudio);
     final editorFontSize =
         context.select<AppState, double>((s) => s.editorFontSize);
     // AppColors is a global, mutable palette swapped on theme change; depend on
@@ -96,6 +102,14 @@ class _EditorTabState extends State<EditorTab> {
     if (isViewingImage) {
       return _buildImage(
           context, filename, editingFilePath, isEditingFileRemote);
+    }
+
+    // Video and audio play through an embedded media_kit player.
+    if (isViewingVideo) {
+      return _buildVideo(context, filename, isEditingFileRemote);
+    }
+    if (isViewingAudio) {
+      return _buildAudio(context, filename, isEditingFileRemote);
     }
 
     // Markdown documents render a formatted, zoomable preview by default; the
@@ -417,6 +431,114 @@ class _EditorTabState extends State<EditorTab> {
             child: bytes == null
                 ? const SizedBox.shrink()
                 : ImageView(data: bytes, sourceName: filePath),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Embedded video player. Same header chrome as the PDF/image viewers, with
+  /// the media_kit video surface and a playback bar below.
+  Widget _buildVideo(
+      BuildContext context, String filename, bool isEditingFileRemote) {
+    final path = context.read<AppState>().viewingMediaPath;
+    final extension =
+        filename.contains('.') ? filename.split('.').last.toUpperCase() : '';
+
+    return Container(
+      color: AppColors.ink,
+      child: Column(
+        children: [
+          // Header bar
+          Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.panel,
+              border: Border(
+                  bottom: BorderSide(color: AppColors.hairline, width: 1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.close, color: AppColors.muted, size: 16),
+                  onPressed: () => context.read<AppState>().closeFile(),
+                  tooltip: 'Cerrar archivo',
+                ),
+                Expanded(
+                  child: _FileTitle(
+                    filename: filename,
+                    isFileDirty: false,
+                    isEditingFileRemote: isEditingFileRemote,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MonoTag(extension.isEmpty ? 'VIDEO' : extension,
+                    color: AppColors.faint),
+                const SizedBox(width: 4),
+              ],
+            ),
+          ),
+
+          // Video surface + playback controls
+          Expanded(
+            child: path == null
+                ? const SizedBox.shrink()
+                : VideoView(path: path),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Embedded audio player. Same header chrome as the other viewers, with a
+  /// centered title/icon and a playback bar below.
+  Widget _buildAudio(
+      BuildContext context, String filename, bool isEditingFileRemote) {
+    final path = context.read<AppState>().viewingMediaPath;
+    final extension =
+        filename.contains('.') ? filename.split('.').last.toUpperCase() : '';
+
+    return Container(
+      color: AppColors.ink,
+      child: Column(
+        children: [
+          // Header bar
+          Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.panel,
+              border: Border(
+                  bottom: BorderSide(color: AppColors.hairline, width: 1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.close, color: AppColors.muted, size: 16),
+                  onPressed: () => context.read<AppState>().closeFile(),
+                  tooltip: 'Cerrar archivo',
+                ),
+                Expanded(
+                  child: _FileTitle(
+                    filename: filename,
+                    isFileDirty: false,
+                    isEditingFileRemote: isEditingFileRemote,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MonoTag(extension.isEmpty ? 'AUDIO' : extension,
+                    color: AppColors.faint),
+                const SizedBox(width: 4),
+              ],
+            ),
+          ),
+
+          // Player surface
+          Expanded(
+            child: path == null
+                ? const SizedBox.shrink()
+                : AudioView(path: path, filename: filename),
           ),
         ],
       ),

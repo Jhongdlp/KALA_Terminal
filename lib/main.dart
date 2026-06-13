@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'providers/app_state.dart';
 import 'theme/app_theme.dart';
@@ -6,6 +7,8 @@ import 'views/home_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Initialize the media_kit/libmpv backend used by the video/audio viewers.
+  MediaKit.ensureInitialized();
 
   runApp(
     ChangeNotifierProvider(

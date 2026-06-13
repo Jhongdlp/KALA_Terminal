@@ -234,6 +234,52 @@ class AppState extends ChangeNotifier {
   bool get isViewingImage =>
       _editingFilePath != null && _viewingImageBytes != null;
 
+  // ---- Video / audio player --------------------------------------------------
+  // Video and audio open in an embedded media_kit player on the editor tab.
+  // Local files are played directly from their path; SFTP files have no local
+  // path, so they are downloaded to a temp file first (cleaned up on close or
+  // when another file is opened).
+  static const Set<String> _videoExtensions = {
+    '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.flv', '.3gp', '.wmv'
+  };
+  static const Set<String> _audioExtensions = {
+    '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.opus', '.wma'
+  };
+
+  /// Whether [path] should open in the video player (by extension).
+  static bool isVideoPath(String path) {
+    final lower = path.toLowerCase();
+    return _videoExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  /// Whether [path] should open in the audio player (by extension).
+  static bool isAudioPath(String path) {
+    final lower = path.toLowerCase();
+    return _audioExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  String? _viewingMediaPath;
+  String? get viewingMediaPath => _viewingMediaPath;
+  // Local copy of a remote media file downloaded for playback; deleted once
+  // it's no longer needed.
+  File? _tempMediaFile;
+  bool get isViewingVideo =>
+      _editingFilePath != null &&
+      _viewingMediaPath != null &&
+      isVideoPath(_editingFilePath!);
+  bool get isViewingAudio =>
+      _editingFilePath != null &&
+      _viewingMediaPath != null &&
+      isAudioPath(_editingFilePath!);
+
+  void _disposeTempMediaFile() {
+    final temp = _tempMediaFile;
+    _tempMediaFile = null;
+    if (temp != null) {
+      temp.delete().catchError((_) => temp);
+    }
+  }
+
   double _markdownScale = 1.0;
   double get markdownScale => _markdownScale;
 
@@ -1467,11 +1513,17 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Download the selected remote entries to the local Downloads folder.
-  /// Only works when the active session is SSH/remote. Progress is surfaced
-  /// through [isDownloading], [downloadCurrent], [downloadTotal], and
-  /// [downloadCurrentName] so the explorer can show a progress bar.
-  Future<void> downloadSelection() async {
+  /// Best-effort storage permission request, exposed so the UI can ensure
+  /// access before opening the local folder picker (which needs to list
+  /// `/storage/emulated/0` on Android). No-op off Android.
+  Future<void> ensureStoragePermission() => _ensureStoragePermission();
+
+  /// Download the selected remote entries to a local folder. Only works when
+  /// the active session is SSH/remote. Pass [destDir] to save to a specific
+  /// directory the user chose; when null, falls back to the public Downloads
+  /// folder. Progress is surfaced through [isDownloading], [downloadCurrent],
+  /// [downloadTotal], and [downloadCurrentName] so the explorer can show a bar.
+  Future<void> downloadSelection({String? destDir}) async {
     final session = activeSession;
     final entries = _selectedEntries;
     if (session == null ||
@@ -1491,28 +1543,31 @@ class AppState extends ChangeNotifier {
     try {
       if (Platform.isAndroid) await _ensureStoragePermission();
 
-      // Destination: public Downloads/KALA on Android, ~/Downloads/KALA elsewhere.
-      final String destDir;
-      if (Platform.isAndroid) {
-        destDir = '/storage/emulated/0/Download/KALA';
+      // Destination: the folder the user picked, or — as a fallback — the
+      // public Downloads/KALA on Android, ~/Downloads/KALA elsewhere.
+      final String finalDir;
+      if (destDir != null) {
+        finalDir = destDir;
+      } else if (Platform.isAndroid) {
+        finalDir = '/storage/emulated/0/Download/KALA';
       } else {
         final base = await getApplicationDocumentsDirectory();
-        destDir = '${base.path}/Downloads/KALA';
+        finalDir = '${base.path}/Downloads/KALA';
       }
-      await Directory(destDir).create(recursive: true);
+      await Directory(finalDir).create(recursive: true);
 
       final sftp = await session.sshClient!.sftp();
       for (final entry in entries) {
         _downloadCurrentName = entry.name;
         notifyListeners();
         await _downloadEntry(
-            sftp, entry.path, entry.isDirectory, '$destDir/${entry.name}');
+            sftp, entry.path, entry.isDirectory, '$finalDir/${entry.name}');
         _downloadCurrent++;
         notifyListeners();
       }
 
       session.terminal
-          .write('✓ ${entries.length} elemento(s) descargado(s) → $destDir\r\n');
+          .write('✓ ${entries.length} elemento(s) descargado(s) → $finalDir\r\n');
     } catch (e) {
       activeSession?.terminal.write('Error al descargar: $e\r\n');
     } finally {
@@ -1688,10 +1743,35 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Drop any temp copy from a previously open remote media file before
+      // loading the next one.
+      _disposeTempMediaFile();
+
       // Read the content *before* updating _editingFilePath so the editor only
       // rebuilds (and initializes its controller) once the content is ready.
       // Otherwise the editor inits with empty content and never refreshes.
-      if (isPdfPath(file.path) ||
+      if (isVideoPath(file.path) || isAudioPath(file.path)) {
+        // Video/audio play through media_kit, which needs a local file path.
+        // Local files are played in place; remote files are downloaded to a
+        // temp file first.
+        if (isRemote && sshClient != null) {
+          final sftp = await sshClient.sftp();
+          final fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read);
+          final bytes = await fileStream.readBytes();
+          final tempDir = await getTemporaryDirectory();
+          final tempFile = File('${tempDir.path}/${file.name}');
+          await tempFile.writeAsBytes(bytes);
+          _viewingMediaPath = tempFile.path;
+          _tempMediaFile = tempFile;
+        } else {
+          _viewingMediaPath = file.path;
+        }
+        _viewingPdfBytes = null;
+        _viewingImageBytes = null;
+        _editingFileContent = '';
+        _isPreviewMode = false;
+      } else if (isPdfPath(file.path) ||
           (isImagePath(file.path) && !isSvgPath(file.path))) {
         // PDFs and raster images are read as raw bytes and handed to the
         // embedded viewer; there is no text content or editing involved. SVG
@@ -1709,6 +1789,7 @@ class AppState extends ChangeNotifier {
         final isPdf = isPdfPath(file.path);
         _viewingPdfBytes = isPdf ? bytes : null;
         _viewingImageBytes = isPdf ? null : bytes;
+        _viewingMediaPath = null;
         _editingFileContent = '';
         _isPreviewMode = false;
       } else {
@@ -1725,6 +1806,7 @@ class AppState extends ChangeNotifier {
         }
         _viewingPdfBytes = null;
         _viewingImageBytes = null;
+        _viewingMediaPath = null;
         _editingFileContent = content;
         // Markdown and SVG files open in their formatted preview by default;
         // everything else goes straight to the raw code editor.
@@ -1797,10 +1879,12 @@ class AppState extends ChangeNotifier {
   }
 
   void closeFile() {
+    _disposeTempMediaFile();
     _editingFilePath = null;
     _editingFileContent = '';
     _viewingPdfBytes = null;
     _viewingImageBytes = null;
+    _viewingMediaPath = null;
     _isFileDirty = false;
     _editingSshClient = null;
     _activeTabIndex = 2; // Go back to files tab

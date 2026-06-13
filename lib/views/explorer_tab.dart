@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:io';
+
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import 'folder_picker_dialog.dart';
 
 class ExplorerTab extends StatefulWidget {
   const ExplorerTab({super.key});
@@ -279,7 +282,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
           if (isRemote)
             _barIcon(Icons.download_outlined,
                 tooltip: 'Descargar al dispositivo',
-                onTap: () => state.downloadSelection()),
+                onTap: () => _downloadWithPicker(context, state)),
           _barIcon(Icons.delete_outline,
               tooltip: 'Eliminar',
               color: AppColors.danger,
@@ -360,6 +363,25 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
+  /// Ask the user where to save the downloaded files, then kick off the
+  /// download into that folder. Cancelling the picker aborts the download.
+  Future<void> _downloadWithPicker(
+      BuildContext context, AppState state) async {
+    // Listing local storage on Android needs the storage permission.
+    await state.ensureStoragePermission();
+    if (!context.mounted) return;
+
+    // Start the picker at a sensible root: internal storage on Android,
+    // the home directory on desktop.
+    final String initialPath = Platform.isAndroid
+        ? '/storage/emulated/0'
+        : (Platform.environment['HOME'] ?? Directory.current.path);
+
+    final dest = await pickLocalDirectory(context, initialPath: initialPath);
+    if (dest == null) return; // user cancelled
+    await state.downloadSelection(destDir: dest);
+  }
+
   Future<void> _confirmDelete(BuildContext context, int count) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -437,7 +459,11 @@ class _ExplorerTabState extends State<ExplorerTab> {
                   ? Icons.folder_outlined
                   : AppState.isImagePath(item.path)
                       ? Icons.image_outlined
-                      : Icons.description_outlined),
+                      : AppState.isVideoPath(item.path)
+                          ? Icons.movie_outlined
+                          : AppState.isAudioPath(item.path)
+                              ? Icons.audiotrack_outlined
+                              : Icons.description_outlined),
           title: item.name,
           meta: item.isDirectory
               ? 'CARPETA'
