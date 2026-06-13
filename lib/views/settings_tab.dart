@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/distro_service.dart';
@@ -156,6 +157,8 @@ class SettingsTab extends StatelessWidget {
               _InfoRow(label: 'APLICACIÓN', value: 'KALA'),
               Hairline(),
               _InfoRow(label: 'PAQUETE', value: 'terminal_agent'),
+              Hairline(),
+              const _VersionRow(),
             ],
           ),
         ],
@@ -601,6 +604,27 @@ class _DistroActions extends StatelessWidget {
       ),
     );
     if (ok == true) await state.deleteDistro(distro.id);
+  }
+}
+
+/// Reads the app's version + build number from the platform package metadata
+/// (the `version:` in pubspec.yaml, bumped by scripts/release.sh) and shows it
+/// in the About panel, so the running build is always identifiable.
+class _VersionRow extends StatelessWidget {
+  const _VersionRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final info = snapshot.data;
+        final value = info == null
+            ? '…'
+            : '${info.version}+${info.buildNumber}';
+        return _InfoRow(label: 'VERSIÓN', value: value);
+      },
+    );
   }
 }
 

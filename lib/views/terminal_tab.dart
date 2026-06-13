@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
-import '../widgets/command_bar.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
 
@@ -31,8 +31,6 @@ class _TerminalTabState extends State<TerminalTab> {
   final ScrollController _terminalScrollController = ScrollController();
 
   bool _showKeys = true;
-  bool _showCmdBar = true;
-  bool _fullscreen = false;
 
   // Tracks whether the active terminal is in the alternate screen buffer (a
   // full-screen TUI like vim/htop/claude is running). The smart command bar is
@@ -77,6 +75,7 @@ class _TerminalTabState extends State<TerminalTab> {
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppState>(context);
+    final fullscreen = state.terminalFullscreen;
     _syncTerminalObserver(state.terminal);
 
     if (!state.isTerminalInitialized) {
@@ -110,7 +109,7 @@ class _TerminalTabState extends State<TerminalTab> {
           children: [
             Column(
               children: [
-                if (!_fullscreen) _buildToolbar(context, state),
+                if (!fullscreen) _buildToolbar(context, state),
                 Expanded(
                   child: GestureDetector(
                     onTap: () => _terminalFocusNode.requestFocus(),
@@ -149,18 +148,17 @@ class _TerminalTabState extends State<TerminalTab> {
                     ),
                   ),
                 ),
-                if (!_fullscreen && _showCmdBar && !_altScreen)
-                  const CommandBar(),
-                if (!_fullscreen && _showKeys) _buildKeys(state),
+                // Quick-access keys stay available even in fullscreen.
+                if (_showKeys) _buildKeys(state),
               ],
             ),
-            if (_fullscreen)
+            if (fullscreen)
               Positioned(
                 right: 14,
                 bottom: 14,
                 child: _FloatingControl(
                   icon: Icons.close_fullscreen,
-                  onTap: () => setState(() => _fullscreen = false),
+                  onTap: () => state.setTerminalFullscreen(false),
                 ),
               ),
           ],
@@ -173,7 +171,7 @@ class _TerminalTabState extends State<TerminalTab> {
 
   Widget _buildToolbar(BuildContext context, AppState state) {
     return Container(
-      height: 38,
+      height: 46,
       decoration: BoxDecoration(
         color: AppColors.ink,
         border:
@@ -182,25 +180,18 @@ class _TerminalTabState extends State<TerminalTab> {
       child: Row(
         children: [
           Expanded(child: _sessionSelector(context, state)),
-          Container(width: 1, height: 38, color: AppColors.hairline),
+          Container(width: 1, height: 46, color: AppColors.hairline),
           _toolbarIcon(Icons.text_decrease, 'Reducir letra',
               () => state.bumpTerminalFontSize(-1)),
           _toolbarIcon(Icons.text_increase, 'Aumentar letra',
               () => state.bumpTerminalFontSize(1)),
-          _toolbarIcon(
-              Icons.link, 'Abrir enlace…', () => _showLinksSheet(state)),
-          _toolbarIcon(
-            _showCmdBar ? Icons.bolt : Icons.bolt_outlined,
-            'Barra inteligente',
-            () => setState(() => _showCmdBar = !_showCmdBar),
-          ),
           _toolbarIcon(
             _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
             'Teclas rápidas',
             () => setState(() => _showKeys = !_showKeys),
           ),
           _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
-              () => setState(() => _fullscreen = true)),
+              () => state.setTerminalFullscreen(true)),
           const SizedBox(width: 4),
         ],
       ),
@@ -326,43 +317,49 @@ class _TerminalTabState extends State<TerminalTab> {
       onPressed: onTap,
       tooltip: tip,
       visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
+      constraints: const BoxConstraints(minWidth: 38, minHeight: 46),
     );
   }
 
-  IconData _statusIcon(TerminalSession s) {
-    switch (s.connectionStatus) {
-      case ConnectionStatus.remote:
-        return Icons.circle;
-      case ConnectionStatus.connecting:
-        return Icons.adjust;
-      default:
-        return Icons.circle_outlined;
-    }
-  }
-
-  /// Status glyph for a session: an animated spinner while the SSH handshake is
-  /// in flight ([ConnectionStatus.connecting]), otherwise the static dot icon.
-  Widget _statusGlyph(TerminalSession s,
+  /// Status glyph for a session, shown where the connection dot used to be. It
+  /// doubles as an environment indicator: a spinner during the SSH handshake, a
+  /// server icon for an SSH session, or the active distro's logo
+  /// (Alpine/Ubuntu/Debian) for a local shell — falling back to a dot.
+  Widget _statusGlyph(TerminalSession s, AppState state,
       {required double size, required Color color}) {
-    if (s.connectionStatus == ConnectionStatus.connecting) {
-      return SizedBox(
-        width: size,
-        height: size,
-        child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
-      );
+    switch (s.connectionStatus) {
+      case ConnectionStatus.connecting:
+        return SizedBox(
+          width: size,
+          height: size,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
+        );
+      case ConnectionStatus.remote:
+        return Icon(Icons.dns, size: size, color: color);
+      case ConnectionStatus.local:
+        final asset = state.activeDistro.iconAsset;
+        if (asset != null) {
+          return SvgPicture.asset(
+            asset,
+            width: size,
+            height: size,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          );
+        }
+        return Icon(Icons.circle_outlined, size: size, color: color);
+      case ConnectionStatus.disconnected:
+        return Icon(Icons.circle_outlined, size: size, color: color);
     }
-    return Icon(_statusIcon(s), size: size, color: color);
   }
 
-  String _sessionMeta(TerminalSession s) {
+  String _sessionMeta(TerminalSession s, AppState state) {
     switch (s.connectionStatus) {
       case ConnectionStatus.remote:
         return 'SSH · ${s.activeProfile?.name ?? ''}';
       case ConnectionStatus.connecting:
         return 'CONECTANDO…';
       case ConnectionStatus.local:
-        return 'LOCAL';
+        return 'LOCAL · ${state.activeDistro.name.toUpperCase()}';
       case ConnectionStatus.disconnected:
         return 'DESCONECTADO';
     }
@@ -379,26 +376,28 @@ class _TerminalTabState extends State<TerminalTab> {
         child: Row(
           children: [
             active != null
-                ? _statusGlyph(active, size: 11, color: AppColors.bone)
-                : Icon(Icons.circle_outlined, size: 11, color: AppColors.bone),
-            const SizedBox(width: 8),
+                ? _statusGlyph(active, state,
+                    size: 18 * state.uiIconFactor, color: AppColors.bone)
+                : Icon(Icons.circle_outlined,
+                    size: 18 * state.uiIconFactor, color: AppColors.bone),
+            const SizedBox(width: 10),
             Flexible(
               child: Text(
                 active?.name ?? 'Sesión',
-                style: AppText.mono(11,
+                style: AppText.mono(13,
                     color: AppColors.bone, weight: FontWeight.w700),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 7),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                   border: Border.all(color: AppColors.hairline, width: 1)),
               child: Text('${state.sessions.length}',
-                  style: AppText.mono(9, color: AppColors.muted)),
+                  style: AppText.mono(10, color: AppColors.muted)),
             ),
-            Icon(Icons.expand_more, size: 16, color: AppColors.muted),
+            Icon(Icons.expand_more, size: 18, color: AppColors.muted),
           ],
         ),
       ),
@@ -468,8 +467,8 @@ class _TerminalTabState extends State<TerminalTab> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              _statusGlyph(session, size: 12, color: fg),
-              const SizedBox(width: 12),
+              _statusGlyph(session, state, size: 20, color: fg),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -479,7 +478,7 @@ class _TerminalTabState extends State<TerminalTab> {
                             color: fg, weight: FontWeight.w700),
                         overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 2),
-                    Text(_sessionMeta(session),
+                    Text(_sessionMeta(session, state),
                         style: AppText.mono(8, color: metaFg, spacing: 1)),
                   ],
                 ),
@@ -612,7 +611,8 @@ class _TerminalTabState extends State<TerminalTab> {
                 _key('→', () => state.sendTerminalInput('\x1b[C')),
                 _key('~', () => state.sendTerminalInput('~')),
                 _key('/', () => state.sendTerminalInput('/')),
-                _key('-', () => state.sendTerminalInput('-')),
+                _key('ENLACES', () => _showLinksSheet(state),
+                    icon: Icons.link),
               ],
             ),
           ],

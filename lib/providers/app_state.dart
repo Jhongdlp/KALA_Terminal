@@ -44,12 +44,6 @@ class TerminalSession {
   // first opens the terminal or explorer tab. See [ensureActiveSessionStarted].
   bool started;
   List<ServerSocket> forwardServers;
-  // Mirror of the command line being typed straight into the terminal, used to
-  // feed the persisted command history (see AppState._trackTypedInput). It is
-  // marked tainted — and the line skipped — whenever an escape sequence or Tab
-  // goes through, because then the shell's real line no longer matches ours.
-  String typedLine = '';
-  bool typedLineTainted = false;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
   // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
   final List<_TerminalWriter> _outputWriters = [];
@@ -83,6 +77,17 @@ class AppState extends ChangeNotifier {
     // i.e. when they land on the terminal (1) or explorer (2) tab. The app opens
     // on the connections tab, so this keeps proot/Alpine off the startup path.
     if (index == 1 || index == 2) ensureActiveSessionStarted();
+    notifyListeners();
+  }
+
+  // Whether the terminal is in fullscreen mode. Lives here (not in TerminalTab)
+  // so the shell's top navigation bar can hide itself while it's on.
+  bool _terminalFullscreen = false;
+  bool get terminalFullscreen => _terminalFullscreen;
+
+  void setTerminalFullscreen(bool value) {
+    if (_terminalFullscreen == value) return;
+    _terminalFullscreen = value;
     notifyListeners();
   }
 
@@ -305,27 +310,9 @@ class AppState extends ChangeNotifier {
   double? distroProgress(String id) => _distroProgress[id];
   String? distroStatus(String id) => _distroStatus[id];
 
-  // ---- Command history (smart command bar) --------------------------------
-  // Persisted, most-recent-first, de-duplicated list of commands the user has
-  // run through the command bar. Drives the bar's autosuggestion (ghost text)
-  // and suggestion dropdown. Capped so prefs stay small.
-  static const String _kCommandHistory = 'command_history';
-  static const int _maxCommandHistory = 300;
-
-  List<String> _commandHistory = [];
-  List<String> get commandHistory => _commandHistory;
-
-  // User-curated favorite commands, shown first in the command bar's
-  // suggestions and editable from there (star button / long-press).
-  static const String _kFavoriteCommands = 'favorite_commands';
-
-  List<String> _favoriteCommands = [];
-  List<String> get favoriteCommands => _favoriteCommands;
-
   AppState() {
     _loadSettings();
     _loadProfiles();
-    _loadCommandHistory();
     // Create the default local session as a lightweight placeholder only. The
     // heavy part (booting proot/Alpine via flutter_pty) is deferred until the
     // user first opens the terminal/explorer tab, so the app reaches the
@@ -674,7 +661,6 @@ class AppState extends ChangeNotifier {
 
       session.terminal.onOutput = (data) {
         final out = _applyCtrlModifier(data);
-        _trackTypedInput(session, out);
         session.localPty!.write(utf8.encode(out));
       };
 
@@ -939,7 +925,6 @@ class AppState extends ChangeNotifier {
 
       session.terminal.onOutput = (data) {
         final out = _applyCtrlModifier(data);
-        _trackTypedInput(session, out);
         session.sshSession!.write(utf8.encode(out));
       };
 
@@ -1095,107 +1080,16 @@ class AppState extends ChangeNotifier {
     return ctrl + data.substring(1);
   }
 
-  // ---- Command history / smart command bar ---------------------------------
-  Future<void> _loadCommandHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    _commandHistory = prefs.getStringList(_kCommandHistory) ?? [];
-    _favoriteCommands = prefs.getStringList(_kFavoriteCommands) ?? [];
-    notifyListeners();
-  }
-
-  bool isFavoriteCommand(String command) =>
-      _favoriteCommands.contains(command.trim());
-
-  /// Adds [command] to the favorites (or removes it if already there) and
-  /// persists the list. Favorites surface first in the command bar.
-  Future<void> toggleFavoriteCommand(String command) async {
-    final trimmed = command.trim();
-    if (trimmed.isEmpty) return;
-    if (!_favoriteCommands.remove(trimmed)) {
-      _favoriteCommands.insert(0, trimmed);
-    }
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_kFavoriteCommands, _favoriteCommands);
-  }
-
-  /// Sends a full command line to the active session's shell (local PTY or SSH)
-  /// followed by a carriage return, and records it in the persisted history.
-  /// This is the entry point used by the smart command bar; unlike
-  /// [sendTerminalInput] it never folds the sticky CTRL modifier into the text.
-  void submitCommand(String command) {
-    final session = activeSession;
-    if (session == null) return;
-
-    final bytes = utf8.encode('$command\r');
-    if (session.connectionStatus == ConnectionStatus.remote &&
-        session.sshSession != null) {
-      session.sshSession!.write(bytes);
-    } else if (session.localPty != null) {
-      session.localPty!.write(bytes);
-    }
-
-    final trimmed = command.trim();
-    if (trimmed.isNotEmpty) _recordCommand(trimmed);
-  }
-
-  /// Moves [command] to the front of the history (de-duplicating), caps the
-  /// list and persists it. Does not notify: the command bar recomputes its
-  /// suggestions from the in-memory list on the next keystroke, and we don't
-  /// want to rebuild the terminal on every command.
-  void _recordCommand(String command) {
-    _commandHistory.remove(command);
-    _commandHistory.insert(0, command);
-    if (_commandHistory.length > _maxCommandHistory) {
-      _commandHistory.removeRange(_maxCommandHistory, _commandHistory.length);
-    }
-    SharedPreferences.getInstance().then(
-        (prefs) => prefs.setStringList(_kCommandHistory, _commandHistory));
-  }
 
   // Send input directly to terminal
   void sendTerminalInput(String text) {
     final session = activeSession;
     if (session == null) return;
     final out = _applyCtrlModifier(text);
-    _trackTypedInput(session, out);
     if (session.connectionStatus == ConnectionStatus.remote && session.sshSession != null) {
       session.sshSession!.write(utf8.encode(out));
     } else if (session.connectionStatus == ConnectionStatus.local && session.localPty != null) {
       session.localPty!.write(utf8.encode(out));
-    }
-  }
-
-  /// Mirrors keystrokes headed to [session]'s shell to reconstruct the typed
-  /// command line, committing it to the persisted history on Enter. Editing we
-  /// can't follow (Tab completion, escape sequences like arrow-key history
-  /// recall) taints the line so a wrong guess is never recorded — the command
-  /// bar's own submissions don't pass through here and are recorded exactly.
-  void _trackTypedInput(TerminalSession session, String data) {
-    for (int i = 0; i < data.length; i++) {
-      final c = data.codeUnitAt(i);
-      if (c == 0x0d || c == 0x0a) {
-        // Enter — commit.
-        final cmd = session.typedLine.trim();
-        if (!session.typedLineTainted && cmd.length >= 2) _recordCommand(cmd);
-        session.typedLine = '';
-        session.typedLineTainted = false;
-      } else if (c == 0x7f || c == 0x08) {
-        // Backspace.
-        if (session.typedLine.isNotEmpty) {
-          session.typedLine =
-              session.typedLine.substring(0, session.typedLine.length - 1);
-        }
-      } else if (c == 0x03 || c == 0x15) {
-        // Ctrl+C / Ctrl+U — the shell discards the line; start fresh.
-        session.typedLine = '';
-        session.typedLineTainted = false;
-      } else if (c == 0x09 || c == 0x1b) {
-        // Tab completion or any escape sequence: our mirror diverges.
-        session.typedLineTainted = true;
-      } else if (c >= 0x20) {
-        session.typedLine += data[i];
-      }
     }
   }
 

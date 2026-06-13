@@ -101,6 +101,8 @@ flutter:
     - assets/distro/libtalloc.so.2
     - assets/distro/libandroid-shmem.so
     - assets/distro/alpine-minirootfs.tar.gz
+    # Distro logos (monochrome single-path SVGs) for the session status glyph.
+    - assets/distro/icons/
 
   fonts:
     - family: CascadiaCode

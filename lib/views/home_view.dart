@@ -75,6 +75,12 @@ class _HomeViewState extends State<HomeView> {
       (s) => s.activeTabIndex,
     );
     final isFileDirty = context.select<AppState, bool>((s) => s.isFileDirty);
+    // Hide the top nav while the terminal is expanded to fullscreen, so the
+    // shell gets the whole screen. Guarded by the active tab so leaving the
+    // terminal (e.g. via back navigation) always brings the nav back.
+    final hideTopNav = context.select<AppState, bool>(
+      (s) => s.terminalFullscreen && s.activeTabIndex == 1,
+    );
     // AppColors is a global, mutable palette swapped on theme change (see
     // app_theme.dart). Depend on themeChoice so this subtree rebuilds and
     // re-reads the new colors; without it an isolated tab keeps the old theme's
@@ -107,31 +113,32 @@ class _HomeViewState extends State<HomeView> {
           bottom: false,
           child: Column(
             children: [
-              // Top navigation bar — always visible, keyboard-safe.
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.ink,
-                  border: Border(
-                    bottom: BorderSide(color: AppColors.hairline, width: 1),
+              // Top navigation bar — keyboard-safe, hidden in terminal fullscreen.
+              if (!hideTopNav)
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.ink,
+                    border: Border(
+                      bottom: BorderSide(color: AppColors.hairline, width: 1),
+                    ),
+                  ),
+                  child: SizedBox(
+                    height: 54,
+                    child: Row(
+                      children: List.generate(_items.length, (i) {
+                        return Expanded(
+                          child: _TopNavItem(
+                            spec: _items[i],
+                            active: activeTabIndex == i,
+                            dirty: i == 3 && isFileDirty,
+                            onTap: () =>
+                                context.read<AppState>().setActiveTabIndex(i),
+                          ),
+                        );
+                      }),
+                    ),
                   ),
                 ),
-                child: SizedBox(
-                  height: 54,
-                  child: Row(
-                    children: List.generate(_items.length, (i) {
-                      return Expanded(
-                        child: _TopNavItem(
-                          spec: _items[i],
-                          active: activeTabIndex == i,
-                          dirty: i == 3 && isFileDirty,
-                          onTap: () =>
-                              context.read<AppState>().setActiveTabIndex(i),
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-              ),
               Expanded(
                 child: IndexedStack(index: activeTabIndex, children: tabs),
               ),

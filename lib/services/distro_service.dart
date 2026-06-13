@@ -44,6 +44,7 @@ class Distro {
   final DistroSource source;
   final PackageManager pm;
   final int approxSizeMb; // download/extracted footprint, for the UI
+  final String? iconAsset; // monochrome SVG logo for status glyphs, if any
 
   const Distro({
     required this.id,
@@ -52,6 +53,7 @@ class Distro {
     required this.source,
     required this.pm,
     required this.approxSizeMb,
+    this.iconAsset,
   });
 }
 
@@ -112,6 +114,7 @@ class DistroService {
       source: DistroSource.bundled(_alpineAsset),
       pm: PackageManager.apk,
       approxSizeMb: 9,
+      iconAsset: 'assets/distro/icons/alpinelinux.svg',
     ),
     Distro(
       id: 'ubuntu',
@@ -124,6 +127,7 @@ class DistroService {
       ),
       pm: PackageManager.apt,
       approxSizeMb: 30,
+      iconAsset: 'assets/distro/icons/ubuntu.svg',
     ),
     Distro(
       id: 'debian',
@@ -134,6 +138,7 @@ class DistroService {
       ),
       pm: PackageManager.apt,
       approxSizeMb: 43,
+      iconAsset: 'assets/distro/icons/debian.svg',
     ),
   ];
 
