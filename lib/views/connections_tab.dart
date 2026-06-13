@@ -90,7 +90,7 @@ class ConnectionsTab extends StatelessWidget {
           _showProfileActions(context, state, profile, isConnected),
       onTap: () {
         if (isConnected) {
-          state.setActiveTabIndex(1);
+          _showProfileActions(context, state, profile, isConnected);
         } else {
           state.connectToSSH(profile);
         }
@@ -117,15 +117,22 @@ class ConnectionsTab extends StatelessWidget {
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
             Hairline(),
-            _actionTile(sheetCtx, Icons.bolt_outlined,
-                isConnected ? 'IR A LA CONSOLA' : 'CONECTAR', () {
-              if (isConnected) {
+            if (isConnected) ...[
+              _actionTile(sheetCtx, Icons.bolt_outlined, 'IR A LA CONSOLA', () {
                 state.setActiveTabIndex(1);
-              } else {
-                state.connectToSSH(profile);
-              }
+              }),
+              Hairline(),
+            ],
+            _actionTile(sheetCtx, Icons.add_circle_outline, 'NUEVA SESIÓN', () {
+              state.connectToSSH(profile);
             }),
             Hairline(),
+            if (!isConnected) ...[
+              _actionTile(sheetCtx, Icons.bolt_outlined, 'CONECTAR', () {
+                state.connectToSSH(profile);
+              }),
+              Hairline(),
+            ],
             _actionTile(sheetCtx, Icons.edit_outlined, 'EDITAR', () {
               _showProfileDialog(context, profile);
             }),
@@ -148,6 +155,7 @@ class ConnectionsTab extends StatelessWidget {
       BuildContext sheetCtx, IconData icon, String label, VoidCallback action,
       {bool danger = false}) {
     final fg = danger ? AppColors.danger : AppColors.bone;
+    final sz = (16 * sheetCtx.read<AppState>().uiIconFactor).roundToDouble();
     return InkWell(
       onTap: () {
         Navigator.of(sheetCtx).pop();
@@ -157,7 +165,7 @@ class ConnectionsTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: fg),
+            Icon(icon, size: sz, color: fg),
             const SizedBox(width: 12),
             Text(label,
                 style: AppText.label(10, color: fg, spacing: 1.0)),

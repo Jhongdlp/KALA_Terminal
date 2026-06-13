@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
@@ -16,6 +18,9 @@ import '../services/distro_service.dart';
 import '../services/secure_store.dart';
 
 enum ConnectionStatus { disconnected, connecting, local, remote }
+
+/// Type filter applied by the explorer's filter button.
+enum FileTypeFilter { all, folders, filesOnly }
 
 class TerminalSession {
   final String id;
@@ -35,6 +40,12 @@ class TerminalSession {
   // first opens the terminal or explorer tab. See [ensureActiveSessionStarted].
   bool started;
   List<ServerSocket> forwardServers;
+  // Mirror of the command line being typed straight into the terminal, used to
+  // feed the persisted command history (see AppState._trackTypedInput). It is
+  // marked tainted — and the line skipped — whenever an escape sequence or Tab
+  // goes through, because then the shell's real line no longer matches ours.
+  String typedLine = '';
+  bool typedLineTainted = false;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
   // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
   final List<_TerminalWriter> _outputWriters = [];
@@ -69,6 +80,29 @@ class AppState extends ChangeNotifier {
     // on the connections tab, so this keeps proot/Alpine off the startup path.
     if (index == 1 || index == 2) ensureActiveSessionStarted();
     notifyListeners();
+  }
+
+  /// Handle the system back gesture/button: step back one level inside the app
+  /// instead of letting Android close the activity. Returns true when the
+  /// event was consumed; false means we're already at the root (connections
+  /// tab) and the caller decides whether to exit.
+  bool handleBackNavigation() {
+    // Editor with an open file → close it (lands on the files tab).
+    if (_activeTabIndex == 3 && _editingFilePath != null) {
+      closeFile();
+      return true;
+    }
+    // Explorer with an active selection → just drop the selection.
+    if (_activeTabIndex == 2 && _selectedPaths.isNotEmpty) {
+      clearSelection();
+      return true;
+    }
+    // Any other tab → back to the connections (home) tab.
+    if (_activeTabIndex != 0) {
+      setActiveTabIndex(0);
+      return true;
+    }
+    return false;
   }
 
   // Connection Profiles State
@@ -112,11 +146,12 @@ class AppState extends ChangeNotifier {
   bool get isEditingFileRemote => _isEditingFileRemote;
   SSHClient? _editingSshClient;
 
-  // ---- Markdown viewer -----------------------------------------------------
-  // When the open file is markdown the editor tab can render a formatted
-  // preview instead of the raw code editor. [_isMarkdownPreview] tracks which
-  // mode is showing; [_markdownScale] is a persisted zoom multiplier driven by
-  // the +/- buttons in the preview header.
+  // ---- Markdown / SVG preview ----------------------------------------------
+  // When the open file is markdown (or SVG) the editor tab can render a
+  // formatted preview instead of the raw code editor. [_isPreviewMode] tracks
+  // which mode is showing; [_markdownScale] is a persisted zoom multiplier
+  // driven by the +/- buttons in the markdown preview header (SVG zooms via
+  // pinch/drag in its own viewer instead).
   static const String _kMarkdownScale = 'settings_markdown_scale';
   static const double minMarkdownScale = 0.6;
   static const double maxMarkdownScale = 3.0;
@@ -134,8 +169,8 @@ class AppState extends ChangeNotifier {
   bool get isEditingFileMarkdown =>
       _editingFilePath != null && isMarkdownPath(_editingFilePath!);
 
-  bool _isMarkdownPreview = false;
-  bool get isMarkdownPreview => _isMarkdownPreview;
+  bool _isPreviewMode = false;
+  bool get isPreviewMode => _isPreviewMode;
 
   // ---- PDF viewer ----------------------------------------------------------
   // PDFs open in an embedded read-only viewer (pdfrx) on the editor tab instead
@@ -149,16 +184,44 @@ class AppState extends ChangeNotifier {
   bool get isViewingPdf =>
       _editingFilePath != null && _viewingPdfBytes != null;
 
+  // ---- Image viewer ----------------------------------------------------------
+  // Images open in an embedded viewer on the editor tab. Raster formats
+  // (PNG/JPG/…) are read as raw bytes — same scheme as the PDF viewer so local
+  // and SFTP files share one path — and are view-only. SVG is text: it loads
+  // through the normal editor path and toggles between a rendered preview and
+  // the raw code editor, exactly like markdown.
+  static const Set<String> _imageExtensions = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'
+  };
+
+  /// Whether [path] should open in the image viewer (by extension).
+  static bool isImagePath(String path) {
+    final lower = path.toLowerCase();
+    return _imageExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  /// SVGs are images but also editable text — they open in preview mode with
+  /// an "Editar" toggle instead of the bytes-only viewer.
+  static bool isSvgPath(String path) => path.toLowerCase().endsWith('.svg');
+
+  bool get isEditingFileSvg =>
+      _editingFilePath != null && isSvgPath(_editingFilePath!);
+
+  Uint8List? _viewingImageBytes;
+  Uint8List? get viewingImageBytes => _viewingImageBytes;
+  bool get isViewingImage =>
+      _editingFilePath != null && _viewingImageBytes != null;
+
   double _markdownScale = 1.0;
   double get markdownScale => _markdownScale;
 
-  void setMarkdownPreview(bool preview) {
-    if (_isMarkdownPreview == preview) return;
-    _isMarkdownPreview = preview;
+  void setPreviewMode(bool preview) {
+    if (_isPreviewMode == preview) return;
+    _isPreviewMode = preview;
     notifyListeners();
   }
 
-  void toggleMarkdownPreview() => setMarkdownPreview(!_isMarkdownPreview);
+  void togglePreviewMode() => setPreviewMode(!_isPreviewMode);
 
   Future<void> setMarkdownScale(double scale) async {
     final clamped = scale.clamp(minMarkdownScale, maxMarkdownScale);
@@ -182,6 +245,8 @@ class AppState extends ChangeNotifier {
   static const String _kTerminalFontSize = 'settings_terminal_font_size';
   static const String _kEditorFontSize = 'settings_editor_font_size';
   static const String _kActiveDistro = 'active_distro';
+  static const String _kTerminalScheme = 'settings_terminal_scheme';
+  static const String _kIconScale = 'settings_icon_scale';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -192,12 +257,26 @@ class AppState extends ChangeNotifier {
   AppThemeChoice _themeChoice = AppThemeChoice.system;
   AppThemeChoice get themeChoice => _themeChoice;
 
+  AppIconScale _iconScale = AppIconScale.small;
+  AppIconScale get iconScale => _iconScale;
+  double get uiIconFactor => switch (_iconScale) {
+        AppIconScale.small => 1.0,
+        AppIconScale.medium => 1.25,
+        AppIconScale.large => 1.5,
+      };
+
   double _terminalFontSize = 13;
   double get terminalFontSize => _terminalFontSize;
 
   // Code editor font size, adjusted by the +/- buttons in the editor header.
   double _editorFontSize = 13;
   double get editorFontSize => _editorFontSize;
+
+  // Terminal color scheme id ('auto' follows the app theme; otherwise one of
+  // AppTerminalTheme.schemes). The terminal view resolves it via
+  // AppTerminalTheme.byId.
+  String _terminalScheme = 'auto';
+  String get terminalScheme => _terminalScheme;
 
   // ---- Linux distro selector ----------------------------------------------
   // The local Android terminal runs inside a proot'd Linux userland. Alpine is
@@ -229,6 +308,13 @@ class AppState extends ChangeNotifier {
 
   List<String> _commandHistory = [];
   List<String> get commandHistory => _commandHistory;
+
+  // User-curated favorite commands, shown first in the command bar's
+  // suggestions and editable from there (star button / long-press).
+  static const String _kFavoriteCommands = 'favorite_commands';
+
+  List<String> _favoriteCommands = [];
+  List<String> get favoriteCommands => _favoriteCommands;
 
   AppState() {
     _loadSettings();
@@ -279,6 +365,19 @@ class AppState extends ChangeNotifier {
       _activeDistroId = distroId;
     }
 
+    final scheme = prefs.getString(_kTerminalScheme);
+    if (scheme != null &&
+        (scheme == 'auto' || AppTerminalTheme.schemes.containsKey(scheme))) {
+      _terminalScheme = scheme;
+    }
+
+    final iconScaleIdx = prefs.getInt(_kIconScale);
+    if (iconScaleIdx != null &&
+        iconScaleIdx >= 0 &&
+        iconScaleIdx < AppIconScale.values.length) {
+      _iconScale = AppIconScale.values[iconScaleIdx];
+    }
+
     notifyListeners();
     refreshDistroStatus();
   }
@@ -291,6 +390,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setIconScale(AppIconScale scale) async {
+    if (_iconScale == scale) return;
+    _iconScale = scale;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kIconScale, scale.index);
+  }
+
   Future<void> setThemeChoice(AppThemeChoice choice) async {
     if (_themeChoice == choice) return;
     _themeChoice = choice;
@@ -299,13 +406,25 @@ class AppState extends ChangeNotifier {
     await prefs.setInt(_kThemeMode, choice.index);
   }
 
-  Future<void> setTerminalFontSize(double size) async {
+  /// [persist] false skips the prefs write — used by the pinch-zoom gesture,
+  /// which calls this on every move and persists once on gesture end.
+  Future<void> setTerminalFontSize(double size, {bool persist = true}) async {
     final clamped = size.clamp(minTerminalFontSize, maxTerminalFontSize);
-    if (clamped == _terminalFontSize) return;
-    _terminalFontSize = clamped;
-    notifyListeners();
+    if (clamped != _terminalFontSize) {
+      _terminalFontSize = clamped;
+      notifyListeners();
+    }
+    if (!persist) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kTerminalFontSize, clamped);
+  }
+
+  Future<void> setTerminalScheme(String id) async {
+    if (_terminalScheme == id) return;
+    _terminalScheme = id;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kTerminalScheme, id);
   }
 
   void bumpTerminalFontSize(double delta) =>
@@ -410,7 +529,12 @@ class AppState extends ChangeNotifier {
   // intentionally and expects to connect right away.
   void createNewSession({ConnectionProfile? profile, bool lazy = false}) {
     final String id = const Uuid().v4();
-    final Terminal terminal = Terminal(maxLines: 10000);
+    // Bell (BEL / \a) → haptic tick, like Termux's vibrate-on-bell. No-op on
+    // devices without a vibrator.
+    final Terminal terminal = Terminal(
+      maxLines: 10000,
+      onBell: HapticFeedback.mediumImpact,
+    );
 
     String name;
     if (profile != null) {
@@ -467,6 +591,9 @@ class AppState extends ChangeNotifier {
       String executable;
       List<String> arguments = const [];
       String workingDir = Directory.current.path;
+      // Where the file explorer should land for this session, when it differs
+      // from the PTY's working directory (the proot guest's home).
+      String? explorerDir;
       final environment = <String, String>{
         'TERM': 'xterm-256color',
         'LANG': 'en_US.UTF-8',
@@ -484,11 +611,17 @@ class AppState extends ChangeNotifier {
             await DistroService.install(distro, log: session.terminal.write);
             _distroInstalled[distro.id] = true;
           }
+          // Like Termux: with the storage permission granted, the distro can
+          // bind /storage/emulated/0 and show Downloads/DCIM/... in ~.
+          await _ensureStoragePermission();
           final launch = await DistroService.launch(distro);
           executable = launch.executable;
           arguments = launch.arguments;
           workingDir = launch.workingDirectory;
+          explorerDir = launch.homeDirectory;
           environment.addAll(launch.environment);
+          // Bridge for the guest's `open <archivo>` command (idempotent).
+          _startOpenRequestWatcher();
         } catch (e) {
           // Provisioning/launch failed — fall back to Android's system shell so
           // the user still has *a* terminal, and surface why.
@@ -534,7 +667,9 @@ class AppState extends ChangeNotifier {
       session.localPty!.output.listen(writer.add);
 
       session.terminal.onOutput = (data) {
-        session.localPty!.write(utf8.encode(_applyCtrlModifier(data)));
+        final out = _applyCtrlModifier(data);
+        _trackTypedInput(session, out);
+        session.localPty!.write(utf8.encode(out));
       };
 
       // Keep the PTY's window size in sync with the rendered terminal so
@@ -546,7 +681,7 @@ class AppState extends ChangeNotifier {
       session.localPty!.resize(
           session.terminal.viewHeight, session.terminal.viewWidth);
 
-      session.currentPath = workingDir;
+      session.currentPath = explorerDir ?? workingDir;
       if (activeSession == session) {
         _loadFiles();
       } else {
@@ -567,6 +702,107 @@ class AppState extends ChangeNotifier {
         session.terminal.write('y que el ejecutable de shell (/bin/bash o /bin/sh) sea accesible y ejecutable.\r\n');
       }
       notifyListeners();
+    }
+  }
+
+  /// Ask for the legacy storage permission (the app targets SDK 28, so the
+  /// classic READ/WRITE_EXTERNAL_STORAGE dialog still grants full /sdcard
+  /// access, same mechanism Termux uses). Best-effort: a denial just means the
+  /// guest home has no phone-storage links until it's granted from Ajustes.
+  Future<void> _ensureStoragePermission() async {
+    try {
+      final status = await Permission.storage.status;
+      if (!status.isGranted) await Permission.storage.request();
+    } catch (_) {/* plugin unavailable (tests) or user denied — continue */}
+  }
+
+  // ---- `open` command bridge (guest terminal → editor) ---------------------
+  // The guest-side `open` script (see DistroService) drops one request file
+  // per invocation into the shared spool dir; watching it from here turns
+  // `open foo.py` typed in the local shell into the editor opening foo.py.
+  StreamSubscription<FileSystemEvent>? _openRequestSub;
+  Timer? _openRequestPoll;
+  bool _openWatcherStarted = false;
+  final Set<String> _openRequestsInFlight = {};
+
+  Future<void> _startOpenRequestWatcher() async {
+    if (_openWatcherStarted) return;
+    _openWatcherStarted = true;
+    try {
+      final dir = Directory(await DistroService.openSpoolDir());
+      // Discard requests left over from a previous run instead of replaying
+      // them as surprise editor tabs.
+      for (final e in dir.listSync()) {
+        if (e is File) {
+          try {
+            e.deleteSync();
+          } catch (_) {}
+        }
+      }
+      void startPolling() {
+        _openRequestPoll ??=
+            Timer.periodic(const Duration(seconds: 2), (_) {
+          try {
+            for (final e in dir.listSync()) {
+              if (e is File) _processOpenRequest(e);
+            }
+          } catch (_) {}
+        });
+      }
+
+      try {
+        _openRequestSub = dir.watch(events: FileSystemEvent.create).listen(
+          (event) {
+            if (!event.isDirectory) _processOpenRequest(File(event.path));
+          },
+          onError: (_) => startPolling(),
+        );
+      } catch (_) {
+        // inotify unavailable on this kernel/filesystem — poll instead.
+        startPolling();
+      }
+    } catch (e) {
+      debugPrint('open-watcher: $e');
+    }
+  }
+
+  Future<void> _processOpenRequest(File request) async {
+    if (!_openRequestsInFlight.add(request.path)) return;
+    try {
+      // The create event can fire before the script finishes writing; the
+      // request always ends in a newline, so retry briefly until it does.
+      String raw = '';
+      for (var attempt = 0; attempt < 5 && !raw.endsWith('\n'); attempt++) {
+        if (attempt > 0) {
+          await Future.delayed(const Duration(milliseconds: 60));
+        }
+        try {
+          raw = await request.readAsString();
+        } catch (_) {}
+      }
+      try {
+        await request.delete();
+      } catch (_) {}
+
+      final lines = raw.trim().split('\n');
+      if (lines.length < 2) return;
+      final hostPath = await DistroService.guestPathToHost(
+          lines[0].trim(), lines[1].trim());
+      final f = File(hostPath);
+      if (!await f.exists()) return;
+      final stat = await f.stat();
+      await openFile(
+        FileSystemEntityInfo(
+          name: hostPath.split('/').last,
+          path: hostPath,
+          isDirectory: false,
+          size: stat.size,
+          modified: stat.modified,
+        ),
+        forceLocal: true,
+      );
+    } finally {
+      _openRequestsInFlight.remove(request.path);
     }
   }
 
@@ -696,7 +932,9 @@ class AppState extends ChangeNotifier {
       session.sshSession!.stderr.listen(stderrWriter.add);
 
       session.terminal.onOutput = (data) {
-        session.sshSession!.write(utf8.encode(_applyCtrlModifier(data)));
+        final out = _applyCtrlModifier(data);
+        _trackTypedInput(session, out);
+        session.sshSession!.write(utf8.encode(out));
       };
 
       session.currentPath = '.';
@@ -752,6 +990,9 @@ class AppState extends ChangeNotifier {
   void switchSession(int index) {
     if (index < 0 || index >= _sessions.length) return;
     _activeSessionIndex = index;
+    // The explorer's selection/search belong to the previous session's listing.
+    _selectedPaths = const {};
+    _fileSearchQuery = '';
     // Switching sessions happens from the terminal UI, so a deferred local
     // session being switched to should boot now (it also kicks off _loadFiles).
     ensureActiveSessionStarted();
@@ -852,7 +1093,24 @@ class AppState extends ChangeNotifier {
   Future<void> _loadCommandHistory() async {
     final prefs = await SharedPreferences.getInstance();
     _commandHistory = prefs.getStringList(_kCommandHistory) ?? [];
+    _favoriteCommands = prefs.getStringList(_kFavoriteCommands) ?? [];
     notifyListeners();
+  }
+
+  bool isFavoriteCommand(String command) =>
+      _favoriteCommands.contains(command.trim());
+
+  /// Adds [command] to the favorites (or removes it if already there) and
+  /// persists the list. Favorites surface first in the command bar.
+  Future<void> toggleFavoriteCommand(String command) async {
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return;
+    if (!_favoriteCommands.remove(trimmed)) {
+      _favoriteCommands.insert(0, trimmed);
+    }
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kFavoriteCommands, _favoriteCommands);
   }
 
   /// Sends a full command line to the active session's shell (local PTY or SSH)
@@ -894,6 +1152,7 @@ class AppState extends ChangeNotifier {
     final session = activeSession;
     if (session == null) return;
     final out = _applyCtrlModifier(text);
+    _trackTypedInput(session, out);
     if (session.connectionStatus == ConnectionStatus.remote && session.sshSession != null) {
       session.sshSession!.write(utf8.encode(out));
     } else if (session.connectionStatus == ConnectionStatus.local && session.localPty != null) {
@@ -901,10 +1160,49 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Mirrors keystrokes headed to [session]'s shell to reconstruct the typed
+  /// command line, committing it to the persisted history on Enter. Editing we
+  /// can't follow (Tab completion, escape sequences like arrow-key history
+  /// recall) taints the line so a wrong guess is never recorded — the command
+  /// bar's own submissions don't pass through here and are recorded exactly.
+  void _trackTypedInput(TerminalSession session, String data) {
+    for (int i = 0; i < data.length; i++) {
+      final c = data.codeUnitAt(i);
+      if (c == 0x0d || c == 0x0a) {
+        // Enter — commit.
+        final cmd = session.typedLine.trim();
+        if (!session.typedLineTainted && cmd.length >= 2) _recordCommand(cmd);
+        session.typedLine = '';
+        session.typedLineTainted = false;
+      } else if (c == 0x7f || c == 0x08) {
+        // Backspace.
+        if (session.typedLine.isNotEmpty) {
+          session.typedLine =
+              session.typedLine.substring(0, session.typedLine.length - 1);
+        }
+      } else if (c == 0x03 || c == 0x15) {
+        // Ctrl+C / Ctrl+U — the shell discards the line; start fresh.
+        session.typedLine = '';
+        session.typedLineTainted = false;
+      } else if (c == 0x09 || c == 0x1b) {
+        // Tab completion or any escape sequence: our mirror diverges.
+        session.typedLineTainted = true;
+      } else if (c >= 0x20) {
+        session.typedLine += data[i];
+      }
+    }
+  }
+
   // File Explorer Operations
   Future<void> changeDirectory(String newPath) async {
     final session = activeSession;
     if (session == null) return;
+    if (session.currentPath != newPath) {
+      // Selection and search are per-directory state; keep them only when the
+      // path is unchanged (the refresh button re-enters the same directory).
+      _selectedPaths = const {};
+      _fileSearchQuery = '';
+    }
     session.currentPath = newPath;
     await _loadFiles();
   }
@@ -912,7 +1210,7 @@ class AppState extends ChangeNotifier {
   Future<void> navigateUp() async {
     final session = activeSession;
     if (session == null) return;
-    
+
     if (session.connectionStatus == ConnectionStatus.remote) {
       if (session.currentPath == '.' || session.currentPath == '/') return;
       final parts = session.currentPath.split('/');
@@ -926,7 +1224,411 @@ class AppState extends ChangeNotifier {
         session.currentPath = parent.path;
       }
     }
+    _selectedPaths = const {};
+    _fileSearchQuery = '';
     await _loadFiles();
+  }
+
+  // ---- Explorer: selection, clipboard & filters -----------------------------
+  // Multi-select (entered by long-pressing a row) plus a copy/move clipboard
+  // and the search/type filters. The selection set is replaced — never mutated
+  // in place — on every change so the explorer's `context.select` reference
+  // check picks it up. The clipboard pins the SSH client it was captured from
+  // (null = local), same idea as [_editingSshClient], so pasting keeps working
+  // across session switches and even across local↔remote boundaries.
+
+  Set<String> _selectedPaths = const {};
+  Set<String> get selectedPaths => _selectedPaths;
+
+  String _fileSearchQuery = '';
+  String get fileSearchQuery => _fileSearchQuery;
+
+  FileTypeFilter _fileTypeFilter = FileTypeFilter.all;
+  FileTypeFilter get fileTypeFilter => _fileTypeFilter;
+
+  List<FileSystemEntityInfo> _clipboard = const [];
+  bool _clipboardIsMove = false;
+  SSHClient? _clipboardSshClient;
+  int get clipboardCount => _clipboard.length;
+  bool get clipboardIsMove => _clipboardIsMove;
+
+  // ---- Download state -------------------------------------------------------
+  // Progress of an in-flight SSH → local download. [_downloadCurrent] and
+  // [_downloadTotal] count top-level entries so the bar ticks once per item.
+  // [_downloadCurrentName] is the entry name shown in the progress bar.
+  bool _isDownloading = false;
+  bool get isDownloading => _isDownloading;
+  int _downloadCurrent = 0;
+  int _downloadTotal = 0;
+  int get downloadCurrent => _downloadCurrent;
+  int get downloadTotal => _downloadTotal;
+  String _downloadCurrentName = '';
+  String get downloadCurrentName => _downloadCurrentName;
+
+  void setFileSearchQuery(String query) {
+    if (_fileSearchQuery == query) return;
+    _fileSearchQuery = query;
+    notifyListeners();
+  }
+
+  void setFileTypeFilter(FileTypeFilter filter) {
+    if (_fileTypeFilter == filter) return;
+    _fileTypeFilter = filter;
+    notifyListeners();
+  }
+
+  void toggleSelected(String path) {
+    final next = Set<String>.from(_selectedPaths);
+    if (!next.remove(path)) next.add(path);
+    _selectedPaths = next;
+    notifyListeners();
+  }
+
+  void selectPaths(Iterable<String> paths) {
+    _selectedPaths = {..._selectedPaths, ...paths};
+    notifyListeners();
+  }
+
+  void clearSelection() {
+    if (_selectedPaths.isEmpty) return;
+    _selectedPaths = const {};
+    notifyListeners();
+  }
+
+  List<FileSystemEntityInfo> get _selectedEntries =>
+      files.where((f) => _selectedPaths.contains(f.path)).toList();
+
+  /// Snapshot the current selection into the clipboard for a later paste.
+  /// [move] decides whether pasting copies or moves the entries.
+  void copySelectionToClipboard({required bool move}) {
+    final session = activeSession;
+    final entries = _selectedEntries;
+    if (session == null || entries.isEmpty) return;
+    _clipboard = entries;
+    _clipboardIsMove = move;
+    _clipboardSshClient = session.connectionStatus == ConnectionStatus.remote
+        ? session.sshClient
+        : null;
+    _selectedPaths = const {};
+    notifyListeners();
+  }
+
+  void clearClipboard() {
+    if (_clipboard.isEmpty) return;
+    _clipboard = const [];
+    _clipboardSshClient = null;
+    notifyListeners();
+  }
+
+  /// Permanently delete the selected entries (recursive for directories).
+  Future<void> deleteSelection() async {
+    final session = activeSession;
+    final entries = _selectedEntries;
+    if (session == null || entries.isEmpty) return;
+    _selectedPaths = const {};
+    session.isLoadingFiles = true;
+    notifyListeners();
+    try {
+      final sftp = session.connectionStatus == ConnectionStatus.remote
+          ? await session.sshClient!.sftp()
+          : null;
+      for (final entry in entries) {
+        if (sftp != null) {
+          await _deleteRemote(sftp, entry.path, entry.isDirectory);
+        } else if (entry.isDirectory) {
+          await Directory(entry.path).delete(recursive: true);
+        } else {
+          await File(entry.path).delete();
+        }
+      }
+    } catch (e) {
+      session.terminal.write('Error al eliminar: $e\r\n');
+    } finally {
+      await _loadFiles();
+    }
+  }
+
+  // SFTP has no recursive delete: walk the tree depth-first.
+  Future<void> _deleteRemote(
+      SftpClient sftp, String path, bool isDirectory) async {
+    if (!isDirectory) {
+      await sftp.remove(path);
+      return;
+    }
+    for (final item in await sftp.listdir(path)) {
+      if (item.filename == '.' || item.filename == '..') continue;
+      await _deleteRemote(sftp, '$path/${item.filename}'.replaceAll('//', '/'),
+          item.attr.isDirectory);
+    }
+    await sftp.rmdir(path);
+  }
+
+  /// Paste the clipboard into the active session's current directory. Handles
+  /// every source/destination combination (local↔local, remote↔remote, and
+  /// local↔remote up/downloads). Move uses a rename fast path when source and
+  /// destination share a filesystem, falling back to copy + delete.
+  Future<void> pasteClipboard() async {
+    final session = activeSession;
+    final entries = _clipboard;
+    if (session == null || entries.isEmpty) return;
+    final isMove = _clipboardIsMove;
+    final srcClient = _clipboardSshClient;
+    final destRemote = session.connectionStatus == ConnectionStatus.remote;
+    final destClient = destRemote ? session.sshClient : null;
+    final sameFs = identical(srcClient, destClient);
+    final sep = destRemote ? '/' : Platform.pathSeparator;
+
+    session.isLoadingFiles = true;
+    notifyListeners();
+    try {
+      final srcSftp = srcClient != null ? await srcClient.sftp() : null;
+      final destSftp = destClient != null ? await destClient.sftp() : null;
+
+      for (final entry in entries) {
+        final destPath = _childPath(session.currentPath, entry.name, sep);
+        if (sameFs && destPath == entry.path) continue; // pasted in place
+        if (entry.isDirectory &&
+            sameFs &&
+            (session.currentPath == entry.path ||
+                session.currentPath.startsWith('${entry.path}$sep'))) {
+          session.terminal.write(
+              'No se puede pegar "${entry.name}" dentro de sí misma.\r\n');
+          continue;
+        }
+
+        if (isMove && sameFs) {
+          try {
+            if (srcSftp != null) {
+              await srcSftp.rename(entry.path, destPath);
+            } else if (entry.isDirectory) {
+              await Directory(entry.path).rename(destPath);
+            } else {
+              await File(entry.path).rename(destPath);
+            }
+            continue;
+          } catch (_) {
+            // rename can fail across mount points — fall back to copy+delete.
+          }
+        }
+
+        await _copyEntry(
+            srcSftp, entry.path, entry.isDirectory, destSftp, destPath);
+        if (isMove) {
+          if (srcSftp != null) {
+            await _deleteRemote(srcSftp, entry.path, entry.isDirectory);
+          } else if (entry.isDirectory) {
+            await Directory(entry.path).delete(recursive: true);
+          } else {
+            await File(entry.path).delete();
+          }
+        }
+      }
+    } catch (e) {
+      session.terminal.write('Error al pegar: $e\r\n');
+    } finally {
+      if (isMove) {
+        _clipboard = const [];
+        _clipboardSshClient = null;
+      }
+      await _loadFiles();
+    }
+  }
+
+  static String _childPath(String dir, String name, String sep) =>
+      dir.endsWith(sep) ? '$dir$name' : '$dir$sep$name';
+
+  // Recursive copy between any combination of local and SFTP endpoints. File
+  // contents go through memory (same approach as the editor), which is fine
+  // for the sizes this explorer deals with.
+  Future<void> _copyEntry(SftpClient? srcSftp, String srcPath, bool isDirectory,
+      SftpClient? destSftp, String destPath) async {
+    if (!isDirectory) {
+      final Uint8List bytes;
+      if (srcSftp != null) {
+        final f = await srcSftp.open(srcPath, mode: SftpFileOpenMode.read);
+        bytes = await f.readBytes();
+        await f.close();
+      } else {
+        bytes = await File(srcPath).readAsBytes();
+      }
+      if (destSftp != null) {
+        final f = await destSftp.open(destPath,
+            mode: SftpFileOpenMode.write |
+                SftpFileOpenMode.create |
+                SftpFileOpenMode.truncate);
+        await f.write(Stream.value(bytes));
+        await f.close();
+      } else {
+        await File(destPath).writeAsBytes(bytes);
+      }
+      return;
+    }
+
+    if (destSftp != null) {
+      try {
+        await destSftp.mkdir(destPath);
+      } catch (_) {
+        // Directory may already exist.
+      }
+    } else {
+      await Directory(destPath).create(recursive: true);
+    }
+    final destSep = destSftp != null ? '/' : Platform.pathSeparator;
+    if (srcSftp != null) {
+      for (final item in await srcSftp.listdir(srcPath)) {
+        if (item.filename == '.' || item.filename == '..') continue;
+        await _copyEntry(
+            srcSftp,
+            '$srcPath/${item.filename}'.replaceAll('//', '/'),
+            item.attr.isDirectory,
+            destSftp,
+            _childPath(destPath, item.filename, destSep));
+      }
+    } else {
+      for (final entity in Directory(srcPath).listSync()) {
+        await _copyEntry(
+            srcSftp,
+            entity.path,
+            entity is Directory,
+            destSftp,
+            _childPath(destPath,
+                entity.path.split(Platform.pathSeparator).last, destSep));
+      }
+    }
+  }
+
+  /// Download the selected remote entries to the local Downloads folder.
+  /// Only works when the active session is SSH/remote. Progress is surfaced
+  /// through [isDownloading], [downloadCurrent], [downloadTotal], and
+  /// [downloadCurrentName] so the explorer can show a progress bar.
+  Future<void> downloadSelection() async {
+    final session = activeSession;
+    final entries = _selectedEntries;
+    if (session == null ||
+        entries.isEmpty ||
+        session.connectionStatus != ConnectionStatus.remote ||
+        session.sshClient == null) {
+      return;
+    }
+
+    _selectedPaths = const {};
+    _isDownloading = true;
+    _downloadCurrent = 0;
+    _downloadTotal = entries.length;
+    _downloadCurrentName = '';
+    notifyListeners();
+
+    try {
+      if (Platform.isAndroid) await _ensureStoragePermission();
+
+      // Destination: public Downloads/KALA on Android, ~/Downloads/KALA elsewhere.
+      final String destDir;
+      if (Platform.isAndroid) {
+        destDir = '/storage/emulated/0/Download/KALA';
+      } else {
+        final base = await getApplicationDocumentsDirectory();
+        destDir = '${base.path}/Downloads/KALA';
+      }
+      await Directory(destDir).create(recursive: true);
+
+      final sftp = await session.sshClient!.sftp();
+      for (final entry in entries) {
+        _downloadCurrentName = entry.name;
+        notifyListeners();
+        await _downloadEntry(
+            sftp, entry.path, entry.isDirectory, '$destDir/${entry.name}');
+        _downloadCurrent++;
+        notifyListeners();
+      }
+
+      session.terminal
+          .write('✓ ${entries.length} elemento(s) descargado(s) → $destDir\r\n');
+    } catch (e) {
+      activeSession?.terminal.write('Error al descargar: $e\r\n');
+    } finally {
+      _isDownloading = false;
+      notifyListeners();
+    }
+  }
+
+  // Recursively download a remote entry (file or directory) via SFTP.
+  Future<void> _downloadEntry(SftpClient sftp, String remotePath,
+      bool isDirectory, String localPath) async {
+    if (!isDirectory) {
+      final f = await sftp.open(remotePath, mode: SftpFileOpenMode.read);
+      final bytes = await f.readBytes();
+      await f.close();
+      await File(localPath).writeAsBytes(bytes);
+      return;
+    }
+    await Directory(localPath).create(recursive: true);
+    for (final item in await sftp.listdir(remotePath)) {
+      if (item.filename == '.' || item.filename == '..') continue;
+      await _downloadEntry(
+          sftp,
+          '$remotePath/${item.filename}'.replaceAll('//', '/'),
+          item.attr.isDirectory,
+          '$localPath/${item.filename}');
+    }
+  }
+
+  /// Send a `cd` into the active session's shell and jump to the terminal tab.
+  ///
+  /// [path] is always a **host** path (what the file explorer stores). For
+  /// local sessions on Android the shell runs inside proot, so the host path
+  /// must be translated to the equivalent guest path before being sent.
+  Future<void> openTerminalAt(String path) async {
+    final session = activeSession;
+    if (session == null || path.isEmpty) return;
+
+    String guestPath = path;
+    if (Platform.isAndroid &&
+        session.connectionStatus == ConnectionStatus.local) {
+      guestPath = await _hostToGuestPath(path);
+    }
+
+    // Single-quote for the shell; embedded single quotes become '\''.
+    final escaped = guestPath.replaceAll("'", "'\\''");
+    final bytes = utf8.encode("cd '$escaped'\r");
+    if (session.connectionStatus == ConnectionStatus.remote &&
+        session.sshSession != null) {
+      session.sshSession!.write(bytes);
+    } else if (session.localPty != null) {
+      session.localPty!.write(bytes);
+    } else {
+      return;
+    }
+    _activeTabIndex = 1;
+    notifyListeners();
+  }
+
+  /// Convert a host-side path to the equivalent path inside the proot guest.
+  ///
+  /// proot maps three zones:
+  ///   - `<rootfs>/…`        → `/…`          (the distro filesystem)
+  ///   - `<sharedDir>/…`     → `/shared/…`   (cross-distro share folder)
+  ///   - `/storage/…` or `/sdcard/…` → same  (bind-mounted at identical path)
+  ///
+  /// Anything outside those zones is returned unchanged; the shell will report
+  /// "no such directory" rather than silently navigating to the wrong place.
+  Future<String> _hostToGuestPath(String hostPath) async {
+    // Phone storage is bind-mounted at the same absolute path inside proot.
+    if (hostPath.startsWith('/storage/') || hostPath.startsWith('/sdcard')) {
+      return hostPath;
+    }
+    // Shared folder.
+    final shared = await DistroService.sharedDir();
+    if (hostPath == shared) return '/shared';
+    if (hostPath.startsWith('$shared/')) {
+      return '/shared${hostPath.substring(shared.length)}';
+    }
+    // Active distro rootfs — the most common case.
+    final rootfs = await DistroService.rootfsDir(DistroService.byId(_activeDistroId));
+    if (hostPath == rootfs) return '/';
+    if (hostPath.startsWith('$rootfs/')) {
+      return hostPath.substring(rootfs.length); // keeps the leading '/'
+    }
+    return hostPath;
   }
 
   Future<void> _loadFiles() async {
@@ -999,14 +1701,19 @@ class AppState extends ChangeNotifier {
   }
 
   // Text Editor Operations
-  Future<void> openFile(FileSystemEntityInfo file) async {
+  //
+  // [forceLocal] reads via dart:io even if the active session is an SSH one —
+  // used by the guest `open` command, whose paths are always host-local.
+  Future<void> openFile(FileSystemEntityInfo file,
+      {bool forceLocal = false}) async {
     if (file.isDirectory) return;
 
     final session = activeSession;
     if (session == null) return;
 
-    final isRemote = (session.connectionStatus == ConnectionStatus.remote);
-    final sshClient = session.sshClient;
+    final isRemote = !forceLocal &&
+        (session.connectionStatus == ConnectionStatus.remote);
+    final sshClient = forceLocal ? null : session.sshClient;
     session.isLoadingFiles = true;
     notifyListeners();
 
@@ -1014,9 +1721,12 @@ class AppState extends ChangeNotifier {
       // Read the content *before* updating _editingFilePath so the editor only
       // rebuilds (and initializes its controller) once the content is ready.
       // Otherwise the editor inits with empty content and never refreshes.
-      if (isPdfPath(file.path)) {
-        // PDFs are read as raw bytes and handed to the embedded viewer; there
-        // is no text content or editing involved.
+      if (isPdfPath(file.path) ||
+          (isImagePath(file.path) && !isSvgPath(file.path))) {
+        // PDFs and raster images are read as raw bytes and handed to the
+        // embedded viewer; there is no text content or editing involved. SVG
+        // is excluded: being text, it goes through the editor path below so
+        // it can be edited, with a rendered preview as the default mode.
         final Uint8List bytes;
         if (isRemote && sshClient != null) {
           final sftp = await sshClient.sftp();
@@ -1026,9 +1736,11 @@ class AppState extends ChangeNotifier {
         } else {
           bytes = await File(file.path).readAsBytes();
         }
-        _viewingPdfBytes = bytes;
+        final isPdf = isPdfPath(file.path);
+        _viewingPdfBytes = isPdf ? bytes : null;
+        _viewingImageBytes = isPdf ? null : bytes;
         _editingFileContent = '';
-        _isMarkdownPreview = false;
+        _isPreviewMode = false;
       } else {
         final String content;
         if (isRemote && sshClient != null) {
@@ -1042,10 +1754,11 @@ class AppState extends ChangeNotifier {
           content = await localFile.readAsString();
         }
         _viewingPdfBytes = null;
+        _viewingImageBytes = null;
         _editingFileContent = content;
-        // Markdown files open in the formatted preview by default; everything
-        // else goes straight to the raw code editor.
-        _isMarkdownPreview = isMarkdownPath(file.path);
+        // Markdown and SVG files open in their formatted preview by default;
+        // everything else goes straight to the raw code editor.
+        _isPreviewMode = isMarkdownPath(file.path) || isSvgPath(file.path);
       }
 
       _editingFilePath = file.path;
@@ -1117,6 +1830,7 @@ class AppState extends ChangeNotifier {
     _editingFilePath = null;
     _editingFileContent = '';
     _viewingPdfBytes = null;
+    _viewingImageBytes = null;
     _isFileDirty = false;
     _editingSshClient = null;
     _activeTabIndex = 2; // Go back to files tab
@@ -1125,6 +1839,8 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _openRequestSub?.cancel();
+    _openRequestPoll?.cancel();
     for (final session in _sessions) {
       _cleanupSession(session);
     }

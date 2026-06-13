@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -113,33 +114,36 @@ class _TerminalTabState extends State<TerminalTab> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () => _terminalFocusNode.requestFocus(),
-                    child: TerminalSelectionArea(
-                      terminal: state.terminal,
-                      controller: _terminalController,
-                      terminalViewKey: _terminalViewKey,
-                      scrollController: _terminalScrollController,
-                      onSendInput: (text) {
-                        state.sendTerminalInput(text);
-                        _terminalFocusNode.requestFocus();
-                      },
-                      onToast: _toast,
-                      child: TerminalView(
-                        state.terminal,
-                        key: _terminalViewKey,
+                    child: _PinchFontZoom(
+                      state: state,
+                      child: TerminalSelectionArea(
+                        terminal: state.terminal,
                         controller: _terminalController,
+                        terminalViewKey: _terminalViewKey,
                         scrollController: _terminalScrollController,
-                        focusNode: _terminalFocusNode,
-                        autofocus: true,
-                        theme: AppTerminalTheme.forBrightness(
-                            Theme.of(context).brightness),
-                        cursorType: TerminalCursorType.block,
-                        backgroundOpacity: 1,
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                        textStyle: TerminalStyle(
-                          fontSize: state.terminalFontSize,
-                          height: 1.3,
-                          fontFamily: AppText.cascadiaFamily,
-                          fontFamilyFallback: const ['monospace'],
+                        onSendInput: (text) {
+                          state.sendTerminalInput(text);
+                          _terminalFocusNode.requestFocus();
+                        },
+                        onToast: _toast,
+                        child: TerminalView(
+                          state.terminal,
+                          key: _terminalViewKey,
+                          controller: _terminalController,
+                          scrollController: _terminalScrollController,
+                          focusNode: _terminalFocusNode,
+                          autofocus: true,
+                          theme: AppTerminalTheme.byId(state.terminalScheme,
+                              Theme.of(context).brightness),
+                          cursorType: TerminalCursorType.block,
+                          backgroundOpacity: 1,
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                          textStyle: TerminalStyle(
+                            fontSize: state.terminalFontSize,
+                            height: 1.3,
+                            fontFamily: AppText.cascadiaFamily,
+                            fontFamilyFallback: const ['monospace'],
+                          ),
                         ),
                       ),
                     ),
@@ -184,6 +188,8 @@ class _TerminalTabState extends State<TerminalTab> {
           _toolbarIcon(Icons.text_increase, 'Aumentar letra',
               () => state.bumpTerminalFontSize(1)),
           _toolbarIcon(
+              Icons.link, 'Abrir enlace…', () => _showLinksSheet(state)),
+          _toolbarIcon(
             _showCmdBar ? Icons.bolt : Icons.bolt_outlined,
             'Barra inteligente',
             () => setState(() => _showCmdBar = !_showCmdBar),
@@ -225,6 +231,80 @@ class _TerminalTabState extends State<TerminalTab> {
     _terminalFocusNode.requestFocus();
   }
 
+  // ---- URL detection --------------------------------------------------------
+
+  static final RegExp _urlRegex = RegExp(r'''https?://[^\s"'<>]+''');
+
+  /// Scans the terminal's scrollback for URLs and offers them in a bottom
+  /// sheet, most recent first. Tapping one opens it in the browser.
+  void _showLinksSheet(AppState state) {
+    final text = state.terminal.buffer.getText();
+    final seen = <String>{};
+    final urls = <String>[];
+    for (final m in _urlRegex.allMatches(text)) {
+      // Trailing punctuation is almost always prose around the link, not part
+      // of it ("visita https://x.com." / "(ver https://y.com)").
+      final url = m.group(0)!.replaceFirst(RegExp(r'''[.,;:)\]}'"]+$'''), '');
+      if (seen.add(url)) urls.add(url);
+    }
+    if (urls.isEmpty) {
+      _toast('No hay enlaces en el terminal');
+      return;
+    }
+    final recentFirst = urls.reversed.take(20).toList();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.panel,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('ENLACES',
+                  style:
+                      AppText.label(11, color: AppColors.bone, spacing: 1.4)),
+            ),
+            Hairline(),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: recentFirst.length,
+                separatorBuilder: (_, _) => Hairline(),
+                itemBuilder: (_, i) => InkWell(
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    launchUrl(Uri.parse(recentFirst[i]),
+                        mode: LaunchMode.externalApplication);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 13),
+                    child: Row(
+                      children: [
+                        Icon(Icons.open_in_new,
+                            size: 14, color: AppColors.muted),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(recentFirst[i],
+                              style: AppText.mono(11, color: AppColors.bone),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _toast(String message) {
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
@@ -240,8 +320,9 @@ class _TerminalTabState extends State<TerminalTab> {
   }
 
   Widget _toolbarIcon(IconData icon, String tip, VoidCallback onTap) {
+    final sz = (16 * context.read<AppState>().uiIconFactor).roundToDouble();
     return IconButton(
-      icon: Icon(icon, color: AppColors.muted, size: 16),
+      icon: Icon(icon, color: AppColors.muted, size: sz),
       onPressed: onTap,
       tooltip: tip,
       visualDensity: VisualDensity.compact,
@@ -582,6 +663,75 @@ class _TerminalTabState extends State<TerminalTab> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Two-finger pinch on the terminal adjusts the font size (Termux-style).
+///
+/// Implemented with a raw [Listener] instead of a scale [GestureDetector] so
+/// it never enters the gesture arena: single-finger scrolling/selection inside
+/// [TerminalView] keeps working exactly as before, and we only act while two
+/// pointers are down. The size is persisted once, when the pinch ends.
+class _PinchFontZoom extends StatefulWidget {
+  final AppState state;
+  final Widget child;
+  const _PinchFontZoom({required this.state, required this.child});
+
+  @override
+  State<_PinchFontZoom> createState() => _PinchFontZoomState();
+}
+
+class _PinchFontZoomState extends State<_PinchFontZoom> {
+  final Map<int, Offset> _pointers = {};
+  double? _startDistance;
+  double _startFontSize = 0;
+  bool _pinched = false;
+
+  double get _distance {
+    final p = _pointers.values.toList();
+    return (p[0] - p[1]).distance;
+  }
+
+  void _down(PointerDownEvent e) {
+    _pointers[e.pointer] = e.position;
+    if (_pointers.length == 2) {
+      _startDistance = _distance;
+      _startFontSize = widget.state.terminalFontSize;
+    }
+  }
+
+  void _move(PointerMoveEvent e) {
+    if (!_pointers.containsKey(e.pointer)) return;
+    _pointers[e.pointer] = e.position;
+    final start = _startDistance;
+    if (_pointers.length != 2 || start == null || start <= 0) return;
+    _pinched = true;
+    widget.state
+        .setTerminalFontSize(_startFontSize * (_distance / start), persist: false);
+  }
+
+  void _up(int pointer) {
+    _pointers.remove(pointer);
+    if (_pointers.length < 2) {
+      _startDistance = null;
+      if (_pinched) {
+        _pinched = false;
+        // Re-set with the current value to persist the final size.
+        widget.state.setTerminalFontSize(widget.state.terminalFontSize);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _down,
+      onPointerMove: _move,
+      onPointerUp: (e) => _up(e.pointer),
+      onPointerCancel: (e) => _up(e.pointer),
+      child: widget.child,
     );
   }
 }

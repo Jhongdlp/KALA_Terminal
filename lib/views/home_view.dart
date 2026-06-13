@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -8,9 +9,14 @@ import 'explorer_tab.dart';
 import 'editor_tab.dart';
 import 'settings_tab.dart';
 
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({super.key});
 
+  @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
   static const _items = <_NavSpec>[
     _NavSpec('CONEXIONES', Icons.dns_outlined),
     _NavSpec('CONSOLA', Icons.terminal_outlined),
@@ -19,12 +25,40 @@ class HomeView extends StatelessWidget {
     _NavSpec('AJUSTES', Icons.tune),
   ];
 
+  // Timestamp of the last back press on the root tab, for double-back-to-exit.
+  DateTime? _lastBackPress;
+
+  /// System back: navigate backwards inside the app (close file, drop
+  /// selection, return to connections) and only exit the activity on a second
+  /// back press from the root tab.
+  void _onBackPressed() {
+    if (context.read<AppState>().handleBackNavigation()) return;
+
+    final now = DateTime.now();
+    if (_lastBackPress != null &&
+        now.difference(_lastBackPress!) < const Duration(seconds: 2)) {
+      SystemNavigator.pop();
+      return;
+    }
+    _lastBackPress = now;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Presiona atrás de nuevo para salir'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     // The shell only depends on the active tab and the editor dirty dot. Select
     // just those so unrelated notifications (terminal output, file listings…)
     // don't rebuild the nav bar and IndexedStack.
-    final activeTabIndex = context.select<AppState, int>((s) => s.activeTabIndex);
+    final activeTabIndex = context.select<AppState, int>(
+      (s) => s.activeTabIndex,
+    );
     final isFileDirty = context.select<AppState, bool>((s) => s.isFileDirty);
     // AppColors is a global, mutable palette swapped on theme change (see
     // app_theme.dart). Depend on themeChoice so this subtree rebuilds and
@@ -40,42 +74,54 @@ class HomeView extends StatelessWidget {
       SettingsTab(),
     ];
 
-    return Scaffold(
-      backgroundColor: AppColors.ink,
-      // Keep the soft keyboard from covering navigation: nav lives at the top,
-      // the keyboard only ever pushes up the content below it.
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            // Top navigation bar — always visible, keyboard-safe.
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.ink,
-                border: Border(
-                  bottom: BorderSide(color: AppColors.hairline, width: 1),
+    return PopScope(
+      // Never let the system pop (= close) the activity directly; _onBackPressed
+      // walks the in-app hierarchy and exits via SystemNavigator only on a
+      // confirmed double press. Dialogs/sheets sit on their own routes above
+      // this one, so back still dismisses them normally.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _onBackPressed();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.ink,
+        // Keep the soft keyboard from covering navigation: nav lives at the top,
+        // the keyboard only ever pushes up the content below it.
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              // Top navigation bar — always visible, keyboard-safe.
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.ink,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.hairline, width: 1),
+                  ),
+                ),
+                child: SizedBox(
+                  height: 54,
+                  child: Row(
+                    children: List.generate(_items.length, (i) {
+                      return Expanded(
+                        child: _TopNavItem(
+                          spec: _items[i],
+                          active: activeTabIndex == i,
+                          dirty: i == 3 && isFileDirty,
+                          onTap: () =>
+                              context.read<AppState>().setActiveTabIndex(i),
+                        ),
+                      );
+                    }),
+                  ),
                 ),
               ),
-              child: SizedBox(
-                height: 54,
-                child: Row(
-                  children: List.generate(_items.length, (i) {
-                    return Expanded(
-                      child: _TopNavItem(
-                        spec: _items[i],
-                        active: activeTabIndex == i,
-                        dirty: i == 3 && isFileDirty,
-                        onTap: () => context.read<AppState>().setActiveTabIndex(i),
-                      ),
-                    );
-                  }),
-                ),
+              Expanded(
+                child: IndexedStack(index: activeTabIndex, children: tabs),
               ),
-            ),
-            Expanded(
-              child: IndexedStack(index: activeTabIndex, children: tabs),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -104,6 +150,7 @@ class _TopNavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = active ? AppColors.bone : AppColors.muted;
+    final iconSz = (18 * context.select<AppState, double>((s) => s.uiIconFactor)).roundToDouble();
     return InkWell(
       onTap: onTap,
       child: Stack(
@@ -115,23 +162,28 @@ class _TopNavItem extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(spec.icon, size: 18, color: fg),
+                  Icon(spec.icon, size: iconSz, color: fg),
                   if (dirty)
                     Positioned(
                       right: -5,
                       top: -2,
                       child: Container(
-                          width: 5, height: 5, color: AppColors.bone),
+                        width: 5,
+                        height: 5,
+                        color: AppColors.bone,
+                      ),
                     ),
                 ],
               ),
               const SizedBox(height: 5),
               Text(
                 spec.label,
-                style: AppText.mono(8,
-                    color: fg,
-                    weight: active ? FontWeight.w700 : FontWeight.w500,
-                    spacing: 0.8),
+                style: AppText.mono(
+                  8,
+                  color: fg,
+                  weight: active ? FontWeight.w700 : FontWeight.w500,
+                  spacing: 0.8,
+                ),
               ),
             ],
           ),

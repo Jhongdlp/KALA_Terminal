@@ -14,12 +14,16 @@ class SettingsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Only the theme and font size affect this screen; select them so it isn't
-    // rebuilt by unrelated notifications.
+    // Only the theme, icon scale, and font size affect this screen; select them
+    // so it isn't rebuilt by unrelated notifications.
     final themeChoice =
         context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
+    final iconScale =
+        context.select<AppState, AppIconScale>((s) => s.iconScale);
     final terminalFontSize =
         context.select<AppState, double>((s) => s.terminalFontSize);
+    final terminalScheme =
+        context.select<AppState, String>((s) => s.terminalScheme);
     final state = context.read<AppState>();
 
     return Container(
@@ -46,6 +50,19 @@ class SettingsTab extends StatelessWidget {
                 child: _ThemeSelector(
                   value: themeChoice,
                   onChanged: state.setThemeChoice,
+                ),
+              ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Text('TAMAÑO DE ICONOS',
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _IconScaleSelector(
+                  value: iconScale,
+                  onChanged: state.setIconScale,
                 ),
               ),
             ],
@@ -109,6 +126,19 @@ class SettingsTab extends StatelessWidget {
                       color: AppColors.bone),
                 ),
               ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Text('ESQUEMA DE COLOR',
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _SchemeSelector(
+                  value: terminalScheme,
+                  onChanged: state.setTerminalScheme,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -128,6 +158,125 @@ class SettingsTab extends StatelessWidget {
               _InfoRow(label: 'PAQUETE', value: 'terminal_agent'),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Terminal color-scheme selector: AUTO (follows the app theme) plus the
+/// fixed palettes in [AppTerminalTheme.schemes]. Each cell previews the
+/// scheme's background + four accent colors.
+class _SchemeSelector extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _SchemeSelector({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.hairline, width: 1),
+      ),
+      child: Row(
+        children: [
+          for (int i = 0; i < AppTerminalTheme.schemeOptions.length; i++) ...[
+            if (i > 0) Container(width: 1, color: AppColors.hairline),
+            Expanded(child: _schemeCell(context, AppTerminalTheme.schemeOptions[i])),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _schemeCell(BuildContext context, (String, String) option) {
+    final (id, label) = option;
+    final active = value == id;
+    final theme = AppTerminalTheme.byId(id, Theme.of(context).brightness);
+    final fg = active ? AppColors.ink : AppColors.bone;
+
+    return Material(
+      color: active ? AppColors.bone : Colors.transparent,
+      child: InkWell(
+        onTap: () => onChanged(id),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            children: [
+              // Mini palette swatch: scheme background with 4 accent dots.
+              Container(
+                width: 44,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: theme.background,
+                  border: Border.all(color: AppColors.hairline, width: 1),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (final c in [
+                      theme.red,
+                      theme.green,
+                      theme.yellow,
+                      theme.blue
+                    ])
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                        decoration:
+                            BoxDecoration(color: c, shape: BoxShape.circle),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(label,
+                  style: AppText.label(8,
+                      color: fg,
+                      weight: active ? FontWeight.w800 : FontWeight.w600,
+                      spacing: 1.0)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Three-way segmented control: PEQUEÑO / MEDIO / GRANDE.
+class _IconScaleSelector extends StatelessWidget {
+  final AppIconScale value;
+  final ValueChanged<AppIconScale> onChanged;
+
+  const _IconScaleSelector({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    const options = <(AppIconScale, String, IconData)>[
+      (AppIconScale.small, 'PEQUEÑO', Icons.text_decrease),
+      (AppIconScale.medium, 'MEDIO', Icons.format_size),
+      (AppIconScale.large, 'GRANDE', Icons.text_increase),
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.hairline, width: 1),
+      ),
+      child: Row(
+        children: [
+          for (int i = 0; i < options.length; i++) ...[
+            if (i > 0) Container(width: 1, color: AppColors.hairline),
+            Expanded(
+              child: _SegmentCell(
+                label: options[i].$2,
+                icon: options[i].$3,
+                active: value == options[i].$1,
+                onTap: () => onChanged(options[i].$1),
+              ),
+            ),
+          ],
         ],
       ),
     );

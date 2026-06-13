@@ -7,6 +7,10 @@ import 'package:xterm/xterm.dart';
 /// theme tuned for OLED panels (pure #000000 surfaces leave pixels unlit).
 enum AppThemeChoice { system, light, dark, oled }
 
+/// User-selectable UI icon density. `small` is the factory default; `medium`
+/// and `large` multiply every chrome icon size by 1.25× and 1.5× respectively.
+enum AppIconScale { small, medium, large }
+
 /// One full set of chrome colors. The app ships three: the original monochrome
 /// "DARKROOM" dark palette, an inverted "PAPER" light palette, and a true-black
 /// "OLED" variant of the dark theme.
@@ -224,6 +228,27 @@ class AppTerminalTheme {
     return AppColors.oledActive ? oled : warp;
   }
 
+  /// User-selectable fixed schemes (Settings → Terminal). 'auto' is not here:
+  /// it means "follow the app theme" and resolves through [forBrightness].
+  static const Map<String, TerminalTheme> schemes = {
+    'dracula': dracula,
+    'gruvbox': gruvbox,
+    'nord': nord,
+  };
+
+  /// (id, label) pairs for the Settings selector, 'auto' first.
+  static const List<(String, String)> schemeOptions = [
+    ('auto', 'AUTO'),
+    ('dracula', 'DRACULA'),
+    ('gruvbox', 'GRUVBOX'),
+    ('nord', 'NORD'),
+  ];
+
+  /// Resolves a persisted scheme id to a palette; 'auto' (and anything
+  /// unknown) falls back to the theme-paired palette.
+  static TerminalTheme byId(String id, Brightness b) =>
+      schemes[id] ?? forBrightness(b);
+
   /// Dark terminal (Tokyo Night / Warp-like). Colors are literal so this stays
   /// a compile-time constant independent of the chrome palette.
   static const TerminalTheme warp = TerminalTheme(
@@ -278,6 +303,87 @@ class AppTerminalTheme {
     searchHitBackground: Color(0xFFE0AF68),
     searchHitBackgroundCurrent: Color(0xFFECE7DD),
     searchHitForeground: Color(0xFF000000),
+  );
+
+  /// Dracula (draculatheme.com).
+  static const TerminalTheme dracula = TerminalTheme(
+    cursor: Color(0xFFF8F8F2),
+    selection: Color(0x6644475A),
+    foreground: Color(0xFFF8F8F2),
+    background: Color(0xFF282A36),
+    black: Color(0xFF21222C),
+    red: Color(0xFFFF5555),
+    green: Color(0xFF50FA7B),
+    yellow: Color(0xFFF1FA8C),
+    blue: Color(0xFFBD93F9),
+    magenta: Color(0xFFFF79C6),
+    cyan: Color(0xFF8BE9FD),
+    white: Color(0xFFF8F8F2),
+    brightBlack: Color(0xFF6272A4),
+    brightRed: Color(0xFFFF6E6E),
+    brightGreen: Color(0xFF69FF94),
+    brightYellow: Color(0xFFFFFFA5),
+    brightBlue: Color(0xFFD6ACFF),
+    brightMagenta: Color(0xFFFF92DF),
+    brightCyan: Color(0xFFA4FFFF),
+    brightWhite: Color(0xFFFFFFFF),
+    searchHitBackground: Color(0xFFF1FA8C),
+    searchHitBackgroundCurrent: Color(0xFFF8F8F2),
+    searchHitForeground: Color(0xFF282A36),
+  );
+
+  /// Gruvbox Dark (github.com/morhetz/gruvbox).
+  static const TerminalTheme gruvbox = TerminalTheme(
+    cursor: Color(0xFFEBDBB2),
+    selection: Color(0x44EBDBB2),
+    foreground: Color(0xFFEBDBB2),
+    background: Color(0xFF282828),
+    black: Color(0xFF282828),
+    red: Color(0xFFCC241D),
+    green: Color(0xFF98971A),
+    yellow: Color(0xFFD79921),
+    blue: Color(0xFF458588),
+    magenta: Color(0xFFB16286),
+    cyan: Color(0xFF689D6A),
+    white: Color(0xFFA89984),
+    brightBlack: Color(0xFF928374),
+    brightRed: Color(0xFFFB4934),
+    brightGreen: Color(0xFFB8BB26),
+    brightYellow: Color(0xFFFABD2F),
+    brightBlue: Color(0xFF83A598),
+    brightMagenta: Color(0xFFD3869B),
+    brightCyan: Color(0xFF8EC07C),
+    brightWhite: Color(0xFFEBDBB2),
+    searchHitBackground: Color(0xFFD79921),
+    searchHitBackgroundCurrent: Color(0xFFEBDBB2),
+    searchHitForeground: Color(0xFF282828),
+  );
+
+  /// Nord (nordtheme.com).
+  static const TerminalTheme nord = TerminalTheme(
+    cursor: Color(0xFFD8DEE9),
+    selection: Color(0x554C566A),
+    foreground: Color(0xFFD8DEE9),
+    background: Color(0xFF2E3440),
+    black: Color(0xFF3B4252),
+    red: Color(0xFFBF616A),
+    green: Color(0xFFA3BE8C),
+    yellow: Color(0xFFEBCB8B),
+    blue: Color(0xFF81A1C1),
+    magenta: Color(0xFFB48EAD),
+    cyan: Color(0xFF88C0D0),
+    white: Color(0xFFE5E9F0),
+    brightBlack: Color(0xFF4C566A),
+    brightRed: Color(0xFFBF616A),
+    brightGreen: Color(0xFFA3BE8C),
+    brightYellow: Color(0xFFEBCB8B),
+    brightBlue: Color(0xFF81A1C1),
+    brightMagenta: Color(0xFFB48EAD),
+    brightCyan: Color(0xFF8FBCBB),
+    brightWhite: Color(0xFFECEFF4),
+    searchHitBackground: Color(0xFFEBCB8B),
+    searchHitBackgroundCurrent: Color(0xFFD8DEE9),
+    searchHitForeground: Color(0xFF2E3440),
   );
 
   /// Light terminal (paper background, ink text, darkened ANSI palette tuned

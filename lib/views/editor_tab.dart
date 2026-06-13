@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:re_editor/re_editor.dart';
@@ -5,6 +6,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/code_highlight.dart';
 import '../widgets/swiss.dart';
+import 'image_view.dart';
 import 'markdown_view.dart';
 import 'pdf_view.dart';
 
@@ -49,10 +51,13 @@ class _EditorTabState extends State<EditorTab> {
         context.select<AppState, bool>((s) => s.isEditingFileRemote);
     final isMarkdown =
         context.select<AppState, bool>((s) => s.isEditingFileMarkdown);
-    final isMarkdownPreview =
-        context.select<AppState, bool>((s) => s.isMarkdownPreview);
+    final isSvg = context.select<AppState, bool>((s) => s.isEditingFileSvg);
+    final isPreviewMode =
+        context.select<AppState, bool>((s) => s.isPreviewMode);
     final isViewingPdf =
         context.select<AppState, bool>((s) => s.isViewingPdf);
+    final isViewingImage =
+        context.select<AppState, bool>((s) => s.isViewingImage);
     final editorFontSize =
         context.select<AppState, double>((s) => s.editorFontSize);
     // AppColors is a global, mutable palette swapped on theme change; depend on
@@ -87,10 +92,23 @@ class _EditorTabState extends State<EditorTab> {
       return _buildPdf(context, filename, editingFilePath, isEditingFileRemote);
     }
 
+    // Images (PNG/JPG/SVG/…) render in a zoomable read-only viewer.
+    if (isViewingImage) {
+      return _buildImage(
+          context, filename, editingFilePath, isEditingFileRemote);
+    }
+
     // Markdown documents render a formatted, zoomable preview by default; the
     // raw editor stays one tap away via the "Editar" button.
-    if (isMarkdown && isMarkdownPreview) {
+    if (isMarkdown && isPreviewMode) {
       return _buildPreview(context, filename, isFileDirty, isEditingFileRemote);
+    }
+
+    // SVGs work the same way: rendered preview by default, raw XML editor
+    // behind the "Editar" button.
+    if (isSvg && isPreviewMode) {
+      return _buildSvgPreview(
+          context, filename, editingFilePath, isFileDirty, isEditingFileRemote);
     }
 
     if (_controller == null || _currentFilePath != editingFilePath) {
@@ -127,13 +145,13 @@ class _EditorTabState extends State<EditorTab> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (isMarkdown) ...[
+                if (isMarkdown || isSvg) ...[
                   GhostButton(
                     label: 'Vista',
                     icon: Icons.visibility_outlined,
                     dense: true,
                     onPressed: () =>
-                        context.read<AppState>().setMarkdownPreview(true),
+                        context.read<AppState>().setPreviewMode(true),
                   ),
                   const SizedBox(width: 6),
                 ],
@@ -284,7 +302,7 @@ class _EditorTabState extends State<EditorTab> {
                   label: 'Editar',
                   icon: Icons.edit_outlined,
                   dense: true,
-                  onPressed: () => state.setMarkdownPreview(false),
+                  onPressed: () => state.setPreviewMode(false),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -345,6 +363,131 @@ class _EditorTabState extends State<EditorTab> {
             child: bytes == null
                 ? const SizedBox.shrink()
                 : PdfView(data: bytes, sourceName: filePath),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Read-only image viewer (PNG/JPG/SVG/…). Same header chrome as the PDF
+  /// viewer, with the zoomable image surface below.
+  Widget _buildImage(BuildContext context, String filename, String filePath,
+      bool isEditingFileRemote) {
+    final bytes = context.read<AppState>().viewingImageBytes;
+    final extension =
+        filename.contains('.') ? filename.split('.').last.toUpperCase() : '';
+
+    return Container(
+      color: AppColors.ink,
+      child: Column(
+        children: [
+          // Header bar
+          Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.panel,
+              border: Border(
+                  bottom: BorderSide(color: AppColors.hairline, width: 1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.close, color: AppColors.muted, size: 16),
+                  onPressed: () => context.read<AppState>().closeFile(),
+                  tooltip: 'Cerrar archivo',
+                ),
+                Expanded(
+                  child: _FileTitle(
+                    filename: filename,
+                    isFileDirty: false,
+                    isEditingFileRemote: isEditingFileRemote,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MonoTag(extension.isEmpty ? 'IMAGEN' : extension,
+                    color: AppColors.faint),
+                const SizedBox(width: 4),
+              ],
+            ),
+          ),
+
+          // Rendered image
+          Expanded(
+            child: bytes == null
+                ? const SizedBox.shrink()
+                : ImageView(data: bytes, sourceName: filePath),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Rendered SVG preview with an "Editar" button that swaps to the raw XML
+  /// editor — same toggle scheme as the markdown preview. Reads the live
+  /// editing content so edits show up immediately when returning here. Zoom is
+  /// pinch/drag inside the viewer, so no +/- controls.
+  Widget _buildSvgPreview(BuildContext context, String filename,
+      String filePath, bool isFileDirty, bool isEditingFileRemote) {
+    final state = context.read<AppState>();
+    final content =
+        context.select<AppState, String>((s) => s.editingFileContent);
+
+    return Container(
+      color: AppColors.ink,
+      child: Column(
+        children: [
+          // Header bar
+          Container(
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.panel,
+              border: Border(
+                  bottom: BorderSide(color: AppColors.hairline, width: 1)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(Icons.close, color: AppColors.muted, size: 16),
+                  onPressed: () => state.closeFile(),
+                  tooltip: 'Cerrar archivo',
+                ),
+                Expanded(
+                  child: _FileTitle(
+                    filename: filename,
+                    isFileDirty: isFileDirty,
+                    isEditingFileRemote: isEditingFileRemote,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MonoTag('SVG', color: AppColors.faint),
+                const SizedBox(width: 8),
+                InvertedButton(
+                  label: 'Guardar',
+                  icon: Icons.save_outlined,
+                  dense: true,
+                  onPressed:
+                      isFileDirty ? () => state.saveCurrentFile() : null,
+                ),
+                const SizedBox(width: 6),
+                InvertedButton(
+                  label: 'Editar',
+                  icon: Icons.edit_outlined,
+                  dense: true,
+                  onPressed: () => state.setPreviewMode(false),
+                ),
+                const SizedBox(width: 4),
+              ],
+            ),
+          ),
+
+          // Rendered SVG (from the live editing text, so unsaved edits render)
+          Expanded(
+            child: ImageView(
+              data: utf8.encode(content),
+              sourceName: filePath,
+            ),
           ),
         ],
       ),

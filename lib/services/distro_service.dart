@@ -405,17 +405,128 @@ class DistroService {
   static Future<ProotLaunch> launch(Distro d, {String? shell}) async {
     final rootfs = await rootfsDir(d);
     final resolvedShell = shell ?? _bestShell(rootfs);
+    // Termux-style phone storage: bind /storage/emulated/0 into the guest and
+    // surface it as links in ~ — done at every launch (not install) so an
+    // already-installed distro picks it up the first time the permission is
+    // granted.
+    final storage = sharedStoragePath();
+    if (storage != null) await _linkStorageIntoHome(rootfs, storage);
+    // `open <archivo>` (termux-open style) — also provisioned per launch so
+    // existing installs get it without reinstalling the rootfs.
+    await _provisionOpenCommand(rootfs);
     return ProotLaunch(
       executable: await _prootPath(),
       arguments: [
         ..._prootBaseArgs(d, rootfs, await sharedDir()),
+        if (storage != null) ...[
+          // Same-path bind keeps the ~ symlink targets valid in the guest;
+          // /sdcard is the familiar Android alias.
+          '-b', storage,
+          '-b', '$storage:/sdcard',
+        ],
         '/usr/bin/env', '-i', ..._guestEnv,
+        'KALA_DISTRO=${d.id}',
         'PS1=\\w \\\$ ',
         resolvedShell, '-l', // login shell: sources /etc/profile (welcome banner)
       ],
       environment: await _prootEnv(),
       workingDirectory: rootfs,
+      homeDirectory: '$rootfs/root',
     );
+  }
+
+  // ---- `open` command (terminal → app editor) -------------------------------
+  //
+  // The guest-side `open` script drops one request file per invocation into
+  // /shared/.kala/open (the /shared bind is visible from the host). AppState
+  // watches the host side of that folder and opens the file in the editor.
+  // Each request file holds two lines: the distro id and the absolute guest
+  // path, which [guestPathToHost] maps back to a host path.
+
+  /// Host directory where guest `open` requests land. Created on demand.
+  static Future<String> openSpoolDir() async {
+    final dir = Directory('${await sharedDir()}/.kala/open');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
+  }
+
+  /// Map an absolute path as seen inside [distroId]'s guest to the host path
+  /// the app can read (rootfs-relative, /shared, or phone storage).
+  static Future<String> guestPathToHost(String distroId, String guestPath) async {
+    if (guestPath == '/shared' || guestPath.startsWith('/shared/')) {
+      return '${await sharedDir()}${guestPath.substring('/shared'.length)}';
+    }
+    if (guestPath == '/sdcard' || guestPath.startsWith('/sdcard/')) {
+      return '/storage/emulated/0${guestPath.substring('/sdcard'.length)}';
+    }
+    if (guestPath.startsWith('/storage/')) return guestPath;
+    return '${await rootfsDir(byId(distroId))}$guestPath';
+  }
+
+  static Future<void> _provisionOpenCommand(String rootfs) async {
+    try {
+      final localBin = Directory('$rootfs/usr/local/bin');
+      await localBin.create(recursive: true);
+      final f = File('${localBin.path}/open');
+      await f.writeAsString(_openScript);
+      await _chmod('0755', f.path);
+    } catch (_) {/* non-fatal: the shell still works without `open` */}
+  }
+
+  static const String _openScript = '''#!/bin/sh
+# KALA: abre un archivo en el editor de la app (estilo termux-open).
+if [ -z "\$1" ]; then
+  echo "uso: open <archivo>"
+  exit 1
+fi
+case "\$1" in
+  /*) abs="\$1" ;;
+  *)  abs="\$(pwd)/\$1" ;;
+esac
+if [ ! -e "\$abs" ]; then
+  echo "open: no existe: \$abs"
+  exit 1
+fi
+mkdir -p /shared/.kala/open
+printf '%s\\n%s\\n' "\${KALA_DISTRO:-alpine}" "\$abs" > "/shared/.kala/open/req-\$\$-\$(date +%s)"
+''';
+
+  /// Host path of the device's shared storage, or null when it isn't readable
+  /// yet (storage permission not granted, or not on Android).
+  static String? sharedStoragePath() {
+    if (!Platform.isAndroid) return null;
+    for (final p in const ['/storage/emulated/0', '/sdcard']) {
+      try {
+        Directory(p).listSync();
+        return p;
+      } catch (_) {/* not readable → try next / give up */}
+    }
+    return null;
+  }
+
+  // Symlinks in the guest home pointing at the phone's real folders, so `ls ~`
+  // shows Downloads/DCIM/... like Termux. Targets are absolute host paths,
+  // valid both inside the guest (same-path bind in [launch]) and for the
+  // host-side file explorer. Best-effort and idempotent.
+  static Future<void> _linkStorageIntoHome(String rootfs, String storage) async {
+    final home = Directory('$rootfs/root');
+    await home.create(recursive: true);
+    final links = <String, String>{
+      'sdcard': storage,
+      'Downloads': '$storage/Download',
+      'Documents': '$storage/Documents',
+      'DCIM': '$storage/DCIM',
+      'Pictures': '$storage/Pictures',
+      'Music': '$storage/Music',
+      'Movies': '$storage/Movies',
+    };
+    for (final e in links.entries) {
+      if (e.key != 'sdcard' && !Directory(e.value).existsSync()) continue;
+      try {
+        final link = Link('${home.path}/${e.key}');
+        if (!await link.exists()) await link.create(e.value);
+      } catch (_) {/* non-fatal cosmetic shortcut */}
+    }
   }
 
   /// Pick the interactive shell with the best line-editing/completion support
@@ -580,8 +691,10 @@ esac
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mpkg install\x1B[0m \x1B[2m<paquete>\x1B[0m  —  python3, git, nano…\n'
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mpkg search\x1B[0m \x1B[2m<texto>\x1B[0m  —  buscar paquetes\n'
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mpkg upgrade\x1B[0m  —  actualizar todo\n'
+      '   \x1B[38;5;33m▸\x1B[0m \x1B[1mopen\x1B[0m \x1B[2m<archivo>\x1B[0m  —  abrir en el editor de KALA\n'
       '   \x1B[38;5;33m▸\x1B[0m \x1B[1mclear\x1B[0m  —  limpiar la pantalla\n'
       '\n'
+      '   \x1B[2m~/Downloads · ~/DCIM · ~/sdcard  ·  almacenamiento del teléfono\x1B[0m\n'
       '   \x1B[2m/shared  ·  carpeta compartida entre todas las distros\x1B[0m\n'
       '   \x1B[2mroot · ~  ·  escribe «pkg» para ver todos los comandos\x1B[0m\n'
       '\n';
@@ -594,10 +707,15 @@ class ProotLaunch {
   final Map<String, String> environment;
   final String workingDirectory;
 
+  /// Host path of the guest's home (`<rootfs>/root`) — what the file explorer
+  /// should open so it matches the terminal's `~`.
+  final String homeDirectory;
+
   const ProotLaunch({
     required this.executable,
     required this.arguments,
     required this.environment,
     required this.workingDirectory,
+    required this.homeDirectory,
   });
 }

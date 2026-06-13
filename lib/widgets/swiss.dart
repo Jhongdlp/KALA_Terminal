@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 
 /// 1px hairline divider.
@@ -117,6 +119,7 @@ class LayerRow extends StatelessWidget {
   final Widget? trailing;
   final bool active;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final VoidCallback? onTrailingTap;
 
   const LayerRow({
@@ -127,6 +130,7 @@ class LayerRow extends StatelessWidget {
     this.trailing,
     this.active = false,
     this.onTap,
+    this.onLongPress,
     this.onTrailingTap,
   });
 
@@ -137,6 +141,7 @@ class LayerRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         color: active ? AppColors.bone : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -210,6 +215,8 @@ class InvertedButton extends StatelessWidget {
     final enabled = onPressed != null;
     final bg = enabled ? AppColors.bone : AppColors.hairline;
     final fg = enabled ? AppColors.ink : AppColors.muted;
+    final factor = context.select<AppState, double>((s) => s.uiIconFactor);
+    final iconSz = ((dense ? 13.0 : 15.0) * factor).roundToDouble();
     final child = Material(
       color: bg,
       child: InkWell(
@@ -227,7 +234,7 @@ class InvertedButton extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (icon != null) ...[
-                Icon(icon, size: dense ? 13 : 15, color: fg),
+                Icon(icon, size: iconSz, color: fg),
                 const SizedBox(width: 7),
               ],
               Text(label.toUpperCase(),
@@ -262,6 +269,8 @@ class GhostButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = danger ? AppColors.danger : AppColors.bone;
+    final factor = context.select<AppState, double>((s) => s.uiIconFactor);
+    final iconSz = ((dense ? 13.0 : 15.0) * factor).roundToDouble();
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -281,7 +290,7 @@ class GhostButton extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (icon != null) ...[
-                Icon(icon, size: dense ? 13 : 15, color: fg),
+                Icon(icon, size: iconSz, color: fg),
                 const SizedBox(width: 7),
               ],
               Text(label.toUpperCase(),

@@ -9,6 +9,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required on Android 13+ to show the persistent foreground notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Shared-storage access (Termux-style): with targetSdk 28 these legacy
+         permissions still grant the whole /storage/emulated/0, which the local
+         distro binds into the guest and links from ~ (Downloads, DCIM, ...). -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
         android:label="KALA"

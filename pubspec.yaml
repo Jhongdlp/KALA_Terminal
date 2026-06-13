@@ -50,7 +50,15 @@ dependencies:
   google_fonts: ^8.1.0
   flutter_markdown_plus: ^1.0.7
   flutter_secure_storage: ^10.3.1
+  # Runtime request of the legacy storage permission so the local distro can
+  # bind the phone's shared storage (see DistroService.launch).
+  permission_handler: ^12.0.1
+  # Open URLs detected in the terminal in the external browser.
+  url_launcher: ^6.3.2
   pdfrx: ^2.2.24
+  # SVG rendering for the embedded image viewer (raster formats use
+  # Image.memory directly).
+  flutter_svg: ^2.2.0
 
 dev_dependencies:
   flutter_test:

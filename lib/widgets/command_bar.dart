@@ -82,14 +82,17 @@ class _CommandBarState extends State<CommandBar> {
       }
     }
 
-    // Empty field → just the most recent history.
+    // Empty field → favorites first, then the most recent history.
     if (text.trim().isEmpty) {
+      addAll(state.favoriteCommands);
       addAll(state.commandHistory);
       return results.take(7).toList();
     }
 
     final lower = text.toLowerCase();
 
+    addAll(state.favoriteCommands
+        .where((f) => f.toLowerCase().startsWith(lower)));
     addAll(state.commandHistory
         .where((h) => h.toLowerCase().startsWith(lower)));
     addAll(_commonCommands.where((c) => c.startsWith(lower)));
@@ -183,14 +186,14 @@ class _CommandBarState extends State<CommandBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (showDropdown) _dropdown(suggestions, text),
+          if (showDropdown) _dropdown(state, suggestions, text),
           _inputRow(state, ghost),
         ],
       ),
     );
   }
 
-  Widget _dropdown(List<String> suggestions, String text) {
+  Widget _dropdown(AppState state, List<String> suggestions, String text) {
     return Container(
       constraints: const BoxConstraints(maxHeight: 168),
       decoration: BoxDecoration(
@@ -200,12 +203,12 @@ class _CommandBarState extends State<CommandBar> {
         shrinkWrap: true,
         padding: EdgeInsets.zero,
         itemCount: suggestions.length,
-        itemBuilder: (_, i) => _suggestionRow(suggestions[i], text),
+        itemBuilder: (_, i) => _suggestionRow(state, suggestions[i], text),
       ),
     );
   }
 
-  Widget _suggestionRow(String suggestion, String text) {
+  Widget _suggestionRow(AppState state, String suggestion, String text) {
     // Highlight the matched portion so the user sees why it surfaced.
     final lower = suggestion.toLowerCase();
     final matchStart = text.isEmpty ? -1 : lower.indexOf(text.toLowerCase());
@@ -221,13 +224,22 @@ class _CommandBarState extends State<CommandBar> {
       spans.add(TextSpan(text: suggestion.substring(matchStart + text.length)));
     }
 
+    final isFavorite = state.isFavoriteCommand(suggestion);
     return InkWell(
       onTap: () => _fill(suggestion),
+      // Long-press pins/unpins the command as a favorite (favorites rank
+      // first in the dropdown and survive history pruning).
+      onLongPress: () {
+        state.toggleFavoriteCommand(suggestion);
+        _toast(isFavorite ? 'Quitado de favoritos' : 'Añadido a favoritos');
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         child: Row(
           children: [
-            Icon(Icons.chevron_right, size: 13, color: AppColors.faint),
+            Icon(isFavorite ? Icons.star : Icons.chevron_right,
+                size: 13,
+                color: isFavorite ? AppColors.bone : AppColors.faint),
             const SizedBox(width: 8),
             Expanded(
               child: Text.rich(
@@ -245,7 +257,22 @@ class _CommandBarState extends State<CommandBar> {
     );
   }
 
+  void _toast(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message,
+            style: AppText.mono(11, color: AppColors.bone, spacing: 0.3)),
+        backgroundColor: AppColors.panelHi,
+        duration: const Duration(milliseconds: 1200),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Widget _inputRow(AppState state, String ghost) {
+    final text = _controller.text.trim();
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 2, 6, 2),
       child: Row(
@@ -254,6 +281,17 @@ class _CommandBarState extends State<CommandBar> {
               style: AppText.mono(16, color: AppColors.muted, weight: FontWeight.w700)),
           const SizedBox(width: 8),
           Expanded(child: _fieldWithGhost(state, ghost)),
+          if (text.isNotEmpty)
+            _iconBtn(
+              state.isFavoriteCommand(text)
+                  ? Icons.star
+                  : Icons.star_border,
+              'Guardar como favorito',
+              () {
+                state.toggleFavoriteCommand(text);
+                setState(() {});
+              },
+            ),
           if (ghost.isNotEmpty)
             _iconBtn(Icons.keyboard_tab, 'Aceptar sugerencia (TAB)',
                 () => _acceptGhost(ghost)),
@@ -323,6 +361,7 @@ class _CommandBarState extends State<CommandBar> {
 
   Widget _iconBtn(IconData icon, String tip, VoidCallback onTap,
       {bool inverted = false}) {
+    final sz = (16 * context.read<AppState>().uiIconFactor).roundToDouble();
     return Padding(
       padding: const EdgeInsets.only(left: 4),
       child: Material(
@@ -340,7 +379,7 @@ class _CommandBarState extends State<CommandBar> {
                   : BoxDecoration(
                       border: Border.all(color: AppColors.hairline, width: 1)),
               child: Icon(icon,
-                  size: 16,
+                  size: sz,
                   color: inverted ? AppColors.ink : AppColors.muted),
             ),
           ),
