@@ -3,11 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../services/update_service.dart';
 import 'connections_tab.dart';
 import 'terminal_tab.dart';
 import 'explorer_tab.dart';
 import 'editor_tab.dart';
 import 'settings_tab.dart';
+import 'update_dialog.dart';
 
 class HomeView extends StatefulWidget {
   const HomeView({super.key});
@@ -27,6 +29,19 @@ class _HomeViewState extends State<HomeView> {
 
   // Timestamp of the last back press on the root tab, for double-back-to-exit.
   DateTime? _lastBackPress;
+
+  @override
+  void initState() {
+    super.initState();
+    // Silent, best-effort update check against GitHub Releases after the first
+    // frame; only surfaces a dialog when a newer APK actually exists.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+  }
+
+  Future<void> _checkForUpdate() async {
+    final update = await UpdateService.checkForUpdate();
+    if (update != null && mounted) showUpdateDialog(context, update);
+  }
 
   /// System back: navigate backwards inside the app (close file, drop
   /// selection, return to connections) and only exit the activity on a second

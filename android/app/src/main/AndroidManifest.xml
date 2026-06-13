@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required on Android 13+ to show the persistent foreground notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- In-app updater: download the latest APK from GitHub Releases and hand it
+         to the system package installer (see lib/services/update_service.dart).
+         The user still confirms the install in the system dialog. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Shared-storage access (Termux-style): with targetSdk 28 these legacy
          permissions still grant the whole /storage/emulated/0, which the local
          distro binds into the guest and links from ~ (Downloads, DCIM, ...). -->
