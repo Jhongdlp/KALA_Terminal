@@ -52,6 +52,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
         context.select<AppState, bool>((s) => s.clipboardIsMove);
     final isRemote = context.select<AppState, bool>(
         (s) => s.connectionStatus == ConnectionStatus.remote);
+    final canNavigateBack =
+        context.select<AppState, bool>((s) => s.canNavigateBack);
     final isDownloading =
         context.select<AppState, bool>((s) => s.isDownloading);
     final downloadCurrent =
@@ -81,7 +83,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
       color: AppColors.ink,
       child: Column(
         children: [
-          _buildPathBar(context, currentPath, typeFilter),
+          _buildPathBar(context, currentPath, typeFilter, canNavigateBack),
           if (_searchOpen) _buildSearchBar(context, searchQuery),
           if (isDownloading)
             _buildDownloadBar(downloadCurrent, downloadTotal, downloadCurrentName)
@@ -115,8 +117,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
-  Widget _buildPathBar(
-      BuildContext context, String currentPath, FileTypeFilter typeFilter) {
+  Widget _buildPathBar(BuildContext context, String currentPath,
+      FileTypeFilter typeFilter, bool canNavigateBack) {
     return Container(
       height: 42,
       decoration: BoxDecoration(
@@ -127,6 +129,12 @@ class _ExplorerTabState extends State<ExplorerTab> {
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
         children: [
+          _barIcon(Icons.arrow_back,
+              tooltip: 'Volver',
+              color: canNavigateBack ? null : AppColors.hairline,
+              onTap: canNavigateBack
+                  ? () => context.read<AppState>().navigateBack()
+                  : () {}),
           _barIcon(Icons.arrow_upward,
               tooltip: 'Subir un nivel',
               onTap: () => context.read<AppState>().navigateUp()),

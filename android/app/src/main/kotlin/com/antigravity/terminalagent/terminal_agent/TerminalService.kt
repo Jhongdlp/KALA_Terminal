@@ -122,7 +122,7 @@ class TerminalService : Service() {
                 if (held) "Wakelock activo · las tareas siguen con la pantalla apagada"
                 else "Las sesiones siguen ejecutándose en segundo plano",
             )
-            .setSmallIcon(applicationInfo.icon)
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setShowWhen(false)
             .setContentIntent(contentIntent)

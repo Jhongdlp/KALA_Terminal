@@ -84,7 +84,7 @@ class DistroService {
 
   // Bump when per-distro provisioning (pkg wrapper, motd, dns) changes so
   // installs re-provision on next launch.
-  static const int _version = 7;
+  static const int _version = 8;
 
   // -------------------------------------------------------------------------
   // Catalog
@@ -355,14 +355,12 @@ class DistroService {
     await pkg.writeAsString(_pkgWrapper(d.pm));
     await _chmod('0755', pkg.path);
 
-    // Branded MOTD: real ANSI/UTF-8 bytes to /etc/motd, then cat-ed from
-    // /etc/profile on every interactive login shell.
+    // Branded MOTD: real ANSI/UTF-8 bytes to /etc/motd. The welcome banner and
+    // the colored prompt are wired by _provisionShellExperience (a /etc/profile.d
+    // drop-in for POSIX shells + a fish config), which also runs on every launch
+    // so existing installs pick up tweaks without reinstalling.
     await File('${rootfs.path}/etc/motd').writeAsString(_motd(d));
-    await File('${rootfs.path}/etc/profile').writeAsString(
-      '\n# KALA welcome banner (only on interactive terminals)\n'
-      '[ -t 1 ] && cat /etc/motd 2>/dev/null\n',
-      mode: FileMode.append,
-    );
+    await _provisionShellExperience(rootfs.path);
 
     // 5) Pre-fetch the package index so `pkg install <x>` works immediately.
     //    Non-fatal: if the device is offline the user can refresh it later.
@@ -373,6 +371,21 @@ class DistroService {
     final upd = await _runInGuest(d, updateCmd);
     if (upd.exitCode != 0) {
       emit('(sin red ahora; usa "pkg update" más tarde)');
+    }
+
+    // 6) fish: gives the Termux-style colored prompt with inline gray
+    //    autosuggestions ("ghost text") and syntax highlighting out of the box,
+    //    and becomes the preferred interactive shell (see _bestShell). Needs the
+    //    network, so it's non-fatal: without it the colored /etc/profile.d
+    //    prompt on the base shell still applies, and `pkg install fish` later
+    //    finishes the job (the fish config is already in place).
+    emit('Instalando shell mejorado (fish)...');
+    final fishCmd = d.pm == PackageManager.apt
+        ? 'DEBIAN_FRONTEND=noninteractive apt-get install -y fish'
+        : 'apk add fish';
+    final fish = await _runInGuest(d, fishCmd);
+    if (fish.exitCode != 0) {
+      emit('(fish no se instaló; tendrás prompt con color en el shell básico)');
     }
 
     await (await _stamp(d)).writeAsString('$_version');
@@ -397,11 +410,12 @@ class DistroService {
 
   /// Everything flutter_pty needs to spawn an interactive shell inside [d].
   ///
-  /// When [shell] is null the best available interactive shell is picked: bash
-  /// if the rootfs ships it, otherwise `/bin/sh`. This matters for Tab
-  /// completion — Ubuntu/Debian's `/bin/sh` is dash, which has no line editing
-  /// or completion at all, whereas their `/bin/bash` does; Alpine has no bash
-  /// but its BusyBox `/bin/sh` (ash) already completes.
+  /// When [shell] is null the best available interactive shell is picked: fish
+  /// if installed (colored prompt + inline gray autosuggestions), then bash,
+  /// then `/bin/sh`. The shell matters for Tab completion — Ubuntu/Debian's
+  /// `/bin/sh` is dash, which has no line editing or completion at all, whereas
+  /// their `/bin/bash` does; Alpine has no bash but its BusyBox `/bin/sh` (ash)
+  /// already completes.
   static Future<ProotLaunch> launch(Distro d, {String? shell}) async {
     final rootfs = await rootfsDir(d);
     final resolvedShell = shell ?? _bestShell(rootfs);
@@ -414,6 +428,11 @@ class DistroService {
     // `open <archivo>` (termux-open style) — also provisioned per launch so
     // existing installs get it without reinstalling the rootfs.
     await _provisionOpenCommand(rootfs);
+    // Colored prompt + fish config — likewise refreshed per launch so prompt
+    // tweaks ship without a reinstall. The prompt itself comes from these files
+    // (/etc/profile.d for ash/bash, the fish config for fish), so no PS1 is
+    // passed in the env below.
+    await _provisionShellExperience(rootfs);
     return ProotLaunch(
       executable: await _prootPath(),
       arguments: [
@@ -426,8 +445,7 @@ class DistroService {
         ],
         '/usr/bin/env', '-i', ..._guestEnv,
         'KALA_DISTRO=${d.id}',
-        'PS1=\\w \\\$ ',
-        resolvedShell, '-l', // login shell: sources /etc/profile (welcome banner)
+        resolvedShell, '-l', // login shell: sources /etc/profile (prompt + banner)
       ],
       environment: await _prootEnv(),
       workingDirectory: rootfs,
@@ -472,6 +490,62 @@ class DistroService {
       await _chmod('0755', f.path);
     } catch (_) {/* non-fatal: the shell still works without `open` */}
   }
+
+  // ---- Colored prompt + fish config -----------------------------------------
+
+  /// Write KALA's shell experience into [rootfs]. Idempotent and called on every
+  /// launch, so existing installs pick up prompt tweaks without reinstalling:
+  ///   * /etc/profile.d/kala.sh — the welcome banner plus a colored, Termux-style
+  ///     prompt for POSIX shells (BusyBox ash and bash). Alpine/Debian's
+  ///     /etc/profile sources /etc/profile.d/*.sh on every login shell.
+  ///   * /etc/fish/config.fish — the same banner with a colored fish_prompt.
+  ///     fish's inline gray autosuggestions are on by default (we only pin the
+  ///     color); it ignores PS1/profile, hence its own config file.
+  static Future<void> _provisionShellExperience(String rootfs) async {
+    const esc = '\x1B'; // real ESC byte, so we don't rely on the shell decoding \033
+    try {
+      final profileD = Directory('$rootfs/etc/profile.d');
+      await profileD.create(recursive: true);
+      // user@host in green, path (\w, with ~ for home) in blue — Termux's
+      // default look. \[ \] mark the zero-width color codes so line editing
+      // counts the prompt width correctly; \$ is $ for users, # for root.
+      final ps1 = "PS1='\\[$esc[1;32m\\]\\u@\\h\\[$esc[0m\\]:"
+          "\\[$esc[1;34m\\]\\w\\[$esc[0m\\]\\\$ '";
+      await File('${profileD.path}/kala.sh').writeAsString(
+        '# KALA shell experience (auto-generated).\n'
+        '[ -t 1 ] && [ -r /etc/motd ] && cat /etc/motd 2>/dev/null\n'
+        '$ps1\n'
+        'export PS1\n',
+      );
+    } catch (_) {/* non-fatal: the shell still works with its default prompt */}
+    try {
+      final fishDir = Directory('$rootfs/etc/fish');
+      await fishDir.create(recursive: true);
+      await File('${fishDir.path}/config.fish').writeAsString(_fishConfig);
+    } catch (_) {/* non-fatal: only matters once fish is installed */}
+  }
+
+  static const String _fishConfig = '''# KALA fish config (auto-generated).
+if status is-login
+    test -r /etc/motd; and cat /etc/motd 2>/dev/null
+end
+
+# Show the full path (with ~ for home) instead of truncating it, Termux-style.
+set -g fish_prompt_pwd_dir_length 0
+# Inline autosuggestions ("ghost text") are on by default; pin them to gray.
+set -g fish_color_autosuggestion 6c6c6c
+
+function fish_prompt
+    set_color green
+    echo -n (whoami)'@'\$hostname
+    set_color normal
+    echo -n ':'
+    set_color blue
+    echo -n (prompt_pwd)
+    set_color normal
+    echo -n ' \$ '
+end
+''';
 
   static const String _openScript = '''#!/bin/sh
 # KALA: abre un archivo en el editor de la app (estilo termux-open).
@@ -529,10 +603,18 @@ printf '%s\\n%s\\n' "\${KALA_DISTRO:-alpine}" "\$abs" > "/shared/.kala/open/req-
     }
   }
 
-  /// Pick the interactive shell with the best line-editing/completion support
-  /// available in [rootfs]: prefer bash, then fall back to `/bin/sh`.
+  /// Pick the interactive shell with the best experience available in [rootfs]:
+  /// fish (colored prompt + inline gray autosuggestions), then bash, then the
+  /// base `/bin/sh`. fish is installed during provisioning when the network is
+  /// reachable; otherwise this falls through to bash/ash with the colored
+  /// /etc/profile.d prompt.
   static String _bestShell(String rootfs) {
-    for (final candidate in const ['/bin/bash', '/usr/bin/bash']) {
+    for (final candidate in const [
+      '/usr/bin/fish',
+      '/bin/fish',
+      '/bin/bash',
+      '/usr/bin/bash',
+    ]) {
       if (File('$rootfs$candidate').existsSync()) return candidate;
     }
     return '/bin/sh';

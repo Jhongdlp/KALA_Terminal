@@ -32,6 +32,10 @@ class TerminalSession {
   SSHSession? sshSession;
   Pty? localPty;
   String currentPath;
+  // Stack of previously visited directories for this session's explorer, used
+  // by [AppState.navigateBack]. Pushed in [AppState.changeDirectory] and
+  // [AppState.navigateUp] right before the path changes.
+  List<String> pathHistory = [];
   List<FileSystemEntityInfo> files;
   bool isLoadingFiles;
   // Whether the underlying shell (local PTY or SSH) has actually been spawned.
@@ -129,6 +133,8 @@ class AppState extends ChangeNotifier {
   ConnectionProfile? get activeProfile => activeSession?.activeProfile;
   bool get isTerminalInitialized => activeSession != null;
   String get currentPath => activeSession?.currentPath ?? '';
+  bool get canNavigateBack =>
+      activeSession?.pathHistory.isNotEmpty ?? false;
   // const fallback so the getter returns a stable reference (a fresh `[]` each
   // call would defeat the explorer's Selector equality check).
   List<FileSystemEntityInfo> get files =>
@@ -1202,6 +1208,7 @@ class AppState extends ChangeNotifier {
       // path is unchanged (the refresh button re-enters the same directory).
       _selectedPaths = const {};
       _fileSearchQuery = '';
+      session.pathHistory.add(session.currentPath);
     }
     session.currentPath = newPath;
     await _loadFiles();
@@ -1211,6 +1218,7 @@ class AppState extends ChangeNotifier {
     final session = activeSession;
     if (session == null) return;
 
+    final previousPath = session.currentPath;
     if (session.connectionStatus == ConnectionStatus.remote) {
       if (session.currentPath == '.' || session.currentPath == '/') return;
       final parts = session.currentPath.split('/');
@@ -1224,6 +1232,20 @@ class AppState extends ChangeNotifier {
         session.currentPath = parent.path;
       }
     }
+    if (session.currentPath != previousPath) {
+      session.pathHistory.add(previousPath);
+    }
+    _selectedPaths = const {};
+    _fileSearchQuery = '';
+    await _loadFiles();
+  }
+
+  /// Returns to the directory visited right before the current one (the
+  /// inverse of [changeDirectory]/[navigateUp]), like a browser "back" button.
+  Future<void> navigateBack() async {
+    final session = activeSession;
+    if (session == null || session.pathHistory.isEmpty) return;
+    session.currentPath = session.pathHistory.removeLast();
     _selectedPaths = const {};
     _fileSearchQuery = '';
     await _loadFiles();
