@@ -106,6 +106,12 @@ class AppState extends ChangeNotifier {
       clearSelection();
       return true;
     }
+    // Explorer, opt-in: step up one folder until we reach the root, then fall
+    // through to the normal tab/exit behaviour.
+    if (_activeTabIndex == 2 && _backGestureNavigatesFolders && canNavigateUp) {
+      navigateUp();
+      return true;
+    }
     // Any other tab → back to the connections (home) tab.
     if (_activeTabIndex != 0) {
       setActiveTabIndex(0);
@@ -258,6 +264,7 @@ class AppState extends ChangeNotifier {
   static const String _kActiveDistro = 'active_distro';
   static const String _kTerminalScheme = 'settings_terminal_scheme';
   static const String _kIconScale = 'settings_icon_scale';
+  static const String _kBackGestureFolders = 'settings_back_gesture_folders';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -288,6 +295,24 @@ class AppState extends ChangeNotifier {
   // AppTerminalTheme.byId.
   String _terminalScheme = 'auto';
   String get terminalScheme => _terminalScheme;
+
+  // When true, the system back gesture/button steps up one folder in the file
+  // explorer (instead of jumping straight back to the connections tab). Off by
+  // default because deep trees would need many back presses to leave the tab.
+  bool _backGestureNavigatesFolders = false;
+  bool get backGestureNavigatesFolders => _backGestureNavigatesFolders;
+
+  /// Whether the active session's explorer can still step up a level (i.e. it
+  /// isn't already at the filesystem root). Used by back navigation.
+  bool get canNavigateUp {
+    final session = activeSession;
+    if (session == null) return false;
+    if (session.connectionStatus == ConnectionStatus.remote) {
+      return session.currentPath != '.' && session.currentPath != '/';
+    }
+    final dir = Directory(session.currentPath);
+    return dir.parent.path != session.currentPath;
+  }
 
   // ---- Linux distro selector ----------------------------------------------
   // The local Android terminal runs inside a proot'd Linux userland. Alpine is
@@ -371,6 +396,9 @@ class AppState extends ChangeNotifier {
       _iconScale = AppIconScale.values[iconScaleIdx];
     }
 
+    _backGestureNavigatesFolders =
+        prefs.getBool(_kBackGestureFolders) ?? false;
+
     notifyListeners();
     refreshDistroStatus();
   }
@@ -389,6 +417,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kIconScale, scale.index);
+  }
+
+  Future<void> setBackGestureNavigatesFolders(bool value) async {
+    if (_backGestureNavigatesFolders == value) return;
+    _backGestureNavigatesFolders = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kBackGestureFolders, value);
   }
 
   Future<void> setThemeChoice(AppThemeChoice choice) async {

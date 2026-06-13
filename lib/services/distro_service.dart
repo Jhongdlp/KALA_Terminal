@@ -301,11 +301,7 @@ class DistroService {
     if (d.source.compression == 'xz') {
       emit('Descomprimiendo ${d.name} (puede tardar 1-3 min)...');
       final plainTar = '$tarPath.plain';
-      await Isolate.run(() {
-        final xz = File(tarPath).readAsBytesSync();
-        final raw = XZDecoder().decodeBytes(xz);
-        File(plainTar).writeAsBytesSync(raw);
-      });
+      await _xzToTar(tarPath, plainTar);
       await tarFile.delete();
       extractPath = plainTar;
       tarFlags = 'xf'; // already uncompressed
@@ -395,6 +391,24 @@ class DistroService {
 
     await (await _stamp(d)).writeAsString('$_version');
     emit('Listo.');
+  }
+
+  /// Decompress an .xz tarball at [xzPath] into a plain .tar at [tarPath] in a
+  /// background isolate (CPU-heavy XZ decode, kept off the UI thread).
+  ///
+  /// This MUST be its own static method: `Isolate.run` ships the closure to the
+  /// new isolate, and a closure captures its whole enclosing *context*, not just
+  /// the variables it names. Inlined in [install] the closure dragged along
+  /// install's other locals (the `log`/`onStatus` callbacks, which close over
+  /// the Pty/TerminalSession/AppState) and the send failed with "object is
+  /// unsendable". Here the only locals in scope are the two String paths, so the
+  /// capture is sendable.
+  static Future<void> _xzToTar(String xzPath, String tarPath) async {
+    await Isolate.run(() {
+      final xz = File(xzPath).readAsBytesSync();
+      final raw = XZDecoder().decodeBytes(xz);
+      File(tarPath).writeAsBytesSync(raw);
+    });
   }
 
   /// Run a one-off command inside [d]'s guest non-interactively (used during
