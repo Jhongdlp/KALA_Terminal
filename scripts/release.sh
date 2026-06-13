@@ -66,10 +66,13 @@ echo "==> building release APK…"
 apk="build/app/outputs/flutter-apk/app-release.apk"
 [ -f "$apk" ] || { echo "error: APK not found at $apk" >&2; exit 1; }
 
-# --- commit + tag the version bump ----------------------------------------
+# --- commit + tag + push the version bump ---------------------------------
 git add pubspec.yaml
 git commit -m "release: ${new_name}+${new_build}" >/dev/null
 git tag "$tag"
+echo "==> pushing commit + tag…"
+git push origin HEAD
+git push origin "$tag"
 
 # --- publish the GitHub release -------------------------------------------
 echo "==> creating GitHub release ${tag}…"
@@ -77,5 +80,4 @@ notes=${RELEASE_NOTES:-"Versión ${new_name}"}
 gh release create "$tag" "$apk" --title "$tag" --notes "$notes"
 
 echo
-echo "✅ Released ${tag}. Push the commit + tag with:"
-echo "   git push && git push --tags"
+echo "✅ Released ${tag} and published to GitHub."
