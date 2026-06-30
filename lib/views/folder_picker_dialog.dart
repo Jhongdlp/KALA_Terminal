@@ -263,6 +263,7 @@ Future<String?> _promptFolderName(BuildContext context) {
       content: TextField(
         controller: controller,
         autofocus: true,
+        enableIMEPersonalizedLearning: true,
         style: AppText.mono(13, color: AppColors.bone),
         decoration: const InputDecoration(hintText: 'nombre'),
         onSubmitted: (v) => Navigator.pop(ctx, v),

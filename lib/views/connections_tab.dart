@@ -432,6 +432,7 @@ class ConnectionsTab extends StatelessWidget {
     return TextField(
       controller: controller,
       obscureText: obscure,
+      enableIMEPersonalizedLearning: !obscure,
       keyboardType: number ? TextInputType.number : null,
       decoration: InputDecoration(labelText: label),
       style: mono

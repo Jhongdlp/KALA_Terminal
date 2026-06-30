@@ -111,6 +111,11 @@ class AppState extends ChangeNotifier {
       clearSelection();
       return true;
     }
+    // Explorer: step back in history if we have history.
+    if (_activeTabIndex == 2 && canNavigateBack) {
+      navigateBack();
+      return true;
+    }
     // Explorer, opt-in: step up one folder until we reach the root, then fall
     // through to the normal tab/exit behaviour.
     if (_activeTabIndex == 2 && _backGestureNavigatesFolders && canNavigateUp) {
@@ -1028,7 +1033,32 @@ class AppState extends ChangeNotifier {
         session.sshSession!.write(utf8.encode(out));
       };
 
-      session.currentPath = '.';
+      // Listen for connection loss
+      session.sshClient!.done.then((_) {
+        if (session.connectionStatus == ConnectionStatus.remote) {
+          session.connectionStatus = ConnectionStatus.disconnected;
+          session.terminal.write('\r\nConexión cerrada por el servidor.\r\n');
+          notifyListeners();
+        }
+      }).catchError((e) {
+        if (session.connectionStatus == ConnectionStatus.remote) {
+          session.connectionStatus = ConnectionStatus.disconnected;
+          session.terminal.write('\r\nError de conexión: $e\r\n');
+          notifyListeners();
+        }
+      });
+
+      try {
+        final sftp = await session.sshClient!.sftp().timeout(const Duration(seconds: 5));
+        try {
+          session.currentPath = await sftp.absolute('.').timeout(const Duration(seconds: 5));
+        } finally {
+          sftp.close();
+        }
+      } catch (_) {
+        session.currentPath = '.';
+      }
+
       if (activeSession == session) {
         await _loadFiles();
       } else {
@@ -1336,7 +1366,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Permanently delete the selected entries (recursive for directories).
   Future<void> deleteSelection() async {
     final session = activeSession;
     final entries = _selectedEntries;
@@ -1344,9 +1373,10 @@ class AppState extends ChangeNotifier {
     _selectedPaths = const {};
     session.isLoadingFiles = true;
     notifyListeners();
+    SftpClient? sftp;
     try {
-      final sftp = session.connectionStatus == ConnectionStatus.remote
-          ? await session.sshClient!.sftp()
+      sftp = session.connectionStatus == ConnectionStatus.remote
+          ? await session.sshClient!.sftp().timeout(const Duration(seconds: 5))
           : null;
       for (final entry in entries) {
         if (sftp != null) {
@@ -1360,6 +1390,9 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       session.terminal.write('Error al eliminar: $e\r\n');
     } finally {
+      if (sftp != null) {
+        sftp.close();
+      }
       await _loadFiles();
     }
   }
@@ -1396,9 +1429,11 @@ class AppState extends ChangeNotifier {
 
     session.isLoadingFiles = true;
     notifyListeners();
+    SftpClient? srcSftp;
+    SftpClient? destSftp;
     try {
-      final srcSftp = srcClient != null ? await srcClient.sftp() : null;
-      final destSftp = destClient != null ? await destClient.sftp() : null;
+      srcSftp = srcClient != null ? await srcClient.sftp().timeout(const Duration(seconds: 5)) : null;
+      destSftp = destClient != null ? await destClient.sftp().timeout(const Duration(seconds: 5)) : null;
 
       for (final entry in entries) {
         final destPath = _childPath(session.currentPath, entry.name, sep);
@@ -1442,6 +1477,12 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       session.terminal.write('Error al pegar: $e\r\n');
     } finally {
+      if (srcSftp != null) {
+        srcSftp.close();
+      }
+      if (destSftp != null) {
+        destSftp.close();
+      }
       if (isMove) {
         _clipboard = const [];
         _clipboardSshClient = null;
@@ -1518,18 +1559,20 @@ class AppState extends ChangeNotifier {
   /// `/storage/emulated/0` on Android). No-op off Android.
   Future<void> ensureStoragePermission() => _ensureStoragePermission();
 
-  /// Download the selected remote entries to a local folder. Only works when
-  /// the active session is SSH/remote. Pass [destDir] to save to a specific
-  /// directory the user chose; when null, falls back to the public Downloads
-  /// folder. Progress is surfaced through [isDownloading], [downloadCurrent],
-  /// [downloadTotal], and [downloadCurrentName] so the explorer can show a bar.
+  /// Download the selected remote or local entries to a local folder. Pass [destDir]
+  /// to save to a specific directory the user chose; when null, falls back to the
+  /// public Downloads folder. Progress is surfaced through [isDownloading],
+  /// [downloadCurrent], [downloadTotal], and [downloadCurrentName] so the
+  /// explorer can show a bar.
   Future<void> downloadSelection({String? destDir}) async {
     final session = activeSession;
     final entries = _selectedEntries;
-    if (session == null ||
-        entries.isEmpty ||
-        session.connectionStatus != ConnectionStatus.remote ||
-        session.sshClient == null) {
+    if (session == null || entries.isEmpty) {
+      return;
+    }
+
+    // Verify remote dependencies if remote
+    if (session.connectionStatus == ConnectionStatus.remote && session.sshClient == null) {
       return;
     }
 
@@ -1540,6 +1583,7 @@ class AppState extends ChangeNotifier {
     _downloadCurrentName = '';
     notifyListeners();
 
+    SftpClient? sftp;
     try {
       if (Platform.isAndroid) await _ensureStoragePermission();
 
@@ -1556,14 +1600,26 @@ class AppState extends ChangeNotifier {
       }
       await Directory(finalDir).create(recursive: true);
 
-      final sftp = await session.sshClient!.sftp();
-      for (final entry in entries) {
-        _downloadCurrentName = entry.name;
-        notifyListeners();
-        await _downloadEntry(
-            sftp, entry.path, entry.isDirectory, '$finalDir/${entry.name}');
-        _downloadCurrent++;
-        notifyListeners();
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        sftp = await session.sshClient!.sftp().timeout(const Duration(seconds: 5));
+        for (final entry in entries) {
+          _downloadCurrentName = entry.name;
+          notifyListeners();
+          await _downloadEntry(
+              sftp, entry.path, entry.isDirectory, '$finalDir/${entry.name}');
+          _downloadCurrent++;
+          notifyListeners();
+        }
+      } else {
+        // Local download (export files/folders from Alpine sandbox to shared storage)
+        for (final entry in entries) {
+          _downloadCurrentName = entry.name;
+          notifyListeners();
+          await _downloadEntryLocal(
+              entry.path, entry.isDirectory, '$finalDir/${entry.name}');
+          _downloadCurrent++;
+          notifyListeners();
+        }
       }
 
       session.terminal
@@ -1571,8 +1627,31 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       activeSession?.terminal.write('Error al descargar: $e\r\n');
     } finally {
+      if (sftp != null) {
+        sftp.close();
+      }
       _isDownloading = false;
       notifyListeners();
+    }
+  }
+
+  // Recursively copy a local file or directory.
+  Future<void> _downloadEntryLocal(String srcPath, bool isDirectory, String destPath) async {
+    if (!isDirectory) {
+      final srcFile = File(srcPath);
+      if (await srcFile.exists()) {
+        await srcFile.copy(destPath);
+      }
+      return;
+    }
+    await Directory(destPath).create(recursive: true);
+    final srcDir = Directory(srcPath);
+    if (await srcDir.exists()) {
+      await for (final entity in srcDir.list(recursive: false)) {
+        final name = entity.path.split('/').last;
+        final isDir = entity is Directory;
+        await _downloadEntryLocal(entity.path, isDir, '$destPath/$name');
+      }
     }
   }
 
@@ -1661,6 +1740,32 @@ class AppState extends ChangeNotifier {
     if (session == null) return;
     await _loadFilesForSession(session);
     notifyListeners();
+    _syncTerminalDirectory(session);
+  }
+
+  Future<void> _syncTerminalDirectory(TerminalSession session) async {
+    try {
+      if (session.terminal.isUsingAltBuffer) return;
+
+      String guestPath = session.currentPath;
+      if (Platform.isAndroid &&
+          session.connectionStatus == ConnectionStatus.local) {
+        guestPath = await _hostToGuestPath(session.currentPath, session.distroId);
+      }
+
+      final escaped = guestPath.replaceAll("'", "'\\''");
+      // Add a space to avoid clogging shell history (common ignorespace setting)
+      final bytes = utf8.encode(" cd '$escaped'\r");
+      if (session.connectionStatus == ConnectionStatus.remote &&
+          session.sshSession != null) {
+        session.sshSession!.write(bytes);
+      } else if (session.connectionStatus == ConnectionStatus.local &&
+          session.localPty != null) {
+        session.localPty!.write(bytes);
+      }
+    } catch (e) {
+      debugPrint('Error al sincronizar directorio con terminal: $e');
+    }
   }
 
   Future<void> _loadFilesForSession(TerminalSession session) async {
@@ -1672,11 +1777,13 @@ class AppState extends ChangeNotifier {
     // Build into a fresh list and assign it at the end, so consumers that
     // compare by reference (the explorer's Selector) detect the change.
     final loaded = <FileSystemEntityInfo>[];
+    bool hasError = false;
 
+    SftpClient? sftp;
     try {
       if (session.connectionStatus == ConnectionStatus.remote && session.sshClient != null) {
-        final sftp = await session.sshClient!.sftp();
-        final list = await sftp.listdir(session.currentPath);
+        sftp = await session.sshClient!.sftp().timeout(const Duration(seconds: 5));
+        final list = await sftp.listdir(session.currentPath).timeout(const Duration(seconds: 5));
 
         for (final item in list) {
           if (item.filename == '.' || item.filename == '..') continue;
@@ -1694,17 +1801,26 @@ class AppState extends ChangeNotifier {
         // Local Filesystem
         final dir = Directory(session.currentPath);
         if (await dir.exists()) {
-          final list = dir.listSync();
-          for (final entity in list) {
-            final stat = entity.statSync();
-            final name = entity.path.split(Platform.pathSeparator).last;
-            loaded.add(FileSystemEntityInfo(
-              name: name,
-              path: entity.path,
-              isDirectory: entity is Directory,
-              size: stat.size,
-              modified: stat.modified,
-            ));
+          try {
+            await for (final entity in dir.list(followLinks: false)) {
+              try {
+                final stat = await entity.stat();
+                final name = entity.path.split(Platform.pathSeparator).last;
+                loaded.add(FileSystemEntityInfo(
+                  name: name,
+                  path: entity.path,
+                  isDirectory: entity is Directory,
+                  size: stat.size,
+                  modified: stat.modified,
+                ));
+              } catch (e) {
+                // Ignore individual file errors (e.g. broken symlink or permission error on single file)
+                debugPrint('Error al obtener info de archivo local: $e');
+              }
+            }
+          } catch (e) {
+            debugPrint('Error al listar directorio local: $e');
+            rethrow;
           }
         }
       }
@@ -1715,12 +1831,16 @@ class AppState extends ChangeNotifier {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
     } catch (e) {
-      // Don't pollute the terminal with explorer errors (e.g. navigating up
-      // into directories Android won't let the app read). The file list just
-      // stays empty; surface it only to the debug log.
+      hasError = true;
       debugPrint('Error al cargar archivos: $e');
+      session.terminal.write('⚠️ Error al cargar archivos: $e\r\n');
     } finally {
-      session.files = loaded;
+      if (sftp != null) {
+        sftp.close();
+      }
+      if (!hasError) {
+        session.files = loaded;
+      }
       session.isLoadingFiles = false;
     }
   }
@@ -1742,6 +1862,8 @@ class AppState extends ChangeNotifier {
     session.isLoadingFiles = true;
     notifyListeners();
 
+    SftpClient? sftp;
+    SftpFile? fileStream;
     try {
       // Drop any temp copy from a previously open remote media file before
       // loading the next one.
@@ -1755,10 +1877,10 @@ class AppState extends ChangeNotifier {
         // Local files are played in place; remote files are downloaded to a
         // temp file first.
         if (isRemote && sshClient != null) {
-          final sftp = await sshClient.sftp();
-          final fileStream =
-              await sftp.open(file.path, mode: SftpFileOpenMode.read);
-          final bytes = await fileStream.readBytes();
+          sftp = await sshClient.sftp().timeout(const Duration(seconds: 5));
+          fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read).timeout(const Duration(seconds: 5));
+          final bytes = await fileStream.readBytes().timeout(const Duration(seconds: 15));
           final tempDir = await getTemporaryDirectory();
           final tempFile = File('${tempDir.path}/${file.name}');
           await tempFile.writeAsBytes(bytes);
@@ -1779,10 +1901,10 @@ class AppState extends ChangeNotifier {
         // it can be edited, with a rendered preview as the default mode.
         final Uint8List bytes;
         if (isRemote && sshClient != null) {
-          final sftp = await sshClient.sftp();
-          final fileStream =
-              await sftp.open(file.path, mode: SftpFileOpenMode.read);
-          bytes = await fileStream.readBytes();
+          sftp = await sshClient.sftp().timeout(const Duration(seconds: 5));
+          fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read).timeout(const Duration(seconds: 5));
+          bytes = await fileStream.readBytes().timeout(const Duration(seconds: 15));
         } else {
           bytes = await File(file.path).readAsBytes();
         }
@@ -1795,10 +1917,10 @@ class AppState extends ChangeNotifier {
       } else {
         final String content;
         if (isRemote && sshClient != null) {
-          final sftp = await sshClient.sftp();
-          final fileStream =
-              await sftp.open(file.path, mode: SftpFileOpenMode.read);
-          final bytes = await fileStream.readBytes();
+          sftp = await sshClient.sftp().timeout(const Duration(seconds: 5));
+          fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read).timeout(const Duration(seconds: 5));
+          final bytes = await fileStream.readBytes().timeout(const Duration(seconds: 15));
           content = utf8.decode(bytes, allowMalformed: true);
         } else {
           final localFile = File(file.path);
@@ -1822,6 +1944,12 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       session.terminal.write('Error al abrir archivo: $e\r\n');
     } finally {
+      if (fileStream != null) {
+        fileStream.close();
+      }
+      if (sftp != null) {
+        sftp.close();
+      }
       session.isLoadingFiles = false;
       notifyListeners();
     }
@@ -1849,15 +1977,17 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
 
+    SftpClient? sftp;
+    SftpFile? fileStream;
     try {
       final bytes = utf8.encode(_editingFileContent);
       if (_isEditingFileRemote && _editingSshClient != null) {
-        final sftp = await _editingSshClient!.sftp();
-        final fileStream = await sftp.open(
+        sftp = await _editingSshClient!.sftp().timeout(const Duration(seconds: 5));
+        fileStream = await sftp.open(
           _editingFilePath!,
           mode: SftpFileOpenMode.write | SftpFileOpenMode.create | SftpFileOpenMode.truncate,
-        );
-        await fileStream.write(Stream.value(bytes));
+        ).timeout(const Duration(seconds: 5));
+        await fileStream.write(Stream.value(bytes)).timeout(const Duration(seconds: 15));
       } else {
         final localFile = File(_editingFilePath!);
         await localFile.writeAsBytes(bytes);
@@ -1871,6 +2001,12 @@ class AppState extends ChangeNotifier {
         session.terminal.write('Error al guardar archivo: $e\r\n');
       }
     } finally {
+      if (fileStream != null) {
+        fileStream.close();
+      }
+      if (sftp != null) {
+        sftp.close();
+      }
       if (session != null) {
         session.isLoadingFiles = false;
         notifyListeners();

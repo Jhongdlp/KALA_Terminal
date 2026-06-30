@@ -223,6 +223,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
           Expanded(
             child: TextField(
               controller: _searchController,
+              enableIMEPersonalizedLearning: true,
               onChanged: (v) =>
                   context.read<AppState>().setFileSearchQuery(v),
               style: AppText.mono(12, color: AppColors.bone),
@@ -278,11 +279,10 @@ class _ExplorerTabState extends State<ExplorerTab> {
           _barIcon(Icons.drive_file_move_outlined,
               tooltip: 'Mover',
               onTap: () => state.copySelectionToClipboard(move: true)),
-          // Descargar al dispositivo: solo disponible en sesión remota (SSH).
-          if (isRemote)
-            _barIcon(Icons.download_outlined,
-                tooltip: 'Descargar al dispositivo',
-                onTap: () => _downloadWithPicker(context, state)),
+          // Descargar al dispositivo (tanto para sesión remota SSH como para local).
+          _barIcon(Icons.download_outlined,
+              tooltip: 'Descargar al dispositivo',
+              onTap: () => _downloadWithPicker(context, state)),
           _barIcon(Icons.delete_outline,
               tooltip: 'Eliminar',
               color: AppColors.danger,

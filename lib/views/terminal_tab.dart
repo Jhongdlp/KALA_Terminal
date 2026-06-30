@@ -17,8 +17,32 @@ class TerminalTab extends StatefulWidget {
   State<TerminalTab> createState() => _TerminalTabState();
 }
 
-class _TerminalTabState extends State<TerminalTab> {
+class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final FocusNode _terminalFocusNode = FocusNode();
+  double? _dragStartX;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (_terminalFocusNode.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && _terminalScrollController.hasClients) {
+          _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
+        }
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _terminalScrollController.hasClients) {
+          _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
+        }
+      });
+    }
+    super.didChangeMetrics();
+  }
 
   // Holds the current text selection of the active terminal so the "Copiar"
   // toolbar button can read it. Shared across sessions; the selection is
@@ -44,6 +68,7 @@ class _TerminalTabState extends State<TerminalTab> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
     _terminalController.dispose();
@@ -114,6 +139,30 @@ class _TerminalTabState extends State<TerminalTab> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () => _terminalFocusNode.requestFocus(),
+                    onHorizontalDragStart: (details) {
+                      if (_terminalController.selection == null) {
+                        _dragStartX = details.globalPosition.dx;
+                      } else {
+                        _dragStartX = null;
+                      }
+                    },
+                    onHorizontalDragUpdate: (details) {
+                      if (_dragStartX == null) return;
+                      final dx = details.globalPosition.dx - _dragStartX!;
+                      // Threshold for cursor movement (12.0 pixels per character/move)
+                      const threshold = 12.0;
+                      if (dx.abs() >= threshold) {
+                        if (dx > 0) {
+                          state.sendTerminalInput('\x1b[C'); // Right Arrow
+                        } else {
+                          state.sendTerminalInput('\x1b[D'); // Left Arrow
+                        }
+                        _dragStartX = details.globalPosition.dx;
+                      }
+                    },
+                    onHorizontalDragEnd: (_) {
+                      _dragStartX = null;
+                    },
                     child: _PinchFontZoom(
                       state: state,
                       child: TerminalSelectionArea(
@@ -190,6 +239,14 @@ class _TerminalTabState extends State<TerminalTab> {
             _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
             'Teclas rápidas',
             () => setState(() => _showKeys = !_showKeys),
+          ),
+          _toolbarIcon(
+            Icons.keyboard,
+            'Mostrar teclado',
+            () {
+              _terminalFocusNode.requestFocus();
+              _terminalViewKey.currentState?.requestKeyboard();
+            },
           ),
           _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
               () => state.setTerminalFullscreen(true)),
@@ -532,6 +589,7 @@ class _TerminalTabState extends State<TerminalTab> {
         content: TextField(
           controller: controller,
           autofocus: true,
+          enableIMEPersonalizedLearning: true,
           decoration: const InputDecoration(labelText: 'NOMBRE DE LA SESIÓN'),
           style: AppText.body(13),
         ),
