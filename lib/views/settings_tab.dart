@@ -27,6 +27,8 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, String>((s) => s.terminalScheme);
     final backGestureFolders =
         context.select<AppState, bool>((s) => s.backGestureNavigatesFolders);
+    final syncTerminalPath =
+        context.select<AppState, bool>((s) => s.syncTerminalPath);
     final state = context.read<AppState>();
 
     return Container(
@@ -157,6 +159,15 @@ class SettingsTab extends StatelessWidget {
                     'vez de volver a Conexiones.',
                 value: backGestureFolders,
                 onChanged: state.setBackGestureNavigatesFolders,
+              ),
+              Hairline(),
+              _ToggleRow(
+                label: 'SINCRONIZAR RUTA CON TERMINAL',
+                description:
+                    'Al navegar en el explorador de archivos, la terminal activa '
+                    'cambia automáticamente de directorio.',
+                value: syncTerminalPath,
+                onChanged: state.setSyncTerminalPath,
               ),
             ],
           ),

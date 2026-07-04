@@ -71,9 +71,10 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
   CellOffset? _dragFixed;
   bool _dragIsStart = false;
   Offset _dragTipDelta = Offset.zero;
+  int? _dragActiveRow;
 
-  static const double _handleTouch = 36; // hit target
-  static const double _handleVisual = 20; // painted teardrop
+  static const double _handleTouch = 50; // hit target
+  static const double _handleVisual = 24; // painted teardrop
   static const double _barHeight = 35;
 
   @override
@@ -217,10 +218,13 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
 
     _dragIsStart = isStart;
     _dragFixed = isStart ? selection.end : selection.begin;
+    final initialCell = isStart ? selection.begin : selection.end;
+    _dragActiveRow = initialCell.y;
+
     // Remember where the finger landed relative to the handle's tip so the
     // selection edge tracks the tip, not the center of the finger.
     final tipLocal =
-        render.getOffset(isStart ? selection.begin : selection.end) +
+        render.getOffset(initialCell) +
             Offset(0, render.cellSize.height);
     _dragTipDelta = details.globalPosition - render.localToGlobal(tipLocal);
   }
@@ -234,8 +238,22 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
     final tipLocal = render.globalToLocal(details.globalPosition - _dragTipDelta);
     // The tip rides the baseline; the character being selected is the one in
     // the row above it.
-    final cellOffset =
-        render.getCellOffset(tipLocal - Offset(0, render.cellSize.height / 2));
+    final cellHeight = render.cellSize.height;
+    final rawCellOffset =
+        render.getCellOffset(tipLocal - Offset(0, cellHeight / 2));
+
+    if (_dragActiveRow != null) {
+      final activeBaselineY =
+          render.getOffset(CellOffset(0, _dragActiveRow!)).dy + cellHeight;
+      final dyDiff = tipLocal.dy - activeBaselineY;
+      if (dyDiff.abs() > 2.2 * cellHeight) {
+        _dragActiveRow = rawCellOffset.y;
+      }
+    } else {
+      _dragActiveRow = rawCellOffset.y;
+    }
+
+    final cellOffset = CellOffset(rawCellOffset.x, _dragActiveRow!);
 
     // Selection ranges are begin-inclusive / end-exclusive in x, hence the +1
     // when moving the end handle (mirrors RenderTerminal.selectCharacters).
@@ -258,7 +276,7 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
 
     // Auto-scroll when the drag reaches the viewport edges.
     if (widget.scrollController.hasClients) {
-      const edge = 36.0;
+      const edge = 48.0;
       final position = widget.scrollController.position;
       double delta = 0;
       if (tipLocal.dy < edge) {
