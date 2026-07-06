@@ -1518,6 +1518,49 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> pasteImageBytes(Uint8List imageBytes, {String ext = 'png'}) async {
+    final session = activeSession;
+    if (session == null) return;
+
+    final now = DateTime.now();
+    final timestamp = '${now.year}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}_'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}';
+    final fileName = 'pasted_image_$timestamp.$ext';
+
+    session.isLoadingFiles = true;
+    notifyListeners();
+
+    try {
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        final sftp = await _getSftpClient(session);
+        final remoteFilePath = '${session.currentPath}/$fileName'.replaceAll('//', '/');
+        final fileStream = await sftp.open(
+          remoteFilePath,
+          mode: SftpFileOpenMode.write | SftpFileOpenMode.create | SftpFileOpenMode.truncate,
+        ).timeout(const Duration(seconds: 10));
+        await fileStream.write(Stream.value(imageBytes)).timeout(const Duration(seconds: 30));
+        await fileStream.close();
+      } else {
+        final localFilePath = '${session.currentPath}/$fileName'.replaceAll('//', '/');
+        await File(localFilePath).writeAsBytes(imageBytes);
+      }
+
+      session.terminal.write('\r\n✓ Imagen guardada como: $fileName\r\n');
+      sendTerminalInput(fileName);
+    } catch (e) {
+      session.terminal.write('\r\n⚠️ Error al guardar imagen pegada: $e\r\n');
+      session.sftpClient = null;
+    } finally {
+      session.isLoadingFiles = false;
+      notifyListeners();
+      await _loadFiles();
+    }
+  }
+
   static String _childPath(String dir, String name, String sep) =>
       dir.endsWith(sep) ? '$dir$name' : '$dir$sep$name';
 

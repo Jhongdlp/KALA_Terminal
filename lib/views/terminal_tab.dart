@@ -4,6 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
+import 'package:pasteboard/pasteboard.dart';
 import '../providers/app_state.dart';
 import '../services/distro_service.dart';
 import '../theme/app_theme.dart';
@@ -193,6 +194,17 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                             fontFamily: AppText.cascadiaFamily,
                             fontFamilyFallback: const ['monospace'],
                           ),
+                          onInsertContent: (content) async {
+                            if (content.data != null) {
+                              final mime = content.mimeType.toLowerCase();
+                              final ext = mime.contains('gif')
+                                  ? 'gif'
+                                  : mime.contains('jpg') || mime.contains('jpeg')
+                                      ? 'jpg'
+                                      : 'png';
+                              await state.pasteImageBytes(content.data!, ext: ext);
+                            }
+                          },
                         ),
                       ),
                     ),
@@ -273,6 +285,17 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   /// Pastes clipboard text into the active shell as raw input.
   Future<void> _paste(AppState state) async {
+    try {
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes != null) {
+        await state.pasteImageBytes(imageBytes);
+        _terminalFocusNode.requestFocus();
+        return;
+      }
+    } catch (e) {
+      debugPrint('Error leyendo imagen de portapapeles: $e');
+    }
+
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) return;
