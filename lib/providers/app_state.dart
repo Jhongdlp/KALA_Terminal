@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
+import 'package:open_filex/open_filex.dart';
 import '../models/connection_profile.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
@@ -264,6 +265,28 @@ class AppState extends ChangeNotifier {
   static bool isAudioPath(String path) {
     final lower = path.toLowerCase();
     return _audioExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  /// Whether [path] is an Office document or unsupported binary format to open externally.
+  static bool isOfficeOrExternalDocumentPath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.docx') ||
+        lower.endsWith('.doc') ||
+        lower.endsWith('.xlsx') ||
+        lower.endsWith('.xls') ||
+        lower.endsWith('.pptx') ||
+        lower.endsWith('.ppt') ||
+        lower.endsWith('.odt') ||
+        lower.endsWith('.ods') ||
+        lower.endsWith('.odp') ||
+        lower.endsWith('.rtf') ||
+        lower.endsWith('.epub') ||
+        lower.endsWith('.zip') ||
+        lower.endsWith('.tar') ||
+        lower.endsWith('.gz') ||
+        lower.endsWith('.rar') ||
+        lower.endsWith('.7z') ||
+        lower.endsWith('.apk');
   }
 
   String? _viewingMediaPath;
@@ -1933,6 +1956,32 @@ class AppState extends ChangeNotifier {
       // Drop any temp copy from a previously open remote media file before
       // loading the next one.
       _disposeTempMediaFile();
+
+      if (isOfficeOrExternalDocumentPath(file.path)) {
+        final String localPath;
+        if (isRemote && sshClient != null) {
+          final sftp = await _getSftpClient(session);
+          fileStream =
+              await sftp.open(file.path, mode: SftpFileOpenMode.read).timeout(const Duration(seconds: 5));
+          final bytes = await fileStream.readBytes().timeout(const Duration(seconds: 15));
+          final tempDir = await getTemporaryDirectory();
+          final tempFile = File('${tempDir.path}/${file.name}');
+          await tempFile.writeAsBytes(bytes);
+          localPath = tempFile.path;
+          _tempMediaFile = tempFile;
+        } else {
+          localPath = file.path;
+        }
+
+        final result = await OpenFilex.open(localPath);
+        if (result.type != ResultType.done) {
+          session.terminal.write('No se pudo abrir el documento: ${result.message}\r\n');
+        }
+
+        session.isLoadingFiles = false;
+        notifyListeners();
+        return;
+      }
 
       // Read the content *before* updating _editingFilePath so the editor only
       // rebuilds (and initializes its controller) once the content is ready.
