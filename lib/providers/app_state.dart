@@ -488,6 +488,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      if (_appLockEnabled) {
+        _unlocked = false;
+      }
+    }
+
     final foreground = state == AppLifecycleState.resumed;
     if (foreground == _appInForeground) return;
     _appInForeground = foreground;
@@ -1040,8 +1046,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // Separate batched writers for stdout/stderr: each keeps its own UTF-8
       // decoder so a multi-byte glyph split across packets is reassembled
       // instead of mangled, and bursts are coalesced into one write per frame.
-      final stdoutWriter = _TerminalWriter(session.terminal);
-      final stderrWriter = _TerminalWriter(session.terminal);
+      final stdoutWriter = _TerminalWriter(session.terminal, isInForeground: () => _appInForeground);
+      final stderrWriter = _TerminalWriter(session.terminal, isInForeground: () => _appInForeground);
       session._outputWriters.addAll([stdoutWriter, stderrWriter]);
       session.sshSession!.stdout.listen(stdoutWriter.add);
       session.sshSession!.stderr.listen(stderrWriter.add);
@@ -2214,21 +2220,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 ///    at most once per frame, collapsing many parse/repaint cycles into one.
 class _TerminalWriter {
   final Terminal terminal;
+  final bool Function() isInForeground;
   final StringBuffer _buffer = StringBuffer();
   late final Sink<List<int>> _decoder;
   Timer? _flushTimer;
   bool _disposed = false;
 
-  _TerminalWriter(this.terminal) {
+  _TerminalWriter(this.terminal, {required this.isInForeground}) {
     _decoder = utf8.decoder.startChunkedConversion(_StringBufferSink(_buffer));
   }
 
   void add(List<int> data) {
     if (_disposed) return;
     _decoder.add(data);
-    // Debounce to the next frame interval; cheap no-op if one is already armed.
-    // Increased to 30ms to prevent UI stuttering during high-speed prints.
-    _flushTimer ??= Timer(const Duration(milliseconds: 30), _flush);
+    
+    if (!isInForeground()) {
+      _flush();
+    } else {
+      // Debounce to the next frame interval; cheap no-op if one is already armed.
+      // Increased to 30ms to prevent UI stuttering during high-speed prints.
+      _flushTimer ??= Timer(const Duration(milliseconds: 30), _flush);
+    }
   }
 
   void _flush() {
