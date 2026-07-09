@@ -191,7 +191,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                         terminalViewKey: _terminalViewKey,
                         scrollController: _terminalScrollController,
                         onSendInput: (text) {
-                          state.sendTerminalInput(text);
+                          state.insertPromptText(text);
                           _terminalFocusNode.requestFocus();
                         },
                         onToast: _toast,
@@ -362,7 +362,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) return;
-    state.sendTerminalInput(text);
+    state.insertPromptText(text);
     _terminalFocusNode.requestFocus();
   }
 
