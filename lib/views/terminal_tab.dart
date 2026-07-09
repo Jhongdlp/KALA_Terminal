@@ -319,14 +319,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             'Teclas rápidas',
             () => setState(() => _showKeys = !_showKeys),
           ),
-          _toolbarIcon(
-            Icons.keyboard,
-            'Mostrar teclado',
-            () {
-              _terminalFocusNode.requestFocus();
-              _terminalViewKey.currentState?.requestKeyboard();
-            },
-          ),
           _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
               () => state.setTerminalFullscreen(true)),
           const SizedBox(width: 4),
