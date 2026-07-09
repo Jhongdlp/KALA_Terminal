@@ -33,6 +33,10 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.appLockEnabled);
     final agentAlerts =
         context.select<AppState, bool>((s) => s.agentAlertsEnabled);
+    final accentColorHex =
+        context.select<AppState, String>((s) => s.accentColorHex);
+    final monoFontChoice =
+        context.select<AppState, String>((s) => s.monoFontChoice);
     final state = context.read<AppState>();
 
     return Container(
@@ -72,6 +76,19 @@ class SettingsTab extends StatelessWidget {
                 child: _IconScaleSelector(
                   value: iconScale,
                   onChanged: state.setIconScale,
+                ),
+              ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Text('COLOR DE ACENTO (MONOCHROME-PLUS)',
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _AccentColorSelector(
+                  value: accentColorHex,
+                  onChanged: state.setAccentColorHex,
                 ),
               ),
             ],
@@ -146,6 +163,19 @@ class SettingsTab extends StatelessWidget {
                 child: _SchemeSelector(
                   value: terminalScheme,
                   onChanged: state.setTerminalScheme,
+                ),
+              ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Text('TIPOGRAFÍA MONOESPACIADA',
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _FontSelector(
+                  value: monoFontChoice,
+                  onChanged: state.setMonoFontChoice,
                 ),
               ),
             ],
@@ -669,6 +699,127 @@ class _InfoRow extends StatelessWidget {
           ),
           Text(value, style: AppText.mono(12, color: AppColors.bone)),
         ],
+      ),
+    );
+  }
+}
+
+class _AccentColorSelector extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _AccentColorSelector({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          for (final preset in AppColors.accentPresets)
+            GestureDetector(
+              onTap: () => onChanged(preset.$1),
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: preset.$1 == 'auto'
+                      ? (Theme.of(context).brightness == Brightness.light
+                          ? const Color(0xFF1A1916)
+                          : const Color(0xFFECE7DD))
+                      : preset.$3,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: value == preset.$1
+                        ? AppColors.bone
+                        : AppColors.hairline,
+                    width: value == preset.$1 ? 3 : 1,
+                  ),
+                ),
+                child: preset.$1 == 'auto'
+                    ? Center(
+                        child: Icon(
+                          Icons.circle_outlined,
+                          size: 14,
+                          color: Theme.of(context).brightness == Brightness.light
+                              ? const Color(0xFFECE7DD)
+                              : const Color(0xFF1A1916),
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FontSelector extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _FontSelector({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppColors.hairline, width: 1),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              _buildCell(AppText.monoFontOptions[0]),
+              Container(width: 1, height: 40, color: AppColors.hairline),
+              _buildCell(AppText.monoFontOptions[1]),
+              Container(width: 1, height: 40, color: AppColors.hairline),
+              _buildCell(AppText.monoFontOptions[2]),
+            ],
+          ),
+          Container(height: 1, color: AppColors.hairline),
+          Row(
+            children: [
+              _buildCell(AppText.monoFontOptions[3]),
+              Container(width: 1, height: 40, color: AppColors.hairline),
+              _buildCell(AppText.monoFontOptions[4]),
+              Container(width: 1, height: 40, color: AppColors.hairline),
+              _buildCell(AppText.monoFontOptions[5]),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCell((String, String) option) {
+    final (id, label) = option;
+    final active = value == id;
+    final fg = active ? AppColors.ink : AppColors.bone;
+    final fontFamily = AppText.resolveMonoFontFamily(id);
+
+    return Expanded(
+      child: Material(
+        color: active ? AppColors.accent : Colors.transparent,
+        child: InkWell(
+          onTap: () => onChanged(id),
+          child: Container(
+            height: 40,
+            alignment: Alignment.center,
+            child: Text(
+              label.toUpperCase(),
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                color: fg,
+                fontFamily: fontFamily,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

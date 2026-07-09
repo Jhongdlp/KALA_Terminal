@@ -143,7 +143,7 @@ class LayerRow extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
       child: Container(
-        color: active ? AppColors.bone : Colors.transparent,
+        color: active ? AppColors.accent : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(
           children: [
@@ -213,7 +213,7 @@ class InvertedButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
-    final bg = enabled ? AppColors.bone : AppColors.hairline;
+    final bg = enabled ? AppColors.accent : AppColors.hairline;
     final fg = enabled ? AppColors.ink : AppColors.muted;
     final factor = context.select<AppState, double>((s) => s.uiIconFactor);
     final iconSz = ((dense ? 13.0 : 15.0) * factor).roundToDouble();
@@ -368,7 +368,7 @@ class ToggleRow extends StatelessWidget {
             value: value,
             onChanged: onChanged,
             activeThumbColor: AppColors.ink,
-            activeTrackColor: AppColors.bone,
+            activeTrackColor: AppColors.accent,
             inactiveThumbColor: AppColors.muted,
             inactiveTrackColor: AppColors.hairline,
           ),

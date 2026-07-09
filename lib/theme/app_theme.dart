@@ -88,6 +88,17 @@ class AppColors {
   static Color bone = _dark.bone;
   static Color muted = _dark.muted;
   static Color faint = _dark.faint;
+  static Color accent = _dark.bone;
+
+  static const List<(String, String, Color)> accentPresets = [
+    ('auto', 'MONOCROMO', Color(0xFFECE7DD)),
+    ('red', 'ROJO SUIZO', Color(0xFFE63946)),
+    ('orange', 'NARANJA INT', Color(0xFFFF5E00)),
+    ('green', 'VERDE MATRIX', Color(0xFF00FF66)),
+    ('blue', 'AZUL BAUHAUS', Color(0xFF0055FF)),
+    ('yellow', 'AMARILLO ACID', Color(0xFFEBFF00)),
+    ('purple', 'VIOLETA', Color(0xFF8B5CF6)),
+  ];
 
   /// Reserved single warm signal — only for irreversible/destructive accents.
   /// Constant across themes so it can still be used in `const` widgets.
@@ -118,7 +129,7 @@ class AppColors {
   /// Swap the active chrome palette for [choice]. [platformBrightness] resolves
   /// the `system` option. Call before building the [MaterialApp] so the static
   /// color references resolve to the chosen theme.
-  static void apply(AppThemeChoice choice, Brightness platformBrightness) {
+  static void apply(AppThemeChoice choice, Brightness platformBrightness, {String? accentColorHex}) {
     oledActive = choice == AppThemeChoice.oled;
     final _Palette p;
     switch (choice) {
@@ -139,6 +150,25 @@ class AppColors {
     bone = p.bone;
     muted = p.muted;
     faint = p.faint;
+
+    // Resolve accent color
+    if (accentColorHex == null || accentColorHex == 'auto') {
+      accent = p.bone;
+    } else {
+      final preset = accentPresets.firstWhere(
+        (e) => e.$1 == accentColorHex,
+        orElse: () => ('', '', const Color(0xFFECE7DD)),
+      );
+      if (preset.$1.isNotEmpty) {
+        accent = preset.$3;
+      } else {
+        try {
+          accent = Color(int.parse(accentColorHex));
+        } catch (_) {
+          accent = p.bone;
+        }
+      }
+    }
   }
 }
 
@@ -151,6 +181,33 @@ class AppColors {
 /// (not via default values) so they follow the active light/dark palette.
 class AppText {
   AppText._();
+
+  static const List<(String, String)> monoFontOptions = [
+    ('cascadia', 'Cascadia Code'),
+    ('jetbrains', 'JetBrains Mono'),
+    ('firacode', 'Fira Code'),
+    ('sourcecode', 'Source Code Pro'),
+    ('inconsolata', 'Inconsolata'),
+    ('anonymous', 'Anonymous Pro'),
+  ];
+
+  static String resolveMonoFontFamily(String choice) {
+    switch (choice) {
+      case 'jetbrains':
+        return GoogleFonts.jetBrainsMono().fontFamily ?? 'monospace';
+      case 'firacode':
+        return GoogleFonts.firaCode().fontFamily ?? 'monospace';
+      case 'sourcecode':
+        return GoogleFonts.sourceCodePro().fontFamily ?? 'monospace';
+      case 'inconsolata':
+        return GoogleFonts.inconsolata().fontFamily ?? 'monospace';
+      case 'anonymous':
+        return GoogleFonts.anonymousPro().fontFamily ?? 'monospace';
+      case 'cascadia':
+      default:
+        return 'CascadiaCode';
+    }
+  }
 
   /// Giant uppercase wordmark, tight negative tracking (DARKROOM look).
   static TextStyle display(
@@ -246,8 +303,37 @@ class AppTerminalTheme {
 
   /// Resolves a persisted scheme id to a palette; 'auto' (and anything
   /// unknown) falls back to the theme-paired palette.
-  static TerminalTheme byId(String id, Brightness b) =>
-      schemes[id] ?? forBrightness(b);
+  static TerminalTheme byId(String id, Brightness b, {Color? accentColor}) {
+    final theme = schemes[id] ?? forBrightness(b);
+    if (accentColor != null) {
+      return TerminalTheme(
+        cursor: accentColor,
+        selection: accentColor.withValues(alpha: 0.25),
+        foreground: theme.foreground,
+        background: theme.background,
+        black: theme.black,
+        red: theme.red,
+        green: theme.green,
+        yellow: theme.yellow,
+        blue: theme.blue,
+        magenta: theme.magenta,
+        cyan: theme.cyan,
+        white: theme.white,
+        brightBlack: theme.brightBlack,
+        brightRed: theme.brightRed,
+        brightGreen: theme.brightGreen,
+        brightYellow: theme.brightYellow,
+        brightBlue: theme.brightBlue,
+        brightMagenta: theme.brightMagenta,
+        brightCyan: theme.brightCyan,
+        brightWhite: theme.brightWhite,
+        searchHitBackground: theme.searchHitBackground,
+        searchHitBackgroundCurrent: theme.searchHitBackgroundCurrent,
+        searchHitForeground: theme.searchHitForeground,
+      );
+    }
+    return theme;
+  }
 
   /// Dark terminal (Tokyo Night / Warp-like). Colors are literal so this stays
   /// a compile-time constant independent of the chrome palette.
@@ -422,18 +508,18 @@ class AppTheme {
   /// resolves the `system` option. Also calls [AppColors.apply] so the static
   /// palette and the returned theme stay in sync no matter the call order.
   static ThemeData themeFor(
-      AppThemeChoice choice, Brightness platformBrightness) {
-    AppColors.apply(choice, platformBrightness);
+      AppThemeChoice choice, Brightness platformBrightness, {String? accentColorHex}) {
+    AppColors.apply(choice, platformBrightness, accentColorHex: accentColorHex);
     final brightness = AppColors.brightness;
     const radius = BorderRadius.zero; // Swiss precision: sharp corners
     return ThemeData(
       brightness: brightness,
       scaffoldBackgroundColor: AppColors.ink,
       canvasColor: AppColors.ink,
-      primaryColor: AppColors.bone,
+      primaryColor: AppColors.accent,
       colorScheme: ColorScheme(
         brightness: brightness,
-        primary: AppColors.bone,
+        primary: AppColors.accent,
         onPrimary: AppColors.ink,
         secondary: AppColors.muted,
         onSecondary: AppColors.ink,
@@ -468,14 +554,14 @@ class AppTheme {
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         labelStyle: AppText.label(10, color: AppColors.muted, spacing: 0.8),
         floatingLabelStyle:
-            AppText.label(10, color: AppColors.bone, spacing: 0.8),
+            AppText.label(10, color: AppColors.accent, spacing: 0.8),
         enabledBorder: OutlineInputBorder(
           borderRadius: radius,
           borderSide: BorderSide(color: AppColors.hairline, width: 1),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: radius,
-          borderSide: BorderSide(color: AppColors.bone, width: 1),
+          borderSide: BorderSide(color: AppColors.accent, width: 1),
         ),
       ),
       snackBarTheme: SnackBarThemeData(

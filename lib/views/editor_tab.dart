@@ -66,6 +66,8 @@ class _EditorTabState extends State<EditorTab> {
         context.select<AppState, bool>((s) => s.isViewingAudio);
     final editorFontSize =
         context.select<AppState, double>((s) => s.editorFontSize);
+    final monoFontFamily =
+        context.select<AppState, String>((s) => s.monoFontFamily);
     // AppColors is a global, mutable palette swapped on theme change; depend on
     // themeChoice so this isolated tab rebuilds and re-reads the new colors.
     context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
@@ -207,12 +209,12 @@ class _EditorTabState extends State<EditorTab> {
               style: CodeEditorStyle(
                 fontSize: editorFontSize,
                 fontHeight: 1.45,
-                fontFamily: AppText.cascadiaFamily,
+                fontFamily: monoFontFamily,
                 fontFamilyFallback: const ['monospace'],
                 textColor: AppColors.bone,
                 backgroundColor: AppColors.ink,
-                cursorColor: AppColors.bone,
-                selectionColor: AppColors.bone.withValues(alpha: 0.18),
+                cursorColor: AppColors.accent,
+                selectionColor: AppColors.accent.withValues(alpha: 0.18),
                 cursorLineColor: AppColors.panelHi,
                 chunkIndicatorColor: AppColors.muted,
                 // Syntax highlighting tuned to the open file's type; null for
@@ -225,7 +227,7 @@ class _EditorTabState extends State<EditorTab> {
                 final numberStyle = TextStyle(
                   fontSize: editorFontSize,
                   height: 1.45,
-                  fontFamily: AppText.cascadiaFamily,
+                  fontFamily: monoFontFamily,
                   fontFamilyFallback: const ['monospace'],
                   color: AppColors.faint,
                 );
@@ -236,7 +238,7 @@ class _EditorTabState extends State<EditorTab> {
                       notifier: notifier,
                       textStyle: numberStyle,
                       focusedTextStyle:
-                          numberStyle.copyWith(color: AppColors.bone),
+                          numberStyle.copyWith(color: AppColors.accent),
                     ),
                     DefaultCodeChunkIndicator(
                       width: 18,

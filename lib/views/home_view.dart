@@ -4,10 +4,12 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../services/update_service.dart';
+import '../widgets/menu_drawer.dart';
 import 'connections_tab.dart';
 import 'terminal_tab.dart';
 import 'explorer_tab.dart';
 import 'editor_tab.dart';
+import 'vps_tab.dart';
 import 'settings_tab.dart';
 import 'update_dialog.dart';
 
@@ -24,8 +26,10 @@ class _HomeViewState extends State<HomeView> {
     _NavSpec('CONSOLA', Icons.terminal_outlined),
     _NavSpec('ARCHIVOS', Icons.folder_outlined),
     _NavSpec('EDITOR', Icons.code),
-    _NavSpec('AJUSTES', Icons.tune),
+    _NavSpec('MENÚ', Icons.menu),
   ];
+
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Timestamp of the last back press on the root tab, for double-back-to-exit.
   DateTime? _lastBackPress;
@@ -59,10 +63,10 @@ class _HomeViewState extends State<HomeView> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('Presiona atrás de nuevo para salir'),
-          duration: Duration(seconds: 2),
-        ),
+          const SnackBar(
+            content: Text('Presiona atrás de nuevo para salir'),
+            duration: Duration(seconds: 2),
+          ),
       );
   }
 
@@ -92,6 +96,7 @@ class _HomeViewState extends State<HomeView> {
       TerminalTab(),
       ExplorerTab(),
       EditorTab(),
+      VpsTab(),
       SettingsTab(),
     ];
 
@@ -106,6 +111,8 @@ class _HomeViewState extends State<HomeView> {
         _onBackPressed();
       },
       child: Scaffold(
+        key: _scaffoldKey,
+        endDrawer: const MenuDrawer(),
         backgroundColor: AppColors.ink,
         // Keep the soft keyboard from covering navigation: nav lives at the top,
         // the keyboard only ever pushes up the content below it.
@@ -129,10 +136,15 @@ class _HomeViewState extends State<HomeView> {
                         return Expanded(
                           child: _TopNavItem(
                             spec: _items[i],
-                            active: activeTabIndex == i,
+                            active: activeTabIndex == i || (i == 4 && (activeTabIndex == 4 || activeTabIndex == 5)),
                             dirty: i == 3 && isFileDirty,
-                            onTap: () =>
-                                context.read<AppState>().setActiveTabIndex(i),
+                            onTap: () {
+                              if (i == 4) {
+                                _scaffoldKey.currentState?.openEndDrawer();
+                              } else {
+                                context.read<AppState>().setActiveTabIndex(i);
+                              }
+                            },
                           ),
                         );
                       }),
@@ -171,7 +183,7 @@ class _TopNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = active ? AppColors.bone : AppColors.muted;
+    final fg = active ? AppColors.accent : AppColors.muted;
     final iconSz = (18 * context.select<AppState, double>((s) => s.uiIconFactor)).roundToDouble();
     return InkWell(
       onTap: onTap,
@@ -192,7 +204,7 @@ class _TopNavItem extends StatelessWidget {
                       child: Container(
                         width: 5,
                         height: 5,
-                        color: AppColors.bone,
+                        color: AppColors.accent,
                       ),
                     ),
                 ],
@@ -209,14 +221,14 @@ class _TopNavItem extends StatelessWidget {
               ),
             ],
           ),
-          // Active indicator: 2px bone bar along the bottom edge.
+          // Active indicator: 2px accent bar along the bottom edge.
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
             child: Container(
               height: 2,
-              color: active ? AppColors.bone : Colors.transparent,
+              color: active ? AppColors.accent : Colors.transparent,
             ),
           ),
         ],

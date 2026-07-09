@@ -53,17 +53,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // rebuild MaterialApp and reallocate ThemeData for the entire app.
     final themeChoice =
         context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
+    final accentColorHex =
+        context.select<AppState, String>((s) => s.accentColorHex);
     final platformBrightness =
         WidgetsBinding.instance.platformDispatcher.platformBrightness;
 
     // Keep the static palette in sync with the active theme before the tree
     // builds, since widgets read AppColors.* directly.
-    AppColors.apply(themeChoice, platformBrightness);
+    AppColors.apply(themeChoice, platformBrightness, accentColorHex: accentColorHex);
 
     return MaterialApp(
       title: 'KALA',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.themeFor(themeChoice, platformBrightness),
+      theme: AppTheme.themeFor(themeChoice, platformBrightness, accentColorHex: accentColorHex),
       home: const _LockGate(),
     );
   }

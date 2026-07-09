@@ -360,6 +360,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
   static const String _kAgentAlerts = 'settings_agent_alerts';
+  static const String _kAccentColorHex = 'settings_accent_color_hex';
+  static const String _kMonoFontChoice = 'settings_mono_font_choice';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -405,6 +407,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // how TUI agents (Claude Code, aider, …) signal that they need input.
   bool _agentAlertsEnabled = true;
   bool get agentAlertsEnabled => _agentAlertsEnabled;
+
+  String _accentColorHex = 'auto';
+  String get accentColorHex => _accentColorHex;
+
+  String _monoFontChoice = 'cascadia';
+  String get monoFontChoice => _monoFontChoice;
+
+  String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
   Future<void> setAgentAlertsEnabled(bool value) async {
     if (_agentAlertsEnabled == value) return;
@@ -747,10 +757,29 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     _agentAlertsEnabled = prefs.getBool(_kAgentAlerts) ?? true;
 
+    _accentColorHex = prefs.getString(_kAccentColorHex) ?? 'auto';
+    _monoFontChoice = prefs.getString(_kMonoFontChoice) ?? 'cascadia';
+
     await _loadSnippets(prefs);
 
     _settingsLoaded = true;
     notifyListeners();
+  }
+
+  Future<void> setAccentColorHex(String value) async {
+    if (_accentColorHex == value) return;
+    _accentColorHex = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kAccentColorHex, value);
+  }
+
+  Future<void> setMonoFontChoice(String value) async {
+    if (_monoFontChoice == value) return;
+    _monoFontChoice = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kMonoFontChoice, value);
   }
 
   Future<void> setIconScale(AppIconScale scale) async {
@@ -2314,6 +2343,77 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  // --- GIT STATUS WORKFLOW ---
+
+  Future<List<GitChangedFile>> getGitStatus() async {
+    final session = activeSession;
+    if (session == null) return [];
+
+    final currentDir = session.currentPath;
+    String output = '';
+
+    if (session.connectionStatus == ConnectionStatus.remote) {
+      if (session.sshClient == null) return [];
+      try {
+        final run = await session.sshClient!.execute('cd "$currentDir" && git status --porcelain');
+        final bytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
+        output = bytes;
+      } catch (e) {
+        debugPrint('Error running remote git status: $e');
+      }
+    } else {
+      try {
+        final res = await Process.run('git', ['status', '--porcelain'], workingDirectory: currentDir);
+        output = res.stdout as String;
+      } catch (e) {
+        debugPrint('Error running local git status: $e');
+      }
+    }
+
+    final List<GitChangedFile> files = [];
+    final lines = const LineSplitter().convert(output);
+    for (final line in lines) {
+      if (line.length < 4) continue;
+      final status = line.substring(0, 2).trim();
+      final relative = line.substring(3).trim();
+      final sanitizedRelative = relative.replaceAll('"', '');
+      final absPath = currentDir.endsWith('/') 
+          ? '$currentDir$sanitizedRelative' 
+          : '$currentDir/$sanitizedRelative';
+      
+      files.add(GitChangedFile(
+        status: status,
+        relativePath: sanitizedRelative,
+        absolutePath: absPath,
+      ));
+    }
+    return files;
+  }
+
+  void navigateToGitFile(GitChangedFile file) async {
+    final lastSlash = file.absolutePath.lastIndexOf('/');
+    final parentDir = lastSlash > 0 ? file.absolutePath.substring(0, lastSlash) : '/';
+    
+    await changeDirectory(parentDir);
+
+    if (file.status != 'D') {
+      final fileName = file.relativePath.contains('/')
+          ? file.relativePath.substring(file.relativePath.lastIndexOf('/') + 1)
+          : file.relativePath;
+          
+      final fileEntity = FileSystemEntityInfo(
+        name: fileName,
+        path: file.absolutePath,
+        isDirectory: false,
+        size: 0,
+        modified: DateTime.now(),
+      );
+      await openFile(fileEntity);
+    } else {
+      setActiveTabIndex(2);
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -2405,5 +2505,17 @@ class FileSystemEntityInfo {
     required this.isDirectory,
     required this.size,
     required this.modified,
+  });
+}
+
+class GitChangedFile {
+  final String status;
+  final String relativePath;
+  final String absolutePath;
+
+  GitChangedFile({
+    required this.status,
+    required this.relativePath,
+    required this.absolutePath,
   });
 }
