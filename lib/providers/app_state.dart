@@ -614,6 +614,33 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _checkAutodetectQuestion(TerminalSession session, String text) {
+    if (!_agentAlertsEnabled) return;
+    if (_appInForeground) return;
+
+    try {
+      final terminalText = session.terminal.buffer.getText();
+      final tail = (terminalText.length > 150 
+          ? terminalText.substring(terminalText.length - 150) 
+          : terminalText).trim();
+
+      // Detects a question mark (?), interactive choices [y/n], [yes/no], or inputs
+      final questionRegex = RegExp(
+        r'(?:\?|[\(\[]y/n[\)\]]|[\(\[]yes/no[\)\]]|\bconfirm\b|\binput:\s*$|\bpregunta:\s*$)',
+        caseSensitive: false,
+      );
+
+      if (questionRegex.hasMatch(tail)) {
+        _onSessionAlert(session, 
+          title: session.name, 
+          body: 'El agente te ha hecho una pregunta'
+        );
+      }
+    } catch (_) {
+      // Ignore buffer read errors
+    }
+  }
+
   // Ensures the Android foreground service (which keeps the process — and its
   // SSH shells — alive while the app is in the background) is running. Started
   // lazily on the first SSH connection so no persistent notification shows
@@ -1078,8 +1105,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // Separate batched writers for stdout/stderr: each keeps its own UTF-8
       // decoder so a multi-byte glyph split across packets is reassembled
       // instead of mangled, and bursts are coalesced into one write per frame.
-      final stdoutWriter = _TerminalWriter(session.terminal, isInForeground: () => _appInForeground);
-      final stderrWriter = _TerminalWriter(session.terminal, isInForeground: () => _appInForeground);
+      final stdoutWriter = _TerminalWriter(
+        session.terminal,
+        isInForeground: () => _appInForeground,
+        onTextWritten: (text) => _checkAutodetectQuestion(session, text),
+      );
+      final stderrWriter = _TerminalWriter(
+        session.terminal,
+        isInForeground: () => _appInForeground,
+        onTextWritten: (text) => _checkAutodetectQuestion(session, text),
+      );
       session._outputWriters.addAll([stdoutWriter, stderrWriter]);
       session.sshSession!.stdout.listen(stdoutWriter.add);
       session.sshSession!.stderr.listen(stderrWriter.add);
@@ -2253,12 +2288,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 class _TerminalWriter {
   final Terminal terminal;
   final bool Function() isInForeground;
+  final void Function(String text) onTextWritten;
   final StringBuffer _buffer = StringBuffer();
   late final Sink<List<int>> _decoder;
   Timer? _flushTimer;
   bool _disposed = false;
 
-  _TerminalWriter(this.terminal, {required this.isInForeground}) {
+  _TerminalWriter(this.terminal, {
+    required this.isInForeground,
+    required this.onTextWritten,
+  }) {
     _decoder = utf8.decoder.startChunkedConversion(_StringBufferSink(_buffer));
   }
 
@@ -2281,6 +2320,7 @@ class _TerminalWriter {
     final text = _buffer.toString();
     _buffer.clear();
     terminal.write(text);
+    onTextWritten(text);
   }
 
   void dispose() {
