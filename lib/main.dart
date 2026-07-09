@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'providers/app_state.dart';
 import 'theme/app_theme.dart';
 import 'views/home_view.dart';
+import 'views/lock_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,7 +64,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       title: 'KALA',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.themeFor(themeChoice, platformBrightness),
-      home: const HomeView(),
+      home: const _LockGate(),
     );
+  }
+}
+
+/// Decides between the lock screen and the app shell. Until settings have
+/// loaded it shows a blank ink screen so the shell never flashes behind the
+/// lock on a locked launch.
+class _LockGate extends StatelessWidget {
+  const _LockGate();
+
+  @override
+  Widget build(BuildContext context) {
+    final settingsLoaded =
+        context.select<AppState, bool>((s) => s.settingsLoaded);
+    final requiresUnlock =
+        context.select<AppState, bool>((s) => s.requiresUnlock);
+
+    if (!settingsLoaded) {
+      return Scaffold(backgroundColor: AppColors.ink, body: const SizedBox());
+    }
+    if (requiresUnlock) return const LockScreen();
+    return const HomeView();
   }
 }

@@ -7,11 +7,14 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity (instead of FlutterActivity) is required by the
+// local_auth plugin, which shows the biometric/device-credential prompt inside
+// an AndroidX BiometricFragment.
+class MainActivity : FlutterFragmentActivity() {
 
     private val channelName = "com.antigravity.terminalagent/background"
 

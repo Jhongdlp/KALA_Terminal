@@ -203,10 +203,25 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                             fontFamily: AppText.cascadiaFamily,
                             fontFamilyFallback: const ['monospace'],
                           ),
-                          // NOTE: the Gboard inline image-paste (onInsertContent)
-                          // relied on a locally patched xterm that isn't vendored
-                          // in this repo, so it's omitted here — the "PEGAR" quick
-                          // key still pastes images via the clipboard.
+                          // Gboard inline image paste: the soft keyboard hands
+                          // us the image bytes directly (no need to hit "PEGAR").
+                          // Enabled by the vendored, patched xterm in
+                          // third_party/xterm (see pubspec dependency_overrides).
+                          onInsertContent: (content) async {
+                            if (content.data != null) {
+                              final mime = content.mimeType.toLowerCase();
+                              final ext = mime.contains('gif')
+                                  ? 'gif'
+                                  : mime.contains('webp')
+                                      ? 'webp'
+                                      : mime.contains('jpg') ||
+                                              mime.contains('jpeg')
+                                          ? 'jpg'
+                                          : 'png';
+                              await state.pasteImageBytes(content.data!,
+                                  ext: ext);
+                            }
+                          },
                         ),
                       ),
                     ),

@@ -335,6 +335,7 @@ class AppState extends ChangeNotifier {
   static const String _kIconScale = 'settings_icon_scale';
   static const String _kBackGestureFolders = 'settings_back_gesture_folders';
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
+  static const String _kAppLockEnabled = 'settings_app_lock_enabled';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -374,6 +375,46 @@ class AppState extends ChangeNotifier {
 
   bool _syncTerminalPath = true;
   bool get syncTerminalPath => _syncTerminalPath;
+
+  // ---- App lock --------------------------------------------------------
+  // When enabled, a biometric/device-credential gate is shown before the app
+  // shell on cold start (see LockGate in main.dart). The unlock uses the phone's
+  // biometric with a fallback to its screen-lock credential; no KALA-specific
+  // secret is stored.
+  bool _appLockEnabled = false;
+  bool get appLockEnabled => _appLockEnabled;
+
+  // Runtime unlock flag for the current process. Starts false so the gate
+  // appears on launch; flipped by [markUnlocked] after a successful auth.
+  bool _unlocked = false;
+
+  // Becomes true once _loadSettings has run, so the gate can avoid flashing the
+  // app shell before it knows whether the lock is enabled.
+  bool _settingsLoaded = false;
+  bool get settingsLoaded => _settingsLoaded;
+
+  /// True while the app should stay behind the lock screen: settings are known,
+  /// the lock is on, and the user hasn't authenticated yet this session.
+  bool get requiresUnlock =>
+      _settingsLoaded && _appLockEnabled && !_unlocked;
+
+  /// Records a successful authentication for the rest of this process run.
+  void markUnlocked() {
+    if (_unlocked) return;
+    _unlocked = true;
+    notifyListeners();
+  }
+
+  Future<void> setAppLockEnabled(bool value) async {
+    if (_appLockEnabled == value) return;
+    _appLockEnabled = value;
+    // Enabling from settings means the user is already inside the app; don't
+    // relock the current session — the gate only guards the next cold start.
+    if (value) _unlocked = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAppLockEnabled, value);
+  }
 
   /// Whether the active session's explorer can still step up a level (i.e. it
   /// isn't already at the filesystem root). Used by back navigation.
@@ -453,6 +494,9 @@ class AppState extends ChangeNotifier {
     _syncTerminalPath =
         prefs.getBool(_kSyncTerminalPath) ?? true;
 
+    _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
+
+    _settingsLoaded = true;
     notifyListeners();
   }
 

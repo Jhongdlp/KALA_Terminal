@@ -39,6 +39,11 @@ dependencies:
   path_provider: ^2.1.5
   shared_preferences: ^2.5.5
   provider: ^6.1.5+1
+  # Biometric / device-credential unlock for the optional app lock (see
+  # lib/services/app_lock.dart). Requires MainActivity to be a
+  # FlutterFragmentActivity on Android.
+  local_auth: ^2.3.0
+  local_auth_android: ^1.0.46
   re_editor: ^0.9.0
   # Syntax-highlighting grammars + token themes used by the code editor (see
   # lib/theme/code_highlight.dart). Pulled in transitively by re_editor, but we
@@ -70,6 +75,17 @@ dependencies:
   # Native file picker for the terminal's "adjuntar" quick key (attach any
   # document/image and insert its path into a TUI agent's prompt).
   file_picker: ^8.1.6
+
+# Use a locally-vendored, patched copy of xterm (third_party/xterm) so the
+# terminal keyboard improvements survive `flutter pub get` on any machine:
+#  - normal keyboard with suggestions / autocorrect / voice dictation (the
+#    upstream package hardcodes an "incognito" keyboard with all of that off);
+#  - inline image paste via the soft keyboard (Gboard "insert content"),
+#    exposed through TerminalView.onInsertContent.
+# See third_party/xterm for the patched sources.
+dependency_overrides:
+  xterm:
+    path: third_party/xterm
 
 dev_dependencies:
   flutter_test:

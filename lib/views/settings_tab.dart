@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../services/app_lock.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 
@@ -26,6 +27,8 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.backGestureNavigatesFolders);
     final syncTerminalPath =
         context.select<AppState, bool>((s) => s.syncTerminalPath);
+    final appLockEnabled =
+        context.select<AppState, bool>((s) => s.appLockEnabled);
     final state = context.read<AppState>();
 
     return Container(
@@ -170,6 +173,22 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // ---- Security --------------------------------------------------
+          SwissPanel(
+            title: 'Seguridad',
+            children: [
+              _ToggleRow(
+                label: 'BLOQUEO DE LA APLICACIÓN',
+                description:
+                    'Pide tu huella (o el bloqueo del teléfono) al abrir KALA, '
+                    'para proteger tus conexiones y claves guardadas.',
+                value: appLockEnabled,
+                onChanged: (value) => _onAppLockChanged(context, state, value),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
           // ---- About -----------------------------------------------------
           SwissPanel(
             title: 'Acerca de',
@@ -180,6 +199,55 @@ class SettingsTab extends StatelessWidget {
               Hairline(),
               const _VersionRow(),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Turns the app lock on/off. Enabling first checks the device can actually
+  /// authenticate and then requires one successful auth, so the user confirms
+  /// the mechanism works before it guards the next launch (no lock-out).
+  Future<void> _onAppLockChanged(
+      BuildContext context, AppState state, bool value) async {
+    if (!value) {
+      await state.setAppLockEnabled(false);
+      return;
+    }
+
+    final supported = await AppLock.instance.isSupported();
+    if (!context.mounted) return;
+    if (!supported) {
+      _showLockUnavailable(context);
+      return;
+    }
+
+    final ok = await AppLock.instance.authenticate();
+    if (!ok) return;
+    await state.setAppLockEnabled(true);
+  }
+
+  void _showLockUnavailable(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+          side: BorderSide(color: AppColors.hairline),
+        ),
+        title: Text('BLOQUEO NO DISPONIBLE',
+            style: AppText.label(11, color: AppColors.bone)),
+        content: Text(
+          'Configura una huella o un bloqueo de pantalla (PIN, patrón o '
+          'contraseña) en los ajustes de tu teléfono y vuelve a intentarlo.',
+          style: AppText.body(13, color: AppColors.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('ENTENDIDO',
+                style: AppText.label(10, color: AppColors.bone)),
           ),
         ],
       ),
