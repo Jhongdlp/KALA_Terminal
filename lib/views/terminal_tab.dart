@@ -305,6 +305,17 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     _terminalFocusNode.requestFocus();
   }
 
+  /// Lets the user pick a file/image; it's uploaded to the server over SFTP and
+  /// its remote path inserted into the prompt for a TUI agent (Claude Code) to
+  /// read. Surfaces the backend's outcome; an empty message means the user
+  /// cancelled the picker.
+  Future<void> _attach(AppState state) async {
+    final result = await state.attachFile();
+    if (!mounted) return;
+    if (result.message.isNotEmpty) _toast(result.message);
+    if (result.ok) _terminalFocusNode.requestFocus();
+  }
+
   // ---- URL detection --------------------------------------------------------
 
   static final RegExp _urlRegex = RegExp(r'''https?://[^\s"'<>]+''');
@@ -656,6 +667,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             Row(
               children: [
                 _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed),
+                _key('SHIFT', state.toggleShift, armed: state.shiftArmed),
                 _key('ESC', () => state.sendTerminalInput('\x1b')),
                 _key('TAB', () => state.sendTerminalInput('\t')),
                 // ALT acts as the Meta prefix: it sends ESC, so pressing ALT
@@ -678,6 +690,8 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 _key('→', () => state.sendTerminalInput('\x1b[C')),
                 _key('~', () => state.sendTerminalInput('~')),
                 _key('/', () => state.sendTerminalInput('/')),
+                _key('ADJUNTAR', () => _attach(state),
+                    icon: Icons.attach_file),
                 _key('ENLACES', () => _showLinksSheet(state),
                     icon: Icons.link),
               ],
