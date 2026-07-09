@@ -625,24 +625,37 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           ? terminalText.substring(terminalText.length - 150) 
           : terminalText).trim();
 
-      // Robust regex that matches:
-      // - Question mark (?) near the end of the text
-      // - Response options: [y/n], (y/n), (yes/no), [s/n], (sí/no) with or without brackets
-      // - Common interactive prompt keywords: confirm, choose, select, input, write, type, option
-      // - Common command line prompts ending in colon or angle bracket: ":" or ">"
+      // Robust regex for interactive questions or approval prompts
       final questionRegex = RegExp(
         r'(?:\?|[\(\[\/\s]?(?:y/n|yes/no|s/n|sí/no|y\/n|s\/n)[\)\]\?\s]?|\b(?:confirm|approve|input|select|choose|write|type|option|confirmar|aprobar|escribir|ingresar|presione|press|opción)\b|[:>]\s*$)',
         caseSensitive: false,
       );
 
-      if (questionRegex.hasMatch(tail)) {
+      // Robust regex for task completion or success markers
+      final completionRegex = RegExp(
+        r'\b(?:done|finished|completed|success|successfully|finalizado|completado|terminado|exitoso|exitosamente|passed)\b',
+        caseSensitive: false,
+      );
+
+      final isQuestion = questionRegex.hasMatch(tail);
+      final isCompletion = completionRegex.hasMatch(tail);
+
+      if (isQuestion || isCompletion) {
         // Schedule alert after 500ms of silence. If more text arrives before this,
         // it gets canceled, preventing spam during active outputs (e.g. logs/builds).
         _sessionAlertTimers[session.id] = Timer(const Duration(milliseconds: 500), () {
           _sessionAlertTimers.remove(session.id);
+
+          final String bodyText;
+          if (isQuestion) {
+            bodyText = 'El agente espera tu respuesta';
+          } else {
+            bodyText = 'El agente ha finalizado la tarea';
+          }
+
           _onSessionAlert(session, 
             title: session.name, 
-            body: 'El agente espera tu respuesta'
+            body: bodyText
           );
         });
       }
