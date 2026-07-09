@@ -29,6 +29,8 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.syncTerminalPath);
     final appLockEnabled =
         context.select<AppState, bool>((s) => s.appLockEnabled);
+    final agentAlerts =
+        context.select<AppState, bool>((s) => s.agentAlertsEnabled);
     final state = context.read<AppState>();
 
     return Container(
@@ -152,7 +154,7 @@ class SettingsTab extends StatelessWidget {
           SwissPanel(
             title: 'Explorador',
             children: [
-              _ToggleRow(
+              ToggleRow(
                 label: 'GESTO ATRÁS SUBE DE CARPETA',
                 description:
                     'El gesto/botón atrás sube un nivel en el explorador en '
@@ -161,7 +163,7 @@ class SettingsTab extends StatelessWidget {
                 onChanged: state.setBackGestureNavigatesFolders,
               ),
               Hairline(),
-              _ToggleRow(
+              ToggleRow(
                 label: 'SINCRONIZAR RUTA CON TERMINAL',
                 description:
                     'Al navegar en el explorador de archivos, la terminal activa '
@@ -173,11 +175,28 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // ---- Notifications ----------------------------------------------
+          SwissPanel(
+            title: 'Notificaciones',
+            children: [
+              ToggleRow(
+                label: 'AVISOS DE AGENTE',
+                description:
+                    'Notifica cuando una sesión pide tu atención (campana u '
+                    'OSC 9/777) con la app en segundo plano — p. ej. un agente '
+                    'de IA esperando tu respuesta.',
+                value: agentAlerts,
+                onChanged: state.setAgentAlertsEnabled,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
           // ---- Security --------------------------------------------------
           SwissPanel(
             title: 'Seguridad',
             children: [
-              _ToggleRow(
+              ToggleRow(
                 label: 'BLOQUEO DE LA APLICACIÓN',
                 description:
                     'Pide tu huella (o el bloqueo del teléfono) al abrir KALA, '
@@ -447,55 +466,6 @@ class _SegmentCell extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// A labelled on/off row: uppercase label + helper text on the left, a Switch
-/// on the right. Matches the flat IDE styling used across the settings screen.
-class _ToggleRow extends StatelessWidget {
-  final String label;
-  final String description;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _ToggleRow({
-    required this.label,
-    required this.description,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: AppText.label(9, color: AppColors.muted)),
-                const SizedBox(height: 5),
-                Text(description,
-                    style: AppText.label(8.5,
-                        color: AppColors.faint, spacing: 0.3)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeThumbColor: AppColors.ink,
-            activeTrackColor: AppColors.bone,
-            inactiveThumbColor: AppColors.muted,
-            inactiveTrackColor: AppColors.hairline,
-          ),
-        ],
       ),
     );
   }

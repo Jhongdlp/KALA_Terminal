@@ -13,6 +13,8 @@
          to the system package installer (see lib/services/update_service.dart).
          The user still confirms the install in the system dialog. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Voice dictation in the prompt composer (speech_to_text plugin). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Shared-storage access (targetSdk 28 legacy permissions grant the whole
          /storage/emulated/0): the "adjuntar" file picker reads files from it and
          the SFTP downloader saves downloads into Download/KALA. -->

@@ -13,8 +13,10 @@ import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import 'package:open_filex/open_filex.dart';
 import '../models/connection_profile.dart';
+import '../models/prompt_snippet.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
+import '../services/notification_service.dart';
 import '../services/secure_store.dart';
 
 enum ConnectionStatus { disconnected, connecting, remote }
@@ -44,6 +46,19 @@ class TerminalSession {
   // always true for a live session; kept for the explorer's bookkeeping.
   bool started;
   List<ServerSocket> forwardServers;
+  // Set when this session rang the bell (or emitted an OSC notification)
+  // while it wasn't the visible one; rendered as an accent dot in the session
+  // selector and cleared when the user switches to it.
+  bool hasPendingAlert = false;
+  // Last window title the remote program set (OSC 0/2). Many TUI agents put
+  // their name here; used to pick the agent badge on alert notifications.
+  String? lastTitle;
+  // Last time an agent alert fired for this session — debounce window so a
+  // burst of BELs collapses into a single notification.
+  DateTime? lastAlertAt;
+  // True while a reconnect attempt is in flight, so the banner button and the
+  // on-resume sweep can't double-connect the same session.
+  bool reconnecting = false;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
   // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
   final List<_TerminalWriter> _outputWriters = [];
@@ -65,7 +80,11 @@ class TerminalSession {
         forwardServers = forwardServers ?? [];
 }
 
-class AppState extends ChangeNotifier {
+// WidgetsBindingObserver: AppState tracks the app's foreground/background
+// state itself (see [didChangeAppLifecycleState]) to decide whether an agent
+// alert becomes a system notification and to reconnect dropped sessions on
+// resume.
+class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Navigation State
   int _activeTabIndex = 0;
   int get activeTabIndex => _activeTabIndex;
@@ -336,6 +355,7 @@ class AppState extends ChangeNotifier {
   static const String _kBackGestureFolders = 'settings_back_gesture_folders';
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
+  static const String _kAgentAlerts = 'settings_agent_alerts';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -375,6 +395,20 @@ class AppState extends ChangeNotifier {
 
   bool _syncTerminalPath = true;
   bool get syncTerminalPath => _syncTerminalPath;
+
+  // When true (default), a session that rings the bell or emits an OSC 9/777
+  // notification while the app is backgrounded posts a system notification —
+  // how TUI agents (Claude Code, aider, …) signal that they need input.
+  bool _agentAlertsEnabled = true;
+  bool get agentAlertsEnabled => _agentAlertsEnabled;
+
+  Future<void> setAgentAlertsEnabled(bool value) async {
+    if (_agentAlertsEnabled == value) return;
+    _agentAlertsEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAgentAlerts, value);
+  }
 
   // ---- App lock --------------------------------------------------------
   // When enabled, a biometric/device-credential gate is shown before the app
@@ -431,10 +465,146 @@ class AppState extends ChangeNotifier {
   AppState() {
     _loadSettings();
     _loadProfiles();
+    WidgetsBinding.instance.addObserver(this);
+    // A cold start triggered by tapping an agent-alert notification carries a
+    // session id; with no sessions alive after a process death there's nothing
+    // to jump to, but consuming it clears the native side either way.
+    _consumePendingNotificationTap();
     // No session exists until the user connects to an SSH profile: the app
     // opens on the connections tab. The background service that keeps SSH
     // sessions alive while minimized is started on the first connection
     // (see [_connectSessionToSSH]).
+  }
+
+  // ---- App lifecycle & agent alerts ----------------------------------------
+  // Whether the app is currently visible (resumed). Starts true: the process
+  // begins in the foreground.
+  bool _appInForeground = true;
+
+  // Ids of the sessions that were live when the app last went to background.
+  // On resume, only these are auto-reconnected if now disconnected: a session
+  // the user deliberately ended (`exit`) before backgrounding stays down.
+  Set<String> _liveWhenPaused = const {};
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final foreground = state == AppLifecycleState.resumed;
+    if (foreground == _appInForeground) return;
+    _appInForeground = foreground;
+    if (foreground) {
+      _onAppResumed();
+    } else {
+      _liveWhenPaused = _sessions
+          .where((s) => s.connectionStatus == ConnectionStatus.remote)
+          .map((s) => s.id)
+          .toSet();
+    }
+  }
+
+  void _onAppResumed() {
+    // The user is looking at the app again: posted alerts are now noise.
+    NotificationService.cancelAlerts();
+    // If a notification tap resumed us, jump to that session.
+    _consumePendingNotificationTap();
+    // Looking at the active session acknowledges its pending alert.
+    final active = activeSession;
+    if (active != null && active.hasPendingAlert) {
+      active.hasPendingAlert = false;
+      notifyListeners();
+    }
+    // One reconnect attempt per session that dropped while backgrounded (never
+    // a retry loop — further attempts are the user's, via the banner button).
+    for (final session in List<TerminalSession>.of(_sessions)) {
+      if (session.connectionStatus == ConnectionStatus.disconnected &&
+          session.activeProfile != null &&
+          _liveWhenPaused.contains(session.id)) {
+        reconnectSession(session);
+      }
+    }
+    _liveWhenPaused = const {};
+  }
+
+  /// Reads (and clears) the session id carried by an alert-notification tap;
+  /// if that session is still open, makes it active and shows the terminal.
+  Future<void> _consumePendingNotificationTap() async {
+    final id = await NotificationService.consumePendingSession();
+    if (id == null) return;
+    final index = _sessions.indexWhere((s) => s.id == id);
+    if (index < 0) return;
+    switchSession(index);
+    _activeTabIndex = 1;
+    notifyListeners();
+  }
+
+  /// Minimum spacing between alerts of the same session: TUI agents often ring
+  /// the bell several times in a burst.
+  static const Duration _alertDebounce = Duration(seconds: 4);
+
+  /// Known TUI agents, matched (in order) against the terminal title and the
+  /// recent screen content to brand the alert notification. Purely cosmetic:
+  /// everything works the same for an unknown agent (generic badge).
+  static const List<({String marker, String id, String label})> _agentMarkers = [
+    (marker: 'antigravity', id: 'antigravity', label: 'Antigravity'),
+    (marker: 'claude', id: 'claude', label: 'Claude Code'),
+    (marker: 'aider', id: 'aider', label: 'Aider'),
+    (marker: 'codex', id: 'codex', label: 'Codex'),
+    (marker: 'gemini', id: 'gemini', label: 'Gemini CLI'),
+  ];
+
+  /// Best guess at which agent is running in [session]: the window title
+  /// (agents usually put their name there) wins; otherwise the most recent
+  /// mention in the tail of the terminal buffer. Null → unknown/no agent.
+  ({String id, String label})? _detectAgent(TerminalSession session) {
+    final title = session.lastTitle?.toLowerCase() ?? '';
+    for (final m in _agentMarkers) {
+      if (title.contains(m.marker)) return (id: m.id, label: m.label);
+    }
+    String tail;
+    try {
+      final text = session.terminal.buffer.getText();
+      tail = (text.length > 4000 ? text.substring(text.length - 4000) : text)
+          .toLowerCase();
+    } catch (_) {
+      return null;
+    }
+    ({String id, String label})? best;
+    var bestIdx = -1;
+    for (final m in _agentMarkers) {
+      final idx = tail.lastIndexOf(m.marker);
+      if (idx > bestIdx) {
+        bestIdx = idx;
+        best = (id: m.id, label: m.label);
+      }
+    }
+    return best;
+  }
+
+  /// Shared endpoint for every agent-attention signal (BEL, OSC 9, OSC 777),
+  /// wired per-session in [createNewSession]. Policy:
+  ///  - app in background → system notification (tap reopens the session);
+  ///  - app visible but the session isn't the active one → in-app badge;
+  ///  - app visible and session active → nothing beyond the bell's haptic.
+  void _onSessionAlert(TerminalSession session, {String? title, String? body}) {
+    if (!_agentAlertsEnabled) return;
+    final now = DateTime.now();
+    final last = session.lastAlertAt;
+    if (last != null && now.difference(last) < _alertDebounce) return;
+    session.lastAlertAt = now;
+
+    if (!_appInForeground) {
+      final agent = _detectAgent(session);
+      NotificationService.showAlert(
+        sessionId: session.id,
+        title: (title == null || title.isEmpty) ? session.name : title,
+        body: (body == null || body.isEmpty)
+            ? '${agent?.label ?? 'El agente'} espera tu respuesta'
+            : body,
+        agent: agent?.id,
+      );
+    } else if (!identical(session, activeSession)) {
+      session.hasPendingAlert = true;
+      notifyListeners();
+    }
   }
 
   // Ensures the Android foreground service (which keeps the process — and its
@@ -495,6 +665,10 @@ class AppState extends ChangeNotifier {
         prefs.getBool(_kSyncTerminalPath) ?? true;
 
     _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
+
+    _agentAlertsEnabled = prefs.getBool(_kAgentAlerts) ?? true;
+
+    await _loadSnippets(prefs);
 
     _settingsLoaded = true;
     notifyListeners();
@@ -573,13 +747,37 @@ class AppState extends ChangeNotifier {
   // [_connectSessionToSSH].
   void createNewSession({required ConnectionProfile profile}) {
     final String id = const Uuid().v4();
-    // Bell (BEL / \a) → haptic tick. No-op on devices without a vibrator.
+    // `late` because the terminal's callbacks below capture the session that
+    // owns them; they can only fire after [Terminal.write], i.e. well after
+    // the assignment.
+    late final TerminalSession session;
     final Terminal terminal = Terminal(
       maxLines: 10000,
-      onBell: HapticFeedback.mediumImpact,
+      // Bell (BEL / \a) → haptic tick (no-op without a vibrator) + agent
+      // alert: it's how most TUI agents signal they finished or need input.
+      onBell: () {
+        HapticFeedback.mediumImpact();
+        _onSessionAlert(session);
+      },
+      // Explicit notification escapes, agent-agnostic:
+      //   OSC 9   — `ESC ] 9 ; message BEL` (iTerm2/WezTerm style);
+      //   OSC 777 — `ESC ] 777 ; notify ; title ; body BEL` (urxvt style).
+      // Semicolons inside the payload arrive pre-split, hence the joins.
+      onPrivateOSC: (ps, pt) {
+        if (ps == '9' && pt.isNotEmpty) {
+          _onSessionAlert(session, body: pt.join(';'));
+        } else if (ps == '777' && pt.isNotEmpty && pt.first == 'notify') {
+          _onSessionAlert(
+            session,
+            title: pt.length > 1 ? pt[1] : null,
+            body: pt.length > 2 ? pt.sublist(2).join(';') : null,
+          );
+        }
+      },
+      onTitleChange: (title) => session.lastTitle = title,
     );
 
-    final session = TerminalSession(
+    session = TerminalSession(
       id: id,
       name: profile.name,
       terminal: terminal,
@@ -687,6 +885,80 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- Prompt snippets ------------------------------------------------------
+  // Reusable prompt templates for TUI agents, persisted as a JSON string list
+  // (same pattern as `ssh_profiles`; no secrets → plain shared_preferences).
+  static const String _kPromptSnippets = 'prompt_snippets';
+
+  List<PromptSnippet> _snippets = [];
+  List<PromptSnippet> get snippets => _snippets;
+
+  Future<void> _loadSnippets(SharedPreferences prefs) async {
+    final raw = prefs.getStringList(_kPromptSnippets);
+    if (raw == null) {
+      // First run: seed a few starter templates so the sheet isn't empty and
+      // shows what the feature is for. Deleting them all is remembered (the
+      // key then exists as an empty list).
+      _snippets = [
+        PromptSnippet(
+          id: const Uuid().v4(),
+          title: 'Tests y arreglos',
+          text: 'Corre los tests del proyecto y arregla los fallos que '
+              'encuentres. Muéstrame un resumen de lo que cambiaste.',
+        ),
+        PromptSnippet(
+          id: const Uuid().v4(),
+          title: 'Commit y push',
+          text: 'Haz commit de los cambios pendientes con un mensaje '
+              'descriptivo y haz push a la rama actual.',
+        ),
+        PromptSnippet(
+          id: const Uuid().v4(),
+          title: 'Explicar error',
+          text: 'Explica el último error que apareció y propón cómo '
+              'solucionarlo antes de tocar nada.',
+        ),
+      ];
+      await _persistSnippets(prefs);
+      return;
+    }
+    _snippets = raw.map(PromptSnippet.fromJson).toList();
+  }
+
+  Future<void> _persistSnippets(SharedPreferences prefs) async {
+    await prefs.setStringList(
+        _kPromptSnippets, _snippets.map((s) => s.toJson()).toList());
+  }
+
+  Future<void> saveSnippet(PromptSnippet snippet) async {
+    final index = _snippets.indexWhere((s) => s.id == snippet.id);
+    if (index >= 0) {
+      _snippets[index] = snippet;
+    } else {
+      _snippets.add(snippet);
+    }
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await _persistSnippets(prefs);
+  }
+
+  Future<void> deleteSnippet(String id) async {
+    _snippets.removeWhere((s) => s.id == id);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await _persistSnippets(prefs);
+  }
+
+  /// Inserts [text] into the active shell as if pasted, without a trailing
+  /// newline — the user reviews and submits. Routed through [Terminal.paste]
+  /// so bracketed-paste-aware TUIs (every modern agent) receive a multi-line
+  /// prompt as one paste instead of N Enter presses.
+  void insertPromptText(String text) {
+    final session = activeSession;
+    if (session == null || text.isEmpty) return;
+    session.terminal.paste(text);
+  }
+
   Future<SftpClient> _getSftpClient(TerminalSession session) async {
     if (session.sftpClient != null) {
       return session.sftpClient!;
@@ -702,6 +974,19 @@ class AppState extends ChangeNotifier {
   // Connect a session to a remote SSH server
   Future<void> _connectSessionToSSH(TerminalSession session, ConnectionProfile profile) async {
     _disposeWriters(session);
+    // A reconnect reuses the session object: drop every leftover from the
+    // previous connection first — bound forward ports (they'd fail to re-bind
+    // in _setupForwards) and stale SFTP/SSH handles.
+    for (final server in session.forwardServers) {
+      server.close();
+    }
+    session.forwardServers.clear();
+    session.sftpClient?.close();
+    session.sftpClient = null;
+    session.sshSession?.close();
+    session.sshSession = null;
+    session.sshClient?.close();
+    session.sshClient = null;
     session.connectionStatus = ConnectionStatus.connecting;
     notifyListeners();
 
@@ -718,12 +1003,26 @@ class AppState extends ChangeNotifier {
 
       session.terminal.write('Autenticado correctamente. Abriendo terminal shell...\r\n');
 
-      session.sshSession = await session.sshClient!.shell(
-        pty: SSHPtyConfig(
-          width: session.terminal.viewWidth,
-          height: session.terminal.viewHeight,
-        ),
+      final pty = SSHPtyConfig(
+        width: session.terminal.viewWidth,
+        height: session.terminal.viewHeight,
       );
+      if (profile.useTmux) {
+        // Persistent session: `tmux new -A` attaches to the named session if
+        // it exists and creates it otherwise, so reconnecting after a network
+        // drop re-attaches to whatever kept running on the server (e.g. an AI
+        // agent mid-task). Falls back to a plain login shell — with a visible
+        // notice — when the server has no tmux.
+        session.sshSession = await session.sshClient!.execute(
+          'command -v tmux >/dev/null 2>&1 '
+          "&& exec tmux new-session -A -s '${profile.tmuxSessionName}' "
+          '|| { echo "[KALA] tmux no está instalado en el servidor; abriendo shell normal."; '
+              'exec "\${SHELL:-sh}" -l; }',
+          pty: pty,
+        );
+      } else {
+        session.sshSession = await session.sshClient!.shell(pty: pty);
+      }
 
       // Forward later size changes to the remote PTY. xterm and
       // resizeTerminal both use (width=cols, height=rows) order.
@@ -815,6 +1114,25 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Re-establishes a dropped SSH session in place, reusing its profile. With
+  /// tmux enabled on the profile this re-attaches to the still-running remote
+  /// session. No-op while the session is live or a reconnect is in flight.
+  /// Called by the "Reconectar" banner and by the on-resume sweep.
+  Future<void> reconnectSession(TerminalSession session) async {
+    final profile = session.activeProfile;
+    if (profile == null) return;
+    if (session.connectionStatus != ConnectionStatus.disconnected) return;
+    if (session.reconnecting) return;
+    session.reconnecting = true;
+    notifyListeners();
+    try {
+      await _connectSessionToSSH(session, profile);
+    } finally {
+      session.reconnecting = false;
+      notifyListeners();
+    }
+  }
+
   // Connect to Remote SSH (API exposed to ConnectionsTab)
   Future<void> connectToSSH(ConnectionProfile profile) async {
     createNewSession(profile: profile);
@@ -826,6 +1144,8 @@ class AppState extends ChangeNotifier {
   void switchSession(int index) {
     if (index < 0 || index >= _sessions.length) return;
     _activeSessionIndex = index;
+    // Looking at the session acknowledges its pending agent alert.
+    _sessions[index].hasPendingAlert = false;
     // The explorer's selection/search belong to the previous session's listing.
     _selectedPaths = const {};
     _fileSearchQuery = '';
@@ -1875,6 +2195,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     for (final session in _sessions) {
       _cleanupSession(session);
     }

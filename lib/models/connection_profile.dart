@@ -65,6 +65,10 @@ class ConnectionProfile {
   final bool isLocal;
   final List<PortForward> forwards;
 
+  /// Wrap the remote shell in `tmux new-session -A` so the session (and any
+  /// agent running inside) survives network drops; reconnecting re-attaches.
+  final bool useTmux;
+
   ConnectionProfile({
     required this.id,
     required this.name,
@@ -75,7 +79,17 @@ class ConnectionProfile {
     this.privateKey,
     this.isLocal = false,
     this.forwards = const [],
+    this.useTmux = false,
   });
+
+  /// tmux session name used when [useTmux] is on: a slug of the profile name
+  /// (single-quote-safe, since it's interpolated into the remote command),
+  /// prefixed so it's recognizable in `tmux ls`.
+  String get tmuxSessionName {
+    var slug = name.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    if (slug.isEmpty) slug = id.length >= 8 ? id.substring(0, 8) : id;
+    return 'kala-$slug';
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -88,6 +102,7 @@ class ConnectionProfile {
       'privateKey': privateKey,
       'isLocal': isLocal,
       'forwards': forwards.map((f) => f.toMap()).toList(),
+      'useTmux': useTmux,
     };
   }
 
@@ -117,6 +132,7 @@ class ConnectionProfile {
       privateKey: privateKey ?? this.privateKey,
       isLocal: isLocal,
       forwards: forwards,
+      useTmux: useTmux,
     );
   }
 
@@ -134,6 +150,7 @@ class ConnectionProfile {
               ?.map((e) => PortForward.fromMap(Map<String, dynamic>.from(e)))
               .toList() ??
           const [],
+      useTmux: map['useTmux'] ?? false,
     );
   }
 

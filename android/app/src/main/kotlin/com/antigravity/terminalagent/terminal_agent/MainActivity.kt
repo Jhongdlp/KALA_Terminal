@@ -17,10 +17,27 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterFragmentActivity() {
 
     private val channelName = "com.antigravity.terminalagent/background"
+    private val notificationsChannelName = "com.antigravity.terminalagent/notifications"
+
+    // Session id carried by the agent-alert notification that launched or
+    // resumed this activity. Held until the Dart side consumes it (see
+    // "consumePendingSession") so the app can jump straight to that session.
+    private var pendingSessionId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermission()
+        capturePendingSession(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        capturePendingSession(intent)
+    }
+
+    private fun capturePendingSession(intent: Intent?) {
+        val id = intent?.getStringExtra(AlertNotifier.EXTRA_SESSION_ID)
+        if (id != null) pendingSessionId = id
     }
 
     private fun requestNotificationPermission() {
@@ -51,6 +68,31 @@ class MainActivity : FlutterFragmentActivity() {
                     "stopBackgroundService" -> {
                         startService(TerminalService.ACTION_STOP)
                         result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notificationsChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "showAlert" -> {
+                        AlertNotifier.show(
+                            this,
+                            call.argument<String>("sessionId") ?: "",
+                            call.argument<String>("title") ?: "KALA",
+                            call.argument<String>("body") ?: "",
+                            call.argument<String>("agent"),
+                        )
+                        result.success(true)
+                    }
+                    "cancelAlerts" -> {
+                        AlertNotifier.cancelAll(this)
+                        result.success(true)
+                    }
+                    "consumePendingSession" -> {
+                        result.success(pendingSessionId)
+                        pendingSessionId = null
                     }
                     else -> result.notImplemented()
                 }

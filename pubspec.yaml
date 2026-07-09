@@ -75,6 +75,9 @@ dependencies:
   # Native file picker for the terminal's "adjuntar" quick key (attach any
   # document/image and insert its path into a TUI agent's prompt).
   file_picker: ^8.1.6
+  # Voice dictation in the prompt composer (Android SpeechRecognizer). Android
+  # only in practice; the mic button is hidden on other platforms.
+  speech_to_text: ^7.0.0
 
 # Use a locally-vendored, patched copy of xterm (third_party/xterm) so the
 # terminal keyboard improvements survive `flutter pub get` on any machine:

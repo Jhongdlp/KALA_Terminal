@@ -327,3 +327,53 @@ class MonoTag extends StatelessWidget {
     );
   }
 }
+
+/// A labelled on/off row: uppercase label + helper text on the left, a Switch
+/// on the right. Matches the flat IDE styling used across settings and forms.
+class ToggleRow extends StatelessWidget {
+  final String label;
+  final String description;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const ToggleRow({
+    super.key,
+    required this.label,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: AppText.label(9, color: AppColors.muted)),
+                const SizedBox(height: 5),
+                Text(description,
+                    style: AppText.label(8.5,
+                        color: AppColors.faint, spacing: 0.3)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeThumbColor: AppColors.ink,
+            activeTrackColor: AppColors.bone,
+            inactiveThumbColor: AppColors.muted,
+            inactiveTrackColor: AppColors.hairline,
+          ),
+        ],
+      ),
+    );
+  }
+}

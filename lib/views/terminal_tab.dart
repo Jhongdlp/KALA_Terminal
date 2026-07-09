@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
+import 'prompts_sheet.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -146,6 +147,14 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             Column(
               children: [
                 if (!fullscreen) _buildToolbar(context, state),
+                // Dropped connection with a known profile → offer to
+                // re-establish it in place (with tmux this re-attaches to
+                // whatever kept running on the server). Shown in fullscreen
+                // too: it's exactly when an agent was left working.
+                if (state.activeSession?.connectionStatus ==
+                        ConnectionStatus.disconnected &&
+                    state.activeSession?.activeProfile != null)
+                  _reconnectBanner(state),
                 Expanded(
                   child: GestureDetector(
                     onTap: () => _terminalFocusNode.requestFocus(),
@@ -246,6 +255,45 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     );
   }
 
+  // ---- Reconnect banner ------------------------------------------------------
+
+  /// Thin strip shown while the active session's SSH connection is down: one
+  /// tap re-establishes it (see [AppState.reconnectSession]).
+  Widget _reconnectBanner(AppState state) {
+    final session = state.activeSession!;
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        border:
+            Border(bottom: BorderSide(color: AppColors.hairline, width: 1)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.link_off, size: 14, color: AppColors.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('CONEXIÓN PERDIDA',
+                style: AppText.label(9, color: AppColors.muted, spacing: 1.2)),
+          ),
+          session.reconnecting
+              ? SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.5, color: AppColors.muted),
+                )
+              : GhostButton(
+                  label: 'Reconectar',
+                  icon: Icons.refresh,
+                  dense: true,
+                  onPressed: () => state.reconnectSession(session),
+                ),
+        ],
+      ),
+    );
+  }
+
   // ---- Toolbar (sessions + actions) ----------------------------------------
 
   Widget _buildToolbar(BuildContext context, AppState state) {
@@ -260,6 +308,8 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         children: [
           Expanded(child: _sessionSelector(context, state)),
           Container(width: 1, height: 46, color: AppColors.hairline),
+          _toolbarIcon(Icons.bolt_outlined, 'Prompts',
+              () => _showPrompts(state)),
           _toolbarIcon(Icons.text_decrease, 'Reducir letra',
               () => state.bumpTerminalFontSize(-1)),
           _toolbarIcon(Icons.text_increase, 'Aumentar letra',
@@ -318,6 +368,13 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     if (text == null || text.isEmpty) return;
     state.sendTerminalInput(text);
     _terminalFocusNode.requestFocus();
+  }
+
+  /// Opens the saved-prompt library / composer; after inserting, focus goes
+  /// back to the terminal so the user can review and submit.
+  void _showPrompts(AppState state) {
+    showPromptsSheet(context,
+        onInserted: () => _terminalFocusNode.requestFocus());
   }
 
   /// Lets the user pick a file/image; it's uploaded to the server over SFTP and
@@ -485,6 +542,17 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(width: 7),
+            // A non-active session rang the bell (agent waiting) → draw the
+            // eye to the session switcher.
+            if (state.sessions.any((s) => s.hasPendingAlert)) ...[
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                    color: AppColors.bone, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 7),
+            ],
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
@@ -565,10 +633,27 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(session.name,
-                        style: AppText.mono(12,
-                            color: fg, weight: FontWeight.w700),
-                        overflow: TextOverflow.ellipsis),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(session.name,
+                              style: AppText.mono(12,
+                                  color: fg, weight: FontWeight.w700),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        // Pending agent alert: this session asked for
+                        // attention while another one was visible.
+                        if (session.hasPendingAlert) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                                color: fg, shape: BoxShape.circle),
+                          ),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 2),
                     Text(_sessionMeta(session, state),
                         style: AppText.mono(8, color: metaFg, spacing: 1)),
@@ -711,6 +796,26 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                     icon: Icons.link),
               ],
             ),
+            // Row 3 — agent mode: only while a full-screen TUI runs (that's
+            // when an agent is driving the screen). Decision keys any TUI
+            // agent understands: Shift+Tab cycles modes, digits pick options
+            // in approval menus, Enter accepts, Esc interrupts.
+            if (_altScreen) ...[
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  _key('S-TAB', () => state.sendTerminalInput('\x1b[Z')),
+                  _key('1', () => state.sendTerminalInput('1')),
+                  _key('2', () => state.sendTerminalInput('2')),
+                  _key('3', () => state.sendTerminalInput('3')),
+                  _key('ESC', () => state.sendTerminalInput('\x1b')),
+                  _key('PROMPTS', () => _showPrompts(state),
+                      icon: Icons.bolt_outlined),
+                  _key('↵', () => state.sendTerminalInput('\r'),
+                      inverted: true),
+                ],
+              ),
+            ],
           ],
         ),
       ),

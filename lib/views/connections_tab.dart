@@ -198,6 +198,7 @@ class ConnectionsTab extends StatelessWidget {
     final commandController = TextEditingController();
     final tunnelController = TextEditingController();
     final forwards = List<PortForward>.from(profile?.forwards ?? const []);
+    var useTmux = profile?.useTmux ?? false;
 
     showModalBottomSheet(
       context: context,
@@ -294,7 +295,19 @@ class ConnectionsTab extends StatelessWidget {
                 const SizedBox(height: 12),
                 _field(passwordController, 'CONTRASEÑA (OPCIONAL)',
                     obscure: true),
-                const SizedBox(height: 20),
+                const SizedBox(height: 8),
+
+                // ---- Persistent session (tmux) ---------------------------
+                ToggleRow(
+                  label: 'SESIÓN PERSISTENTE (TMUX)',
+                  description:
+                      'Los agentes y procesos siguen corriendo si se corta la '
+                      'conexión; al reconectar vuelves donde estabas. Requiere '
+                      'tmux en el servidor.',
+                  value: useTmux,
+                  onChanged: (v) => setSheetState(() => useTmux = v),
+                ),
+                const SizedBox(height: 8),
 
                 // ---- Port-forward tunnels (-L) ---------------------------
                 Text('TÚNELES · PORT FORWARDING (-L)',
@@ -363,6 +376,7 @@ class ConnectionsTab extends StatelessWidget {
                           ? null
                           : passwordController.text,
                       forwards: forwards,
+                      useTmux: useTmux,
                     );
 
                     final state =
