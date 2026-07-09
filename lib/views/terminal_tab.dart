@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import 'package:pasteboard/pasteboard.dart';
 import '../providers/app_state.dart';
-import '../services/distro_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
@@ -112,16 +110,27 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 1.5, color: AppColors.bone),
-              ),
+              Icon(Icons.dns_outlined, size: 40, color: AppColors.muted),
               const SizedBox(height: 16),
-              Text('INICIALIZANDO TERMINAL',
+              Text('SIN SESIÓN ACTIVA',
                   style:
                       AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Text(
+                  'Conéctate a un servidor SSH desde la pestaña Conexiones para abrir una terminal.',
+                  textAlign: TextAlign.center,
+                  style: AppText.body(13, color: AppColors.muted),
+                ),
+              ),
+              const SizedBox(height: 20),
+              InvertedButton(
+                label: 'Ir a Conexiones',
+                icon: Icons.dns_outlined,
+                dense: true,
+                onPressed: () => state.setActiveTabIndex(0),
+              ),
             ],
           ),
         ),
@@ -194,17 +203,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                             fontFamily: AppText.cascadiaFamily,
                             fontFamilyFallback: const ['monospace'],
                           ),
-                          onInsertContent: (content) async {
-                            if (content.data != null) {
-                              final mime = content.mimeType.toLowerCase();
-                              final ext = mime.contains('gif')
-                                  ? 'gif'
-                                  : mime.contains('jpg') || mime.contains('jpeg')
-                                      ? 'jpg'
-                                      : 'png';
-                              await state.pasteImageBytes(content.data!, ext: ext);
-                            }
-                          },
+                          // NOTE: the Gboard inline image-paste (onInsertContent)
+                          // relied on a locally patched xterm that isn't vendored
+                          // in this repo, so it's omitted here — the "PEGAR" quick
+                          // key still pastes images via the clipboard.
                         ),
                       ),
                     ),
@@ -402,10 +404,9 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     );
   }
 
-  /// Status glyph for a session, shown where the connection dot used to be. It
-  /// doubles as an environment indicator: a spinner during the SSH handshake, a
-  /// server icon for an SSH session, or the active distro's logo
-  /// (Alpine/Ubuntu/Debian) for a local shell — falling back to a dot.
+  /// Status glyph for a session, shown where the connection dot used to be: a
+  /// spinner during the SSH handshake, a server icon for a live SSH session,
+  /// falling back to a dot.
   Widget _statusGlyph(TerminalSession s, AppState state,
       {required double size, required Color color}) {
     switch (s.connectionStatus) {
@@ -417,17 +418,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         );
       case ConnectionStatus.remote:
         return Icon(Icons.dns, size: size, color: color);
-      case ConnectionStatus.local:
-        final asset = DistroService.byId(s.distroId).iconAsset;
-        if (asset != null) {
-          return SvgPicture.asset(
-            asset,
-            width: size,
-            height: size,
-            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
-          );
-        }
-        return Icon(Icons.circle_outlined, size: size, color: color);
       case ConnectionStatus.disconnected:
         return Icon(Icons.circle_outlined, size: size, color: color);
     }
@@ -439,8 +429,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         return 'SSH · ${s.activeProfile?.name ?? ''}';
       case ConnectionStatus.connecting:
         return 'CONECTANDO…';
-      case ConnectionStatus.local:
-        return 'LOCAL · ${DistroService.byId(s.distroId).name.toUpperCase()}';
       case ConnectionStatus.disconnected:
         return 'DESCONECTADO';
     }
@@ -518,14 +506,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   itemBuilder: (ctx, i) => _sessionSheetRow(sheetCtx, s, i),
                 ),
               ),
-              Hairline(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-                child: Text('NUEVA TERMINAL LOCAL',
-                    style: AppText.label(11,
-                        color: AppColors.bone, spacing: 1.4)),
-              ),
-              ..._newTerminalTiles(sheetCtx, s),
               Hairline(),
               _menuTile(sheetCtx, Icons.dns_outlined, 'CONECTAR POR SSH…',
                   () => s.setActiveTabIndex(0)),
@@ -631,54 +611,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             },
           ),
         ],
-      ),
-    );
-  }
-
-  /// One `NUEVA · DISTRO` row per installed distro. Tapping a row opens a new
-  /// local terminal running that distro. Only downloaded distros are listed; if
-  /// none are installed yet (shouldn't happen — Alpine is bundled) we still
-  /// offer a plain new-terminal row using the default.
-  List<Widget> _newTerminalTiles(BuildContext sheetCtx, AppState state) {
-    final installed = state.distroCatalog
-        .where((d) => state.isDistroInstalled(d.id))
-        .toList();
-    if (installed.isEmpty) {
-      return [
-        _menuTile(sheetCtx, Icons.add, 'NUEVA TERMINAL',
-            () => state.createNewSession()),
-      ];
-    }
-    return [
-      for (final d in installed)
-        _distroTile(sheetCtx, d,
-            () => state.createNewSession(distroId: d.id)),
-    ];
-  }
-
-  Widget _distroTile(BuildContext sheetCtx, Distro distro, VoidCallback action) {
-    final asset = distro.iconAsset;
-    return InkWell(
-      onTap: () {
-        Navigator.of(sheetCtx).pop();
-        action();
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            asset != null
-                ? SvgPicture.asset(asset,
-                    width: 16,
-                    height: 16,
-                    colorFilter:
-                        ColorFilter.mode(AppColors.bone, BlendMode.srcIn))
-                : Icon(Icons.add, size: 16, color: AppColors.bone),
-            const SizedBox(width: 12),
-            Text(distro.name.toUpperCase(),
-                style: AppText.label(10, color: AppColors.bone, spacing: 1.0)),
-          ],
-        ),
       ),
     );
   }

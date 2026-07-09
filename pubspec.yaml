@@ -1,5 +1,5 @@
 name: terminal_agent
-description: "A new Flutter project."
+description: "KALA — gestor de conexiones SSH y explorador remoto para agentes IA."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.1.2+11
+version: 1.1.3+12
 
 environment:
   sdk: ^3.12.2
@@ -36,7 +36,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   xterm: ^4.0.0
   dartssh2: ^2.17.1
-  flutter_pty: ^0.4.2
   path_provider: ^2.1.5
   shared_preferences: ^2.5.5
   provider: ^6.1.5+1
@@ -45,7 +44,6 @@ dependencies:
   # lib/theme/code_highlight.dart). Pulled in transitively by re_editor, but we
   # import it directly so it must be a declared dependency.
   re_highlight: ^0.0.3
-  archive: ^4.0.9
   uuid: ^4.5.3
   google_fonts: ^8.1.0
   flutter_markdown_plus: ^1.0.7
@@ -60,12 +58,18 @@ dependencies:
   # Image.memory directly).
   flutter_svg: ^2.2.0
   http: ^1.6.0
-  package_info_plus: ^10.1.0
+  # Pinned to the 9.x line: 10.x requires win32 ^6.0.1, which conflicts with
+  # file_picker's win32 ^5.9.0 and breaks the Linux build. Only fromPlatform()
+  # is used, so the older major is functionally equivalent here.
+  package_info_plus: ^9.0.1
   open_filex: ^4.7.0
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
   pasteboard: ^0.5.0
+  # Native file picker for the terminal's "adjuntar" quick key (attach any
+  # document/image and insert its path into a TUI agent's prompt).
+  file_picker: ^8.1.6
 
 dev_dependencies:
   flutter_test:
@@ -97,16 +101,6 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
-  assets:
-    # Linux userland (proot + Alpine rootfs) bundled for the Android terminal.
-    - assets/distro/proot
-    - assets/distro/loader
-    - assets/distro/libtalloc.so.2
-    - assets/distro/libandroid-shmem.so
-    - assets/distro/alpine-minirootfs.tar.gz
-    # Distro logos (monochrome single-path SVGs) for the session status glyph.
-    - assets/distro/icons/
 
   fonts:
     - family: CascadiaCode

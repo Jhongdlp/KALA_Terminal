@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:dartssh2/dartssh2.dart';
-import 'package:flutter_pty/flutter_pty.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,10 +15,9 @@ import 'package:open_filex/open_filex.dart';
 import '../models/connection_profile.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
-import '../services/distro_service.dart';
 import '../services/secure_store.dart';
 
-enum ConnectionStatus { disconnected, connecting, local, remote }
+enum ConnectionStatus { disconnected, connecting, remote }
 
 /// Type filter applied by the explorer's filter button.
 enum FileTypeFilter { all, folders, filesOnly }
@@ -32,11 +31,6 @@ class TerminalSession {
   SSHClient? sshClient;
   SSHSession? sshSession;
   SftpClient? sftpClient;
-  Pty? localPty;
-  // Which Linux distro this local session's proot guest runs. Each terminal can
-  // run a different distro (see [AppState.createNewSession]); SSH sessions
-  // ignore it. Read by [_initLocalSession] when the shell boots.
-  String distroId;
   String currentPath;
   // Stack of previously visited directories for this session's explorer, used
   // by [AppState.navigateBack]. Pushed in [AppState.changeDirectory] and
@@ -45,9 +39,9 @@ class TerminalSession {
   List<FileSystemEntityInfo> files;
   bool isLoadingFiles;
   // Whether the underlying shell (local PTY or SSH) has actually been spawned.
-  // The initial local session is created lazily: the object exists so the UI's
-  // active-session delegates work, but proot/Alpine isn't booted until the user
-  // first opens the terminal or explorer tab. See [ensureActiveSessionStarted].
+  // Whether the SSH shell has actually been spawned (set once the connection
+  // is established). SSH sessions connect on creation, so this is effectively
+  // always true for a live session; kept for the explorer's bookkeeping.
   bool started;
   List<ServerSocket> forwardServers;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
@@ -62,8 +56,6 @@ class TerminalSession {
     this.activeProfile,
     this.sshClient,
     this.sshSession,
-    this.localPty,
-    this.distroId = DistroService.defaultDistroId,
     required this.currentPath,
     List<FileSystemEntityInfo>? files,
     this.isLoadingFiles = false,
@@ -80,10 +72,6 @@ class AppState extends ChangeNotifier {
 
   void setActiveTabIndex(int index) {
     _activeTabIndex = index;
-    // Boot the deferred local shell the first time the user actually needs it —
-    // i.e. when they land on the terminal (1) or explorer (2) tab. The app opens
-    // on the connections tab, so this keeps proot/Alpine off the startup path.
-    if (index == 1 || index == 2) ensureActiveSessionStarted();
     notifyListeners();
   }
 
@@ -343,7 +331,6 @@ class AppState extends ChangeNotifier {
   static const String _kThemeMode = 'settings_theme_mode';
   static const String _kTerminalFontSize = 'settings_terminal_font_size';
   static const String _kEditorFontSize = 'settings_editor_font_size';
-  static const String _kActiveDistro = 'active_distro';
   static const String _kTerminalScheme = 'settings_terminal_scheme';
   static const String _kIconScale = 'settings_icon_scale';
   static const String _kBackGestureFolders = 'settings_back_gesture_folders';
@@ -400,43 +387,24 @@ class AppState extends ChangeNotifier {
     return dir.parent.path != session.currentPath;
   }
 
-  // ---- Linux distro selector ----------------------------------------------
-  // The local Android terminal runs inside a proot'd Linux userland. Alpine is
-  // bundled (instant); Ubuntu/Debian are downloaded on demand. Each terminal
-  // session carries its own [TerminalSession.distroId], so different tabs can
-  // run different distros at once. [_defaultDistroId] is just the one a *new*
-  // local terminal starts with — it tracks the last distro the user opened.
-  // The maps track per-distro UI state (installed? downloading? at what %?).
-  String _defaultDistroId = DistroService.defaultDistroId;
-  String get defaultDistroId => _defaultDistroId;
-  Distro get defaultDistro => DistroService.byId(_defaultDistroId);
-
-  List<Distro> get distroCatalog => DistroService.catalog;
-
-  final Map<String, bool> _distroInstalled = {};
-  final Map<String, double> _distroProgress = {}; // 0..1 while downloading
-  final Map<String, String> _distroStatus = {}; // current phase text
-  final Set<String> _distroBusy = {}; // installing/deleting in flight
-
-  bool isDistroInstalled(String id) => _distroInstalled[id] ?? false;
-  bool isDistroBusy(String id) => _distroBusy.contains(id);
-  double? distroProgress(String id) => _distroProgress[id];
-  String? distroStatus(String id) => _distroStatus[id];
-
   AppState() {
     _loadSettings();
     _loadProfiles();
-    // Create the default local session as a lightweight placeholder only. The
-    // heavy part (booting proot/Alpine via flutter_pty) is deferred until the
-    // user first opens the terminal/explorer tab, so the app reaches the
-    // connections screen without paying for the shell up front.
-    createNewSession(lazy: true);
-    // Keep the process alive in the background (Termux-style) so shells survive
-    // when the app is minimized. No-op on platforms other than Android. Deferred
-    // to the first frame so the native MethodChannel handler is registered.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      BackgroundService.start();
-    });
+    // No session exists until the user connects to an SSH profile: the app
+    // opens on the connections tab. The background service that keeps SSH
+    // sessions alive while minimized is started on the first connection
+    // (see [_connectSessionToSSH]).
+  }
+
+  // Ensures the Android foreground service (which keeps the process — and its
+  // SSH shells — alive while the app is in the background) is running. Started
+  // lazily on the first SSH connection so no persistent notification shows
+  // while the user is only browsing the connections list. No-op off Android.
+  bool _backgroundStarted = false;
+  void _ensureBackgroundService() {
+    if (_backgroundStarted) return;
+    _backgroundStarted = true;
+    BackgroundService.start();
   }
 
   Future<void> _loadSettings() async {
@@ -466,18 +434,6 @@ class AppState extends ChangeNotifier {
       _markdownScale = mdScale.clamp(minMarkdownScale, maxMarkdownScale);
     }
 
-    final distroId = prefs.getString(_kActiveDistro);
-    if (distroId != null && DistroService.byId(distroId).id == distroId) {
-      _defaultDistroId = distroId;
-      // The initial local session is created (lazily) in the constructor before
-      // this runs, so it was stamped with the fallback default. Re-point any
-      // not-yet-booted local session at the persisted choice so the first
-      // terminal opens into the distro the user last used.
-      for (final s in _sessions) {
-        if (!s.started && s.activeProfile == null) s.distroId = _defaultDistroId;
-      }
-    }
-
     final scheme = prefs.getString(_kTerminalScheme);
     if (scheme != null &&
         (scheme == 'auto' || AppTerminalTheme.schemes.containsKey(scheme))) {
@@ -497,15 +453,6 @@ class AppState extends ChangeNotifier {
     _syncTerminalPath =
         prefs.getBool(_kSyncTerminalPath) ?? true;
 
-    notifyListeners();
-    refreshDistroStatus();
-  }
-
-  /// Recompute which distros are installed on disk (drives the Settings list).
-  Future<void> refreshDistroStatus() async {
-    for (final d in DistroService.catalog) {
-      _distroInstalled[d.id] = await DistroService.isInstalled(d);
-    }
     notifyListeners();
   }
 
@@ -577,114 +524,23 @@ class AppState extends ChangeNotifier {
   void bumpEditorFontSize(double delta) =>
       setEditorFontSize(_editorFontSize + delta);
 
-  // ---- Distro actions ------------------------------------------------------
-
-  /// Download + provision [id] (Ubuntu/Debian). Reports progress through
-  /// [distroProgress]/[isDistroBusy] so the Settings list can show a bar. Throws
-  /// on failure so the UI can surface it; the partial install is left removed.
-  Future<void> downloadDistro(String id) async {
-    if (_distroBusy.contains(id)) return;
-    final distro = DistroService.byId(id);
-    _distroBusy.add(id);
-    _distroProgress[id] = 0;
-    _distroStatus[id] = 'Iniciando…';
-    notifyListeners();
-    try {
-      await DistroService.install(
-        distro,
-        onStatus: (s) {
-          _distroStatus[id] = s;
-          notifyListeners();
-        },
-        onProgress: (p) {
-          _distroProgress[id] = p;
-          notifyListeners();
-        },
-      );
-      _distroInstalled[id] = true;
-    } catch (e) {
-      // Leave nothing half-installed behind.
-      await DistroService.remove(distro);
-      _distroInstalled[id] = false;
-      rethrow;
-    } finally {
-      _distroBusy.remove(id);
-      _distroProgress.remove(id);
-      _distroStatus.remove(id);
-      notifyListeners();
-    }
-  }
-
-  /// True while at least one running local terminal is using distro [id], so the
-  /// Settings UI can keep its rootfs from being deleted out from under a session.
-  bool isDistroInUse(String id) => _sessions.any((s) =>
-      s.started &&
-      s.connectionStatus == ConnectionStatus.local &&
-      s.distroId == id);
-
-  /// Delete [id]'s rootfs to free space. Refuses while a running terminal still
-  /// uses it. Rethrows on failure so the UI can surface it; the installed flag
-  /// is recomputed from disk either way (the removal is best-effort: see
-  /// [DistroService.remove], which fixes up unwritable proot dirs first).
-  Future<void> deleteDistro(String id) async {
-    if (_distroBusy.contains(id) || isDistroInUse(id)) return;
-    _distroBusy.add(id);
-    notifyListeners();
-    try {
-      await DistroService.remove(DistroService.byId(id));
-    } finally {
-      _distroInstalled[id] = await DistroService.isInstalled(DistroService.byId(id));
-      _distroBusy.remove(id);
-      notifyListeners();
-    }
-  }
-
-  /// Remember [id] as the distro a *new* local terminal should start with (the
-  /// last one the user opened). Persisted; does not touch running sessions.
-  Future<void> _rememberDefaultDistro(String id) async {
-    if (id == _defaultDistroId) return;
-    _defaultDistroId = id;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kActiveDistro, id);
-  }
-
-  // Create a new terminal session.
-  //
-  // When [lazy] is true the session object is created and made active but its
-  // shell is NOT spawned — used for the initial local session so app startup
-  // doesn't boot proot/Alpine. The shell starts on the first
-  // [ensureActiveSessionStarted] call (when the terminal/explorer tab opens).
-  // [lazy] is ignored for profile (SSH) sessions, which the user opens
-  // intentionally and expects to connect right away.
-  //
-  // [distroId] picks which Linux userland a local terminal boots into; it
-  // defaults to [_defaultDistroId] (the last one opened) and, when given
-  // explicitly, becomes the new default. Ignored for SSH sessions.
-  void createNewSession(
-      {ConnectionProfile? profile, bool lazy = false, String? distroId}) {
+  // Create a new terminal session for [profile] and connect it over SSH. The
+  // session is made active immediately; the shell is opened asynchronously in
+  // [_connectSessionToSSH].
+  void createNewSession({required ConnectionProfile profile}) {
     final String id = const Uuid().v4();
-    // Bell (BEL / \a) → haptic tick, like Termux's vibrate-on-bell. No-op on
-    // devices without a vibrator.
+    // Bell (BEL / \a) → haptic tick. No-op on devices without a vibrator.
     final Terminal terminal = Terminal(
       maxLines: 10000,
       onBell: HapticFeedback.mediumImpact,
     );
 
-    String name;
-    if (profile != null) {
-      name = profile.name;
-    } else {
-      int localCount = _sessions.where((s) => s.activeProfile == null).length;
-      name = 'Local ${localCount + 1}';
-    }
-
     final session = TerminalSession(
       id: id,
-      name: name,
+      name: profile.name,
       terminal: terminal,
       connectionStatus: ConnectionStatus.disconnected,
       activeProfile: profile,
-      distroId: distroId ?? _defaultDistroId,
       currentPath: '',
     );
 
@@ -692,256 +548,19 @@ class AppState extends ChangeNotifier {
     _activeSessionIndex = _sessions.length - 1;
     notifyListeners();
 
-    if (profile != null) {
-      _connectSessionToSSH(session, profile);
-    } else {
-      // Opening a local terminal with an explicit distro makes it the default
-      // for the next one (and survives restarts).
-      if (distroId != null) _rememberDefaultDistro(distroId);
-      if (!lazy) _initLocalSession(session);
-    }
-  }
-
-  /// Boots the active session's local shell if it hasn't been started yet.
-  /// No-op for sessions that are already running or are SSH profiles (those
-  /// connect on creation). This is the lazy-init entry point for the default
-  /// local session, called when the user first opens the terminal/explorer tab.
-  void ensureActiveSessionStarted() {
-    final session = activeSession;
-    if (session == null || session.started || session.activeProfile != null) {
-      return;
-    }
-    _initLocalSession(session);
-  }
-
-  // Initialize a local PTY session
-  Future<void> _initLocalSession(TerminalSession session) async {
-    try {
-      // Mark started up front so a concurrent ensureActiveSessionStarted (e.g.
-      // tapping terminal then explorer quickly) can't spawn a second shell.
-      session.started = true;
-      _disposeWriters(session);
-      session.connectionStatus = ConnectionStatus.local;
-
-      session.terminal.write('Iniciando terminal local...\r\n');
-
-      // What we ultimately hand to flutter_pty.
-      String executable;
-      List<String> arguments = const [];
-      String workingDir = Directory.current.path;
-      // Where the file explorer should land for this session, when it differs
-      // from the PTY's working directory (the proot guest's home).
-      String? explorerDir;
-      final environment = <String, String>{
-        'TERM': 'xterm-256color',
-        'LANG': 'en_US.UTF-8',
-      };
-
-      if (Platform.isAndroid) {
-        // On Android the "local terminal" is a full Linux userland (this
-        // session's distro) running under proot — that's what gives a real
-        // package manager and a normal filesystem instead of the bare system
-        // shell. Each session can run a different distro.
-        final distro = DistroService.byId(session.distroId);
-        try {
-          if (!await DistroService.isInstalled(distro)) {
-            session.terminal.write(
-                '\r\nPrimer arranque: instalando entorno Linux (${distro.name})...\r\n');
-            await DistroService.install(distro, log: session.terminal.write);
-            _distroInstalled[distro.id] = true;
-          }
-          // Like Termux: with the storage permission granted, the distro can
-          // bind /storage/emulated/0 and show Downloads/DCIM/... in ~.
-          await _ensureStoragePermission();
-          final launch = await DistroService.launch(distro);
-          executable = launch.executable;
-          arguments = launch.arguments;
-          workingDir = launch.workingDirectory;
-          explorerDir = launch.homeDirectory;
-          environment.addAll(launch.environment);
-          // Bridge for the guest's `open <archivo>` command (idempotent).
-          _startOpenRequestWatcher();
-        } catch (e) {
-          // Provisioning/launch failed — fall back to Android's system shell so
-          // the user still has *a* terminal, and surface why.
-          session.terminal.write(
-              '\r\nNo se pudo iniciar el entorno Linux ($e).\r\n'
-              'Usando el shell del sistema como respaldo.\r\n\r\n');
-          executable = '/system/bin/sh';
-          environment['PATH'] =
-              '/system/bin:/system/xbin:/vendor/bin:/product/bin';
-          try {
-            final docsDir = await getApplicationDocumentsDirectory();
-            workingDir = docsDir.path;
-            environment['HOME'] = docsDir.path;
-            environment['TMPDIR'] = docsDir.path;
-          } catch (_) {}
-        }
-      } else {
-        // Desktop (Linux/Windows): spawn the host shell directly.
-        if (Platform.isWindows) {
-          executable = 'cmd.exe';
-        } else if (File('/bin/bash').existsSync()) {
-          executable = '/bin/bash';
-        } else {
-          executable = '/bin/sh';
-        }
-        try {
-          final docsDir = await getApplicationDocumentsDirectory();
-          workingDir = docsDir.path;
-          environment['HOME'] = docsDir.path;
-          environment['TMPDIR'] = docsDir.path;
-        } catch (_) {}
-      }
-
-      session.localPty = Pty.start(
-        executable,
-        arguments: arguments,
-        workingDirectory: workingDir,
-        environment: environment,
-      );
-
-      final writer = _TerminalWriter(session.terminal);
-      session._outputWriters.add(writer);
-      session.localPty!.output.listen(writer.add);
-
-      session.terminal.onOutput = (data) {
-        final out = _applyCtrlModifier(data);
-        session.localPty!.write(utf8.encode(out));
-      };
-
-      // Keep the PTY's window size in sync with the rendered terminal so
-      // programs (vim, claude, etc.) wrap lines at the real column count.
-      // xterm reports (cols, rows); flutter_pty expects (rows, cols).
-      session.terminal.onResize = (width, height, pixelWidth, pixelHeight) {
-        session.localPty?.resize(height, width);
-      };
-      session.localPty!.resize(
-          session.terminal.viewHeight, session.terminal.viewWidth);
-
-      session.currentPath = explorerDir ?? workingDir;
-      if (activeSession == session) {
-        _loadFiles();
-      } else {
-        _loadFilesForSession(session);
-      }
-
-      notifyListeners();
-    } catch (e) {
-      session.terminal.write('\r\nError al iniciar terminal local: $e\r\n\r\n');
-      if (Platform.isAndroid) {
-        session.terminal.write('⚠️ NOTA SOBRE ANDROID:\r\n');
-        session.terminal.write('Por motivos de seguridad (SELinux), Android bloquea la creación de\r\n');
-        session.terminal.write('terminales locales (acceso a /dev/ptmx o /system/bin/sh) en aplicaciones estándar.\r\n');
-        session.terminal.write('Usa la pestaña de "Conexiones" para iniciar sesión en un servidor remoto por SSH.\r\n');
-      } else if (Platform.isLinux) {
-        session.terminal.write('⚠️ NOTA SOBRE LINUX:\r\n');
-        session.terminal.write('Verifica que tu usuario tenga permisos para acceder a /dev/ptmx y /dev/pts/,\r\n');
-        session.terminal.write('y que el ejecutable de shell (/bin/bash o /bin/sh) sea accesible y ejecutable.\r\n');
-      }
-      notifyListeners();
-    }
+    _connectSessionToSSH(session, profile);
   }
 
   /// Ask for the legacy storage permission (the app targets SDK 28, so the
-  /// classic READ/WRITE_EXTERNAL_STORAGE dialog still grants full /sdcard
-  /// access, same mechanism Termux uses). Best-effort: a denial just means the
-  /// guest home has no phone-storage links until it's granted from Ajustes.
+  /// classic READ_EXTERNAL_STORAGE dialog still grants /sdcard access). Used by
+  /// the file "adjuntar" picker and the SFTP → local downloader so they can read
+  /// and write files under /storage/emulated/0. Best-effort: a denial just means
+  /// those features fall back to app-private storage. No-op off Android.
   Future<void> _ensureStoragePermission() async {
     try {
       final status = await Permission.storage.status;
       if (!status.isGranted) await Permission.storage.request();
     } catch (_) {/* plugin unavailable (tests) or user denied — continue */}
-  }
-
-  // ---- `open` command bridge (guest terminal → editor) ---------------------
-  // The guest-side `open` script (see DistroService) drops one request file
-  // per invocation into the shared spool dir; watching it from here turns
-  // `open foo.py` typed in the local shell into the editor opening foo.py.
-  StreamSubscription<FileSystemEvent>? _openRequestSub;
-  Timer? _openRequestPoll;
-  bool _openWatcherStarted = false;
-  final Set<String> _openRequestsInFlight = {};
-
-  Future<void> _startOpenRequestWatcher() async {
-    if (_openWatcherStarted) return;
-    _openWatcherStarted = true;
-    try {
-      final dir = Directory(await DistroService.openSpoolDir());
-      // Discard requests left over from a previous run instead of replaying
-      // them as surprise editor tabs.
-      for (final e in dir.listSync()) {
-        if (e is File) {
-          try {
-            e.deleteSync();
-          } catch (_) {}
-        }
-      }
-      void startPolling() {
-        _openRequestPoll ??=
-            Timer.periodic(const Duration(seconds: 2), (_) {
-          try {
-            for (final e in dir.listSync()) {
-              if (e is File) _processOpenRequest(e);
-            }
-          } catch (_) {}
-        });
-      }
-
-      try {
-        _openRequestSub = dir.watch(events: FileSystemEvent.create).listen(
-          (event) {
-            if (!event.isDirectory) _processOpenRequest(File(event.path));
-          },
-          onError: (_) => startPolling(),
-        );
-      } catch (_) {
-        // inotify unavailable on this kernel/filesystem — poll instead.
-        startPolling();
-      }
-    } catch (e) {
-      debugPrint('open-watcher: $e');
-    }
-  }
-
-  Future<void> _processOpenRequest(File request) async {
-    if (!_openRequestsInFlight.add(request.path)) return;
-    try {
-      // The create event can fire before the script finishes writing; the
-      // request always ends in a newline, so retry briefly until it does.
-      String raw = '';
-      for (var attempt = 0; attempt < 5 && !raw.endsWith('\n'); attempt++) {
-        if (attempt > 0) {
-          await Future.delayed(const Duration(milliseconds: 60));
-        }
-        try {
-          raw = await request.readAsString();
-        } catch (_) {}
-      }
-      try {
-        await request.delete();
-      } catch (_) {}
-
-      final lines = raw.trim().split('\n');
-      if (lines.length < 2) return;
-      final hostPath = await DistroService.guestPathToHost(
-          lines[0].trim(), lines[1].trim());
-      final f = File(hostPath);
-      if (!await f.exists()) return;
-      final stat = await f.stat();
-      await openFile(
-        FileSystemEntityInfo(
-          name: hostPath.split('/').last,
-          path: hostPath,
-          isDirectory: false,
-          size: stat.size,
-          modified: stat.modified,
-        ),
-        forceLocal: true,
-      );
-    } finally {
-      _openRequestsInFlight.remove(request.path);
-    }
   }
 
   // Load Connection Profiles. Metadata comes from shared_preferences; secrets
@@ -1069,6 +688,9 @@ class AppState extends ChangeNotifier {
       };
 
       session.connectionStatus = ConnectionStatus.remote;
+      session.started = true;
+      // First live SSH session → keep the process alive while backgrounded.
+      _ensureBackgroundService();
 
       await _setupForwards(session, profile);
 
@@ -1082,7 +704,7 @@ class AppState extends ChangeNotifier {
       session.sshSession!.stderr.listen(stderrWriter.add);
 
       session.terminal.onOutput = (data) {
-        final out = _applyCtrlModifier(data);
+        final out = _applyModifiers(data);
         session.sshSession!.write(utf8.encode(out));
       };
 
@@ -1163,9 +785,6 @@ class AppState extends ChangeNotifier {
     // The explorer's selection/search belong to the previous session's listing.
     _selectedPaths = const {};
     _fileSearchQuery = '';
-    // Switching sessions happens from the terminal UI, so a deferred local
-    // session being switched to should boot now (it also kicks off _loadFiles).
-    ensureActiveSessionStarted();
     notifyListeners();
     _loadFiles();
   }
@@ -1178,8 +797,11 @@ class AppState extends ChangeNotifier {
     _sessions.removeAt(index);
 
     if (_sessions.isEmpty) {
+      // No SSH sessions left: drop back to the connections tab. A new session
+      // is created only when the user connects to a profile again.
       _activeSessionIndex = -1;
-      createNewSession(); // Ensure there is always at least one session
+      _activeTabIndex = 0;
+      notifyListeners();
     } else {
       if (_activeSessionIndex >= _sessions.length) {
         _activeSessionIndex = _sessions.length - 1;
@@ -1198,15 +820,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Disconnect active session (reverts to local shell)
+  // Disconnect the active session: tear down its SSH connection, close its tab,
+  // and return to the connections list.
   void disconnect() {
-    final session = activeSession;
-    if (session == null) return;
-    
-    _cleanupSession(session);
-    int localCount = _sessions.where((s) => s.activeProfile == null).length;
-    session.name = 'Local ${localCount + 1}';
-    _initLocalSession(session);
+    if (_activeSessionIndex < 0) return;
+    closeSession(_activeSessionIndex);
   }
 
   // Flush and tear down a session's batched output writers (cancels their
@@ -1227,11 +845,9 @@ class AppState extends ChangeNotifier {
     session.sftpClient?.close();
     session.sshSession?.close();
     session.sshClient?.close();
-    session.localPty?.kill();
     session.sftpClient = null;
     session.sshSession = null;
     session.sshClient = null;
-    session.localPty = null;
     session.connectionStatus = ConnectionStatus.disconnected;
     session.activeProfile = null;
   }
@@ -1250,6 +866,38 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // SHIFT is a sticky modifier just like CTRL: it arms, then reshapes the next
+  // key sent — from a quick key or a hardware keyboard — into its shifted
+  // sequence and disarms. Its main use is TUI agents (Claude Code, etc.) where
+  // Shift+Tab (`\x1b[Z`) cycles the mode (plan → accept → normal).
+  bool _shiftArmed = false;
+  bool get shiftArmed => _shiftArmed;
+
+  void toggleShift() {
+    _shiftArmed = !_shiftArmed;
+    notifyListeners();
+  }
+
+  /// If SHIFT is armed, rewrite [data] to its shifted form and disarm:
+  ///   - Tab (`\t`)            → `\x1b[Z`      (CSI Z / back-tab)
+  ///   - arrows `\x1b[A…D`     → `\x1b[1;2A…D` (shift-modified cursor keys)
+  ///   - a lone lowercase a-z  → its uppercase letter
+  /// Anything else passes through unchanged.
+  String _applyShiftModifier(String data) {
+    if (!_shiftArmed || data.isEmpty) return data;
+    _shiftArmed = false;
+    notifyListeners();
+    if (data == '\t') return '\x1b[Z';
+    final arrow = RegExp(r'^\x1b\[([A-D])$');
+    final m = arrow.firstMatch(data);
+    if (m != null) return '\x1b[1;2${m.group(1)}';
+    if (data.length == 1) {
+      final c = data.codeUnitAt(0);
+      if (c >= 0x61 && c <= 0x7a) return String.fromCharCode(c - 0x20);
+    }
+    return data;
+  }
+
   /// If CTRL is armed, fold the first character of [data] into its control code
   /// and disarm; otherwise return [data] unchanged. Control codes are the low
   /// 5 bits of the ASCII letter (`'c' & 0x1f == 0x03`).
@@ -1261,17 +909,102 @@ class AppState extends ChangeNotifier {
     return ctrl + data.substring(1);
   }
 
+  /// Apply every armed modifier to [data] before it reaches the shell. SHIFT is
+  /// applied first so a shifted key (e.g. Tab → `\x1b[Z`) is what CTRL then sees.
+  String _applyModifiers(String data) => _applyCtrlModifier(_applyShiftModifier(data));
+
 
   // Send input directly to terminal
   void sendTerminalInput(String text) {
     final session = activeSession;
     if (session == null) return;
-    final out = _applyCtrlModifier(text);
+    final out = _applyModifiers(text);
     if (session.connectionStatus == ConnectionStatus.remote && session.sshSession != null) {
       session.sshSession!.write(utf8.encode(out));
-    } else if (session.connectionStatus == ConnectionStatus.local && session.localPty != null) {
-      session.localPty!.write(utf8.encode(out));
     }
+  }
+
+  /// Write [text] straight to the active shell, bypassing the CTRL/SHIFT
+  /// modifiers and adding no newline. Used when inserting a chunk of literal
+  /// text (e.g. an attached file's path) that must not be reshaped or executed.
+  void _typeLiteral(TerminalSession session, String text) {
+    final bytes = utf8.encode(text);
+    if (session.connectionStatus == ConnectionStatus.remote &&
+        session.sshSession != null) {
+      session.sshSession!.write(bytes);
+    }
+  }
+
+  /// Strip a filename down to shell/agent-safe characters: spaces and anything
+  /// outside `[A-Za-z0-9._-]` become `_`. Keeps the resulting path unquoted so a
+  /// TUI agent (Claude Code) sees a clean path with no wrapping quotes to parse.
+  String _sanitizeFilename(String name) {
+    final safe = name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    return safe.isEmpty ? 'archivo' : safe;
+  }
+
+  /// Format [path] for insertion into the prompt. If it's already free of shell
+  /// metacharacters it goes in bare (cleanest for agents like Claude Code);
+  /// otherwise it's single-quoted so a plain shell still receives it intact.
+  String _formatPathForInput(String path) {
+    if (RegExp(r'^[A-Za-z0-9@%+=:,./_-]+$').hasMatch(path)) return path;
+    return "'${path.replaceAll("'", "'\\''")}'";
+  }
+
+  /// Attach a file for a TUI agent: let the user pick any document/image or PDF,
+  /// put it somewhere the **agent process can actually read**, and insert its
+  /// path into the prompt without executing — the user wraps it in their message
+  /// (e.g. `describe esta imagen /tmp/attachments/foto.png`).
+  ///
+  /// This is the whole point over SSH: the picked file lives on the phone, but
+  /// Claude Code runs on the server, so the file is uploaded to
+  /// `/tmp/attachments/` on the server via SFTP and that server-side path is
+  /// inserted — the remote agent reads the real bytes, not a phone path it can't
+  /// see. Requires a live SSH session.
+  ///
+  /// Returns `(ok, message)` for the caller to surface; `ok == false` with an
+  /// empty message means the user cancelled the picker.
+  Future<({bool ok, String message})> attachFile() async {
+    final session = activeSession;
+    if (session == null) return (ok: false, message: 'No hay sesión activa');
+
+    final picked = await FilePicker.platform.pickFiles(type: FileType.any);
+    final src = picked?.files.single.path;
+    if (src == null) return (ok: false, message: '');
+    final rawName = src.split('/').last;
+    final name = _sanitizeFilename(rawName);
+
+    // The agent (Claude Code, etc.) runs on the server, so the picked phone file
+    // is uploaded to `/tmp/attachments/` over SFTP and that server-side path is
+    // inserted — the remote agent reads the real bytes, not a phone path.
+    if (session.connectionStatus != ConnectionStatus.remote ||
+        session.sshClient == null) {
+      return (ok: false, message: 'Adjuntar requiere una sesión SSH activa');
+    }
+    final String shellPath;
+    try {
+      final sftp = await session.sshClient!.sftp();
+      try {
+        await sftp.mkdir('/tmp/attachments');
+      } catch (_) {
+        // Already exists — ignore.
+      }
+      shellPath = '/tmp/attachments/$name';
+      final bytes = await File(src).readAsBytes();
+      final f = await sftp.open(shellPath,
+          mode: SftpFileOpenMode.write |
+              SftpFileOpenMode.create |
+              SftpFileOpenMode.truncate);
+      await f.write(Stream.value(bytes));
+      await f.close();
+    } catch (e) {
+      return (ok: false, message: 'No se pudo adjuntar: $e');
+    }
+
+    // Leading + trailing space keep the path separate from whatever the user
+    // types around it. The path itself is bare when safe, quoted when not.
+    _typeLiteral(session, ' ${_formatPathForInput(shellPath)} ');
+    return (ok: true, message: 'Adjuntado: $name');
   }
 
   // File Explorer Operations
@@ -1767,63 +1500,21 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Send a `cd` into the active session's shell and jump to the terminal tab.
-  ///
-  /// [path] is always a **host** path (what the file explorer stores). For
-  /// local sessions on Android the shell runs inside proot, so the host path
-  /// must be translated to the equivalent guest path before being sent.
+  /// Send a `cd` into the active SSH session's shell and jump to the terminal
+  /// tab. [path] is the remote path the file explorer is showing.
   Future<void> openTerminalAt(String path) async {
     final session = activeSession;
     if (session == null || path.isEmpty) return;
-
-    String guestPath = path;
-    if (Platform.isAndroid &&
-        session.connectionStatus == ConnectionStatus.local) {
-      guestPath = await _hostToGuestPath(path, session.distroId);
+    if (session.connectionStatus != ConnectionStatus.remote ||
+        session.sshSession == null) {
+      return;
     }
 
     // Single-quote for the shell; embedded single quotes become '\''.
-    final escaped = guestPath.replaceAll("'", "'\\''");
-    final bytes = utf8.encode("cd '$escaped'\r");
-    if (session.connectionStatus == ConnectionStatus.remote &&
-        session.sshSession != null) {
-      session.sshSession!.write(bytes);
-    } else if (session.localPty != null) {
-      session.localPty!.write(bytes);
-    } else {
-      return;
-    }
+    final escaped = path.replaceAll("'", "'\\''");
+    session.sshSession!.write(utf8.encode("cd '$escaped'\r"));
     _activeTabIndex = 1;
     notifyListeners();
-  }
-
-  /// Convert a host-side path to the equivalent path inside the proot guest.
-  ///
-  /// proot maps three zones:
-  ///   - `<rootfs>/…`        → `/…`          (the distro filesystem)
-  ///   - `<sharedDir>/…`     → `/shared/…`   (cross-distro share folder)
-  ///   - `/storage/…` or `/sdcard/…` → same  (bind-mounted at identical path)
-  ///
-  /// Anything outside those zones is returned unchanged; the shell will report
-  /// "no such directory" rather than silently navigating to the wrong place.
-  Future<String> _hostToGuestPath(String hostPath, String distroId) async {
-    // Phone storage is bind-mounted at the same absolute path inside proot.
-    if (hostPath.startsWith('/storage/') || hostPath.startsWith('/sdcard')) {
-      return hostPath;
-    }
-    // Shared folder.
-    final shared = await DistroService.sharedDir();
-    if (hostPath == shared) return '/shared';
-    if (hostPath.startsWith('$shared/')) {
-      return '/shared${hostPath.substring(shared.length)}';
-    }
-    // This session's distro rootfs — the most common case.
-    final rootfs = await DistroService.rootfsDir(DistroService.byId(distroId));
-    if (hostPath == rootfs) return '/';
-    if (hostPath.startsWith('$rootfs/')) {
-      return hostPath.substring(rootfs.length); // keeps the leading '/'
-    }
-    return hostPath;
   }
 
   Future<void> _loadFiles() async {
@@ -1838,23 +1529,14 @@ class AppState extends ChangeNotifier {
     try {
       if (!_syncTerminalPath) return;
       if (session.terminal.isUsingAltBuffer) return;
-
-      String guestPath = session.currentPath;
-      if (Platform.isAndroid &&
-          session.connectionStatus == ConnectionStatus.local) {
-        guestPath = await _hostToGuestPath(session.currentPath, session.distroId);
+      if (session.connectionStatus != ConnectionStatus.remote ||
+          session.sshSession == null) {
+        return;
       }
 
-      final escaped = guestPath.replaceAll("'", "'\\''");
+      final escaped = session.currentPath.replaceAll("'", "'\\''");
       // Add a space to avoid clogging shell history (common ignorespace setting)
-      final bytes = utf8.encode(" cd '$escaped'\r");
-      if (session.connectionStatus == ConnectionStatus.remote &&
-          session.sshSession != null) {
-        session.sshSession!.write(bytes);
-      } else if (session.connectionStatus == ConnectionStatus.local &&
-          session.localPty != null) {
-        session.localPty!.write(bytes);
-      }
+      session.sshSession!.write(utf8.encode(" cd '$escaped'\r"));
     } catch (e) {
       debugPrint('Error al sincronizar directorio con terminal: $e');
     }
@@ -2149,8 +1831,6 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
-    _openRequestSub?.cancel();
-    _openRequestPoll?.cancel();
     for (final session in _sessions) {
       _cleanupSession(session);
     }
