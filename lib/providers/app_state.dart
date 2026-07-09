@@ -549,6 +549,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// everything works the same for an unknown agent (generic badge).
   static const List<({String marker, String id, String label})> _agentMarkers = [
     (marker: 'antigravity', id: 'antigravity', label: 'Antigravity'),
+    (marker: 'agy', id: 'antigravity', label: 'Antigravity'),
+    (marker: 'deepmind', id: 'antigravity', label: 'Antigravity'),
     (marker: 'claude', id: 'claude', label: 'Claude Code'),
     (marker: 'aider', id: 'aider', label: 'Aider'),
     (marker: 'codex', id: 'codex', label: 'Codex'),
@@ -597,12 +599,32 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     if (!_appInForeground) {
       final agent = _detectAgent(session);
+      
+      String finalTitle = title ?? '';
+      String finalBody = body ?? '';
+      
+      if (agent != null) {
+        if (finalTitle.isEmpty || finalTitle == session.name) {
+          finalTitle = '${agent.label} 🤖';
+        } else {
+          finalTitle = '${agent.label}: $finalTitle';
+        }
+        if (finalBody.isEmpty) {
+          finalBody = 'Espera tu respuesta en la sesión "${session.name}"';
+        }
+      } else {
+        if (finalTitle.isEmpty) {
+          finalTitle = session.name;
+        }
+        if (finalBody.isEmpty) {
+          finalBody = 'El terminal espera tu respuesta';
+        }
+      }
+
       NotificationService.showAlert(
         sessionId: session.id,
-        title: (title == null || title.isEmpty) ? session.name : title,
-        body: (body == null || body.isEmpty)
-            ? '${agent?.label ?? 'El agente'} espera tu respuesta'
-            : body,
+        title: finalTitle,
+        body: finalBody,
         agent: agent?.id,
       );
     } else if (!identical(session, activeSession)) {

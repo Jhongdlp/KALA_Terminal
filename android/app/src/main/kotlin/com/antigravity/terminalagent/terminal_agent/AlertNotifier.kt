@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.os.Build
 
 /**
@@ -41,6 +42,19 @@ object AlertNotifier {
         "codex" -> R.drawable.ic_agent_codex
         "gemini" -> R.drawable.ic_agent_gemini
         else -> R.drawable.ic_agent_generic
+    }
+
+    /**
+     * Resolves the custom brand color for each agent to tint the notification header,
+     * small icon circle, and other elements on Android 5.0+ (API 21+).
+     */
+    private fun agentColor(agent: String?): Int = when (agent) {
+        "claude" -> Color.parseColor("#D96B43")       // Warm terracotta
+        "antigravity" -> Color.parseColor("#1E3A8A")  // Deep indigo
+        "gemini" -> Color.parseColor("#4F46E5")       // Indigo-violet
+        "aider" -> Color.parseColor("#0D9488")        // Teal
+        "codex" -> Color.parseColor("#7C3AED")        // Violet
+        else -> Color.parseColor("#1F2937")           // Dark gray/charcoal
     }
 
     fun show(
@@ -79,9 +93,12 @@ object AlertNotifier {
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(agentColor(agent))
             .setLargeIcon(
                 BitmapFactory.decodeResource(context.resources, agentBadge(agent)),
             )
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
             .build()
