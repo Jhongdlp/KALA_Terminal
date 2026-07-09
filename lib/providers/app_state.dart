@@ -2414,6 +2414,118 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<String> getGitRoot() async {
+    final session = activeSession;
+    if (session == null) return '';
+
+    final currentDir = session.currentPath;
+    if (session.connectionStatus == ConnectionStatus.remote) {
+      if (session.sshClient == null) return currentDir;
+      try {
+        final run = await session.sshClient!.execute('cd "$currentDir" && git rev-parse --show-toplevel');
+        final bytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
+        final path = bytes.trim();
+        if (path.isNotEmpty && !path.startsWith('fatal')) {
+          return path;
+        }
+      } catch (e) {
+        debugPrint('Error finding remote git root: $e');
+      }
+    } else {
+      try {
+        final res = await Process.run('git', ['rev-parse', '--show-toplevel'], workingDirectory: currentDir);
+        if (res.exitCode == 0) {
+          final path = (res.stdout as String).trim();
+          if (path.isNotEmpty) {
+            return path;
+          }
+        }
+      } catch (e) {
+        debugPrint('Error finding local git root: $e');
+      }
+    }
+    return currentDir;
+  }
+
+  Future<List<FileSystemEntityInfo>> listDirectoriesOf(String path) async {
+    final session = activeSession;
+    if (session == null) return [];
+
+    final List<FileSystemEntityInfo> dirs = [];
+    try {
+      if (session.connectionStatus == ConnectionStatus.remote && session.sshClient != null) {
+        final sftp = await _getSftpClient(session);
+        final list = await sftp.listdir(path).timeout(const Duration(seconds: 5));
+        for (final item in list) {
+          if (item.filename == '.' || item.filename == '..') continue;
+          if (item.filename.startsWith('.')) continue; // ignore hidden files
+          if (item.attr.isDirectory) {
+            dirs.add(FileSystemEntityInfo(
+              name: item.filename,
+              path: '$path/${item.filename}'.replaceAll('//', '/'),
+              isDirectory: true,
+              size: item.attr.size ?? 0,
+              modified: DateTime.fromMillisecondsSinceEpoch((item.attr.modifyTime ?? 0) * 1000),
+            ));
+          }
+        }
+      } else {
+        final dir = Directory(path);
+        if (await dir.exists()) {
+          await for (final entity in dir.list(followLinks: false)) {
+            if (entity is Directory) {
+              final name = entity.path.split(Platform.pathSeparator).last;
+              if (name.startsWith('.')) continue;
+              final stat = await entity.stat();
+              dirs.add(FileSystemEntityInfo(
+                name: name,
+                path: entity.path,
+                isDirectory: true,
+                size: stat.size,
+                modified: stat.modified,
+              ));
+            }
+          }
+        }
+      }
+      dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } catch (e) {
+      debugPrint('Error listing directories of $path: $e');
+    }
+    return dirs;
+  }
+
+  Future<String?> commitChanges(String message) async {
+    final session = activeSession;
+    if (session == null) return 'Sin sesión activa';
+    if (message.trim().isEmpty) return 'El mensaje de commit no puede estar vacío';
+
+    final currentDir = session.currentPath;
+    try {
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        if (session.sshClient == null) return 'Desconectado';
+        final escapedMsg = message.replaceAll('"', '\\"');
+        final run = await session.sshClient!.execute('cd "$currentDir" && git add . && git commit -m "$escapedMsg"');
+        final errBytes = await run.stderr.cast<List<int>>().transform(utf8.decoder).join();
+        final outBytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
+        if (errBytes.isNotEmpty && !outBytes.contains('changed') && !outBytes.contains('insertion')) {
+          return errBytes;
+        }
+      } else {
+        final addRes = await Process.run('git', ['add', '.'], workingDirectory: currentDir);
+        if (addRes.exitCode != 0) return addRes.stderr as String;
+
+        final commitRes = await Process.run('git', ['commit', '-m', message], workingDirectory: currentDir);
+        if (commitRes.exitCode != 0) return commitRes.stderr as String;
+      }
+      await _loadFilesForSession(session);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);

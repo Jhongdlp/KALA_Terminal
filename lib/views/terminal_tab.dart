@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
 import 'prompts_sheet.dart';
+import 'git_folder_explorer_sheet.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -379,180 +380,14 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+        borderRadius: BorderRadius.zero,
       ),
       builder: (sheetCtx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.3,
-          maxChildSize: 0.9,
-          expand: false,
-          builder: (context, scrollController) {
-            return FutureBuilder<List<GitChangedFile>>(
-              future: state.getGitStatus(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24.0),
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    ),
-                  );
-                }
-
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Text(
-                        'Error al leer estado Git: ${snapshot.error}',
-                        style: AppText.body(11, color: AppColors.danger),
-                      ),
-                    ),
-                  );
-                }
-
-                final list = snapshot.data ?? [];
-                if (list.isEmpty) {
-                  return Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.check_circle_outline, size: 36, color: AppColors.muted),
-                      const SizedBox(height: 12),
-                      Text(
-                        'SIN CAMBIOS PENDIENTES',
-                        style: AppText.label(10, color: AppColors.bone, spacing: 1.5),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'No hay modificaciones o no es un repositorio Git.',
-                        style: AppText.body(10, color: AppColors.muted),
-                      ),
-                    ],
-                  );
-                }
-
-                list.sort((a, b) => a.relativePath.compareTo(b.relativePath));
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Row(
-                        children: [
-                          Icon(Icons.commit, size: 14, color: AppColors.accent),
-                          const SizedBox(width: 8),
-                          Text(
-                            'CAMBIOS EN EL REPOSITORIO',
-                            style: AppText.label(11, color: AppColors.bone, spacing: 1.5),
-                          ),
-                          const Spacer(),
-                          Text(
-                            '${list.length} archivos',
-                            style: AppText.mono(9, color: AppColors.muted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Hairline(),
-                    Expanded(
-                      child: ListView.separated(
-                        controller: scrollController,
-                        itemCount: list.length,
-                        separatorBuilder: (_, __) => Hairline(),
-                        itemBuilder: (context, index) {
-                          final file = list[index];
-                          
-                          Color statusColor = AppColors.muted;
-                          String statusText = file.status;
-                          if (file.status == 'M') {
-                            statusColor = Colors.orange;
-                            statusText = 'MODIFICADO';
-                          } else if (file.status == '??') {
-                            statusColor = Colors.green;
-                            statusText = 'NUEVO';
-                          } else if (file.status == 'A') {
-                            statusColor = Colors.green;
-                            statusText = 'AGREGADO';
-                          } else if (file.status == 'D') {
-                            statusColor = AppColors.danger;
-                            statusText = 'ELIMINADO';
-                          }
-
-                          final parts = file.relativePath.split('/');
-                          final isSubdir = parts.length > 1;
-                          final fileName = parts.last;
-                          final dirName = isSubdir ? parts.sublist(0, parts.length - 1).join('/') + '/' : '';
-
-                          return InkWell(
-                            onTap: () {
-                              Navigator.pop(sheetCtx);
-                              state.navigateToGitFile(file);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    file.status == 'D' 
-                                        ? Icons.delete_outline 
-                                        : (file.status == '??' ? Icons.add_box_outlined : Icons.edit_note_outlined),
-                                    size: 16,
-                                    color: statusColor,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: RichText(
-                                      text: TextSpan(
-                                        style: AppText.mono(11, color: AppColors.bone),
-                                        children: [
-                                          if (isSubdir)
-                                            TextSpan(
-                                              text: dirName,
-                                              style: TextStyle(color: AppColors.muted, fontSize: 10),
-                                            ),
-                                          TextSpan(
-                                            text: fileName,
-                                            style: TextStyle(
-                                              decoration: file.status == 'D' ? TextDecoration.lineThrough : null,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: statusColor.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(2),
-                                      border: Border.all(color: statusColor.withOpacity(0.3), width: 0.5),
-                                    ),
-                                    child: Text(
-                                      statusText,
-                                      style: TextStyle(
-                                        fontFamily: 'Cascadia Code',
-                                        fontSize: 7.5,
-                                        fontWeight: FontWeight.bold,
-                                        color: statusColor,
-                                        letterSpacing: 0.8,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
-            );
-          },
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: GitFolderExplorerSheet(state: state),
         );
       },
     );
