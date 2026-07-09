@@ -106,6 +106,13 @@ object AlertNotifier {
         }
     }
 
+    /** Cancels the notification for a specific session. */
+    fun cancelFor(context: Context, sessionId: String) {
+        val manager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(notificationId(sessionId))
+    }
+
     /** One stable notification per session: repeated bells update in place. */
     private fun notificationId(sessionId: String): Int =
         ID_BASE + (sessionId.hashCode().let { if (it < 0) -it else it } % ID_RANGE)
