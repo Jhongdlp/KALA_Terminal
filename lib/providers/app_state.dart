@@ -1984,6 +1984,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     try {
       if (!_syncTerminalPath) return;
       if (session.terminal.isUsingAltBuffer) return;
+      if (_detectAgent(session) != null) return;
       if (session.connectionStatus != ConnectionStatus.remote ||
           session.sshSession == null) {
         return;
