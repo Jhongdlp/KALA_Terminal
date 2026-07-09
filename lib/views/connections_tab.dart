@@ -12,7 +12,6 @@ class ConnectionsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppState>(context);
-    final isLocalActive = state.connectionStatus == ConnectionStatus.local;
 
     return Container(
       color: AppColors.ink,
@@ -29,25 +28,6 @@ class ConnectionsTab extends StatelessWidget {
               onPressed: () => _showProfileDialog(context, null),
             ),
           ),
-
-          // Local terminal panel
-          SwissPanel(
-            title: 'Terminal local',
-            children: [
-              LayerRow(
-                glyph: const Icon(Icons.terminal_outlined),
-                title: 'Shell del dispositivo',
-                meta: 'COMANDOS EN EL SISTEMA LOCAL',
-                active: isLocalActive,
-                trailing: const Icon(Icons.arrow_forward),
-                onTap: () {
-                  state.createNewSession();
-                  state.setActiveTabIndex(1);
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
 
           // SSH servers panel
           SwissPanel(

@@ -9,8 +9,10 @@ plugins {
 
 // Release signing config is read from android/key.properties (gitignored).
 // Without it (e.g. a fresh clone) the build falls back to the debug key so
-// `flutter run` still works, but distributed APKs MUST be signed with the real
-// release key so the in-app updater's signature check keeps holding.
+// `flutter run` still works. Distributed APKs must always be signed with the
+// SAME keystore across releases so the in-app updater can install updates over
+// the installed app. Current releases are signed with android/app/debug.keystore
+// (the key the published KALA builds already use — SHA-1 81:F2:49:94…).
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
@@ -19,7 +21,11 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.antigravity.terminalagent.terminal_agent"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned to 36 (not flutter.compileSdkVersion) because updated plugins
+    // (file_picker → flutter_plugin_android_lifecycle) require compiling against
+    // API 36+. This only affects which APIs are available at compile time;
+    // runtime behavior stays governed by targetSdk (28, see defaultConfig).
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -28,18 +34,18 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Unchanged from KALA so this SSH-only build updates the installed app
+        // in place (same signing key required — see android/key.properties).
         applicationId = "com.antigravity.terminalagent.terminal_agent"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        // Pinned to 28 on purpose. Android assigns the app's SELinux domain from
-        // targetSdkVersion; at API 29+ the app lands in the stricter
-        // `untrusted_app_29+` domain that blocks fork/exec of child binaries,
-        // which kills the local PTY shell (every command -> "Permission denied").
-        // Termux pins to 28 for the same reason. Keep this until the terminal is
-        // reworked to exec from nativeLibraryDir. Play Store upload needs >=34,
-        // but this app is sideloaded via `flutter run`/`build apk`.
+        // Pinned to 28 on purpose. With targetSdk 28 the legacy
+        // READ/WRITE_EXTERNAL_STORAGE permissions still grant full access to
+        // /storage/emulated/0 (pre-scoped-storage), which the "adjuntar" picker
+        // and the SFTP → Download/KALA downloader rely on. At API 29+ scoped
+        // storage would break those without MANAGE_EXTERNAL_STORAGE. Play Store
+        // upload needs >=34, but this app is sideloaded via `flutter run`/`build apk`.
         targetSdk = 28
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -69,10 +75,10 @@ android {
     }
 
     lint {
-        // targetSdk is intentionally pinned to 28 (see defaultConfig) so the local
-        // PTY terminal keeps working. Play Store's lint flags that as a fatal error
-        // in release builds; this app is sideloaded, not published, so silence just
-        // that check instead of raising targetSdk and breaking the terminal.
+        // targetSdk is intentionally pinned to 28 (see defaultConfig) for legacy
+        // shared-storage access. Play Store's lint flags that as a fatal error in
+        // release builds; this app is sideloaded, not published, so silence just
+        // that check instead of raising targetSdk.
         disable += "ExpiredTargetSdkVersion"
     }
 }

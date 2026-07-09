@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Network access for SSH connections and distro downloads. Flutter only injects
-         this automatically in debug builds; release APKs need it declared here. -->
+    <!-- Network access for SSH connections and the in-app updater. Flutter only
+         injects this automatically in debug builds; release APKs need it here. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Keep the process (and its PTY/SSH shells) alive in the background, like Termux. -->
+    <!-- Keep the process (and its SSH shells) alive while the app is backgrounded. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Optional wakelock so long-running tasks keep executing with the screen off. -->
@@ -13,9 +13,9 @@
          to the system package installer (see lib/services/update_service.dart).
          The user still confirms the install in the system dialog. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Shared-storage access (Termux-style): with targetSdk 28 these legacy
-         permissions still grant the whole /storage/emulated/0, which the local
-         distro binds into the guest and links from ~ (Downloads, DCIM, ...). -->
+    <!-- Shared-storage access (targetSdk 28 legacy permissions grant the whole
+         /storage/emulated/0): the "adjuntar" file picker reads files from it and
+         the SFTP downloader saves downloads into Download/KALA. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
