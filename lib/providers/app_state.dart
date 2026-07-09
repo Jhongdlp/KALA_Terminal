@@ -492,12 +492,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      if (_appLockEnabled) {
-        _unlocked = false;
-      }
-    }
-
     final foreground = state == AppLifecycleState.resumed;
     if (foreground == _appInForeground) return;
     _appInForeground = foreground;
