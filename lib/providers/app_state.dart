@@ -150,6 +150,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final List<TerminalSession> _sessions = [];
   List<TerminalSession> get sessions => _sessions;
 
+  // Track background inactivity alert timers per session to only notify when agents stop writing
+  final Map<String, Timer> _sessionAlertTimers = {};
+
   int _activeSessionIndex = -1;
   int get activeSessionIndex => _activeSessionIndex;
 
@@ -618,23 +621,36 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (!_agentAlertsEnabled) return;
     if (_appInForeground) return;
 
+    // Reset the inactivity timer for this session since we just received new text
+    _sessionAlertTimers[session.id]?.cancel();
+    _sessionAlertTimers.remove(session.id);
+
     try {
       final terminalText = session.terminal.buffer.getText();
       final tail = (terminalText.length > 150 
           ? terminalText.substring(terminalText.length - 150) 
           : terminalText).trim();
 
-      // Detects a question mark (?), interactive choices [y/n], [yes/no], or inputs
+      // Robust regex that matches:
+      // - Question mark (?) near the end of the text
+      // - Response options: [y/n], (y/n), (yes/no), [s/n], (sí/no) with or without brackets
+      // - Common interactive prompt keywords: confirm, choose, select, input, write, type, option
+      // - Common command line prompts ending in colon or angle bracket: ":" or ">"
       final questionRegex = RegExp(
-        r'(?:\?|[\(\[]y/n[\)\]]|[\(\[]yes/no[\)\]]|\bconfirm\b|\binput:\s*$|\bpregunta:\s*$)',
+        r'(?:\?|[\(\[\/\s]?(?:y/n|yes/no|s/n|sí/no|y\/n|s\/n)[\)\]\?\s]?|\b(?:confirm|approve|input|select|choose|write|type|option|confirmar|aprobar|escribir|ingresar|presione|press|opción)\b|[:>]\s*$)',
         caseSensitive: false,
       );
 
       if (questionRegex.hasMatch(tail)) {
-        _onSessionAlert(session, 
-          title: session.name, 
-          body: 'El agente te ha hecho una pregunta'
-        );
+        // Schedule alert after 500ms of silence. If more text arrives before this,
+        // it gets canceled, preventing spam during active outputs (e.g. logs/builds).
+        _sessionAlertTimers[session.id] = Timer(const Duration(milliseconds: 500), () {
+          _sessionAlertTimers.remove(session.id);
+          _onSessionAlert(session, 
+            title: session.name, 
+            body: 'El agente espera tu respuesta'
+          );
+        });
       }
     } catch (_) {
       // Ignore buffer read errors
@@ -1274,6 +1290,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _cleanupSession(TerminalSession session) {
+    _sessionAlertTimers[session.id]?.cancel();
+    _sessionAlertTimers.remove(session.id);
     _disposeWriters(session);
     for (final server in session.forwardServers) {
       server.close();
