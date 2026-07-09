@@ -78,6 +78,12 @@ dependencies:
   # Voice dictation in the prompt composer (Android SpeechRecognizer). Android
   # only in practice; the mic button is hidden on other platforms.
   speech_to_text: ^7.0.0
+  # Device SSH key generation (lib/services/device_key.dart): pinenacl provides
+  # ed25519 keygen and crypto the SHA-256 fingerprint. Both already come in
+  # transitively via dartssh2, but we import them directly so they must be
+  # declared (same rationale as re_highlight above).
+  pinenacl: ^0.6.0
+  crypto: ^3.0.0
 
 # Use a locally-vendored, patched copy of xterm (third_party/xterm) so the
 # terminal keyboard improvements survive `flutter pub get` on any machine:

@@ -16,6 +16,7 @@ import '../models/connection_profile.dart';
 import '../models/prompt_snippet.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
+import '../services/device_key.dart';
 import '../services/notification_service.dart';
 import '../services/secure_store.dart';
 
@@ -1000,10 +1001,41 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       final socket = await SSHSocket.connect(profile.host, profile.port, timeout: const Duration(seconds: 15));
-      
+
+      // Public-key auth: the phone's own device key (opt-in per profile) plus
+      // any per-profile PEM. dartssh2 tries identities first and falls back to
+      // the password automatically, so a profile can carry both. A PEM that
+      // fails to parse is reported but doesn't block the connection attempt.
+      final identities = <SSHKeyPair>[];
+      if (profile.useDeviceKey) {
+        final pem = await DeviceKey.privatePem();
+        if (pem == null) {
+          session.terminal.write(
+              'Este perfil usa la llave del dispositivo pero aún no existe; '
+              'génerala en Ajustes.\r\n');
+        } else {
+          identities.addAll(SSHKeyPair.fromPem(pem));
+        }
+      }
+      final profilePem = profile.privateKey;
+      if (profilePem != null && profilePem.trim().isNotEmpty) {
+        try {
+          // An encrypted PEM uses the profile password as its passphrase.
+          identities.addAll(SSHKeyPair.fromPem(
+              profilePem,
+              (profile.password?.isNotEmpty ?? false)
+                  ? profile.password
+                  : null));
+        } catch (e) {
+          session.terminal
+              .write('No se pudo leer la llave privada del perfil: $e\r\n');
+        }
+      }
+
       session.sshClient = SSHClient(
         socket,
         username: profile.username,
+        identities: identities.isEmpty ? null : identities,
         onPasswordRequest: () => profile.password ?? '',
       );
 

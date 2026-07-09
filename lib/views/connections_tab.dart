@@ -195,10 +195,13 @@ class ConnectionsTab extends StatelessWidget {
         TextEditingController(text: profile?.username ?? '');
     final passwordController =
         TextEditingController(text: profile?.password ?? '');
+    final privateKeyController =
+        TextEditingController(text: profile?.privateKey ?? '');
     final commandController = TextEditingController();
     final tunnelController = TextEditingController();
     final forwards = List<PortForward>.from(profile?.forwards ?? const []);
     var useTmux = profile?.useTmux ?? false;
+    var useDeviceKey = profile?.useDeviceKey ?? false;
 
     showModalBottomSheet(
       context: context,
@@ -297,6 +300,20 @@ class ConnectionsTab extends StatelessWidget {
                     obscure: true),
                 const SizedBox(height: 8),
 
+                // ---- Public-key auth -------------------------------------
+                ToggleRow(
+                  label: 'USAR LLAVE DEL DISPOSITIVO',
+                  description:
+                      'Autentica con la llave SSH del teléfono (se genera en '
+                      'Ajustes). Requiere su llave pública en el servidor.',
+                  value: useDeviceKey,
+                  onChanged: (v) => setSheetState(() => useDeviceKey = v),
+                ),
+                _field(privateKeyController,
+                    'LLAVE PRIVADA DEL PERFIL (PEM, OPCIONAL)',
+                    mono: true, maxLines: 3),
+                const SizedBox(height: 8),
+
                 // ---- Persistent session (tmux) ---------------------------
                 ToggleRow(
                   label: 'SESIÓN PERSISTENTE (TMUX)',
@@ -375,8 +392,12 @@ class ConnectionsTab extends StatelessWidget {
                       password: passwordController.text.isEmpty
                           ? null
                           : passwordController.text,
+                      privateKey: privateKeyController.text.trim().isEmpty
+                          ? null
+                          : privateKeyController.text.trim(),
                       forwards: forwards,
                       useTmux: useTmux,
+                      useDeviceKey: useDeviceKey,
                     );
 
                     final state =
@@ -422,15 +443,22 @@ class ConnectionsTab extends StatelessWidget {
   }
 
   Widget _field(TextEditingController controller, String label,
-      {bool mono = false, bool number = false, bool obscure = false}) {
+      {bool mono = false,
+      bool number = false,
+      bool obscure = false,
+      int maxLines = 1}) {
     return TextField(
       controller: controller,
       obscureText: obscure,
       enableIMEPersonalizedLearning: !obscure,
-      keyboardType: number ? TextInputType.number : null,
-      decoration: InputDecoration(labelText: label),
+      keyboardType: number
+          ? TextInputType.number
+          : (maxLines > 1 ? TextInputType.multiline : null),
+      maxLines: maxLines,
+      decoration: InputDecoration(
+          labelText: label, alignLabelWithHint: maxLines > 1),
       style: mono
-          ? AppText.mono(13, color: AppColors.bone)
+          ? AppText.mono(maxLines > 1 ? 10 : 13, color: AppColors.bone)
           : AppText.body(13, color: AppColors.bone),
     );
   }

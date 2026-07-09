@@ -36,4 +36,13 @@ class SecureStore {
     await _storage.delete(key: _pwKey(id));
     await _storage.delete(key: _pkKey(id));
   }
+
+  // ---- Device SSH key -------------------------------------------------------
+  // The phone's own ed25519 identity (see DeviceKey). One per device, not tied
+  // to any profile.
+  static const _deviceKeyKey = 'device_ssh_key';
+
+  Future<String?> readDeviceKey() => _storage.read(key: _deviceKeyKey);
+  Future<void> writeDeviceKey(String pem) =>
+      _storage.write(key: _deviceKeyKey, value: pem);
 }

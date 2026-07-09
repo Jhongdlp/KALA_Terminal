@@ -69,6 +69,11 @@ class ConnectionProfile {
   /// agent running inside) survives network drops; reconnecting re-attaches.
   final bool useTmux;
 
+  /// Authenticate with the phone's own ed25519 key (see DeviceKey) in addition
+  /// to any per-profile key/password. Requires the device public key in the
+  /// server's `authorized_keys`.
+  final bool useDeviceKey;
+
   ConnectionProfile({
     required this.id,
     required this.name,
@@ -80,6 +85,7 @@ class ConnectionProfile {
     this.isLocal = false,
     this.forwards = const [],
     this.useTmux = false,
+    this.useDeviceKey = false,
   });
 
   /// tmux session name used when [useTmux] is on: a slug of the profile name
@@ -103,6 +109,7 @@ class ConnectionProfile {
       'isLocal': isLocal,
       'forwards': forwards.map((f) => f.toMap()).toList(),
       'useTmux': useTmux,
+      'useDeviceKey': useDeviceKey,
     };
   }
 
@@ -133,6 +140,7 @@ class ConnectionProfile {
       isLocal: isLocal,
       forwards: forwards,
       useTmux: useTmux,
+      useDeviceKey: useDeviceKey,
     );
   }
 
@@ -151,6 +159,7 @@ class ConnectionProfile {
               .toList() ??
           const [],
       useTmux: map['useTmux'] ?? false,
+      useDeviceKey: map['useDeviceKey'] ?? false,
     );
   }
 

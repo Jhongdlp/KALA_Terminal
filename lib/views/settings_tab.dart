@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/app_lock.dart';
+import '../services/device_key.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 
@@ -205,6 +207,13 @@ class SettingsTab extends StatelessWidget {
                 onChanged: (value) => _onAppLockChanged(context, state, value),
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+
+          // ---- Device SSH key ----------------------------------------------
+          SwissPanel(
+            title: 'Llave SSH del dispositivo',
+            children: const [_DeviceKeyPanel()],
           ),
           const SizedBox(height: 16),
 
@@ -489,6 +498,143 @@ class _StepButton extends StatelessWidget {
 /// Reads the app's version + build number from the platform package metadata
 /// (the `version:` in pubspec.yaml, bumped by scripts/release.sh) and shows it
 /// in the About panel, so the running build is always identifiable.
+/// The phone's own ed25519 SSH identity: shows its fingerprint when present,
+/// generates it on demand, and copies the `authorized_keys` line. Profiles opt
+/// in with "usar llave del dispositivo".
+class _DeviceKeyPanel extends StatefulWidget {
+  const _DeviceKeyPanel();
+
+  @override
+  State<_DeviceKeyPanel> createState() => _DeviceKeyPanelState();
+}
+
+class _DeviceKeyPanelState extends State<_DeviceKeyPanel> {
+  String? _fingerprint;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final fp = await DeviceKey.fingerprint();
+    if (!mounted) return;
+    setState(() {
+      _fingerprint = fp;
+      _loaded = true;
+    });
+  }
+
+  void _toast(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(SnackBar(
+      content: Text(message,
+          style: AppText.mono(11, color: AppColors.bone, spacing: 0.3)),
+      backgroundColor: AppColors.panelHi,
+      duration: const Duration(milliseconds: 1800),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  Future<void> _generate() async {
+    // Regenerating invalidates the key on every server that trusts it — make
+    // that explicit before overwriting.
+    if (_fingerprint != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: Text('REGENERAR LLAVE',
+              style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
+          content: Text(
+            'Los servidores que confían en la llave actual dejarán de aceptar '
+            'este teléfono hasta que instales la nueva llave pública.',
+            style: AppText.body(13, color: AppColors.muted),
+          ),
+          actions: [
+            GhostButton(
+              label: 'Cancelar',
+              dense: true,
+              onPressed: () => Navigator.of(ctx).pop(false),
+            ),
+            InvertedButton(
+              label: 'Regenerar',
+              dense: true,
+              onPressed: () => Navigator.of(ctx).pop(true),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    await DeviceKey.generate();
+    await _refresh();
+    if (mounted) _toast('Llave ed25519 generada');
+  }
+
+  Future<void> _copyPublic() async {
+    final line = await DeviceKey.publicLine();
+    if (line == null) {
+      _toast('Primero genera la llave');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: line));
+    if (mounted) {
+      _toast('Llave pública copiada — pégala en ~/.ssh/authorized_keys');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('IDENTIDAD ED25519',
+              style: AppText.label(9, color: AppColors.muted)),
+          const SizedBox(height: 5),
+          Text(
+            !_loaded
+                ? '…'
+                : _fingerprint ?? 'Sin generar — crea la llave para conectar '
+                    'sin contraseña.',
+            style: AppText.mono(10,
+                color: _fingerprint != null
+                    ? AppColors.bone
+                    : AppColors.faint),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: GhostButton(
+                  label: _fingerprint == null ? 'Generar' : 'Regenerar',
+                  icon: Icons.vpn_key_outlined,
+                  dense: true,
+                  onPressed: _generate,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: InvertedButton(
+                  label: 'Copiar pública',
+                  icon: Icons.content_copy_outlined,
+                  dense: true,
+                  onPressed: _copyPublic,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _VersionRow extends StatelessWidget {
   const _VersionRow();
 
