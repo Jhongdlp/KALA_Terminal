@@ -35,6 +35,12 @@ class TerminalSession {
   SSHSession? sshSession;
   SftpClient? sftpClient;
   String currentPath;
+  // Actual working directory of the interactive shell, tracked out-of-band from
+  // the file explorer's [currentPath]. Updated whenever the remote shell emits
+  // an OSC 7 sequence (`ESC ] 7 ; file://host/path ST`); the git panel prefers
+  // this over the explorer path so "cambios" reflects where the terminal is.
+  // Null until the shell reports it at least once (see [_seedCwdReporting]).
+  String? terminalCwd;
   // Stack of previously visited directories for this session's explorer, used
   // by [AppState.navigateBack]. Pushed in [AppState.changeDirectory] and
   // [AppState.navigateUp] right before the path changes.
@@ -872,6 +878,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       //   OSC 777 — `ESC ] 777 ; notify ; title ; body BEL` (urxvt style).
       // Semicolons inside the payload arrive pre-split, hence the joins.
       onPrivateOSC: (ps, pt) {
+        if (ps == '7' && pt.isNotEmpty) {
+          // OSC 7 — the shell reporting its working directory as a file:// URI
+          // (`ESC ] 7 ; file://host/path ST`). Keep the terminal's real cwd in
+          // sync so the git panel can key off it instead of the explorer path.
+          _updateTerminalCwd(session, pt.join(';'));
+          return;
+        }
         if (ps == '9' && pt.isNotEmpty) {
           _onSessionAlert(session, body: pt.join(';'));
         } else if (ps == '777' && pt.isNotEmpty && pt.first == 'notify') {
@@ -1168,6 +1181,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.terminal.onResize = (width, height, pixelWidth, pixelHeight) {
         session.sshSession?.resizeTerminal(width, height, pixelWidth, pixelHeight);
       };
+
+      // Ask the remote shell to report its cwd via OSC 7 on every prompt, so the
+      // git panel tracks where the terminal actually is (see [terminalCwd]).
+      _seedCwdReporting(session);
 
       session.connectionStatus = ConnectionStatus.remote;
       session.started = true;
@@ -2343,13 +2360,64 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  // --- TERMINAL CWD TRACKING (OSC 7) ---
+
+  /// Parses an OSC 7 payload (`file://host/path`, possibly percent-encoded) and
+  /// stores the decoded path as the session's live working directory.
+  void _updateTerminalCwd(TerminalSession session, String payload) {
+    var value = payload.trim();
+    if (value.isEmpty) return;
+    if (value.startsWith('file://')) {
+      value = value.substring('file://'.length);
+      // Strip the authority (hostname) up to the first slash: file://host/path.
+      final slash = value.indexOf('/');
+      value = slash >= 0 ? value.substring(slash) : '/';
+    }
+    try {
+      value = Uri.decodeFull(value);
+    } catch (_) {
+      // Leave the raw value if it isn't valid percent-encoding.
+    }
+    if (value.isEmpty) return;
+    if (session.terminalCwd == value) return;
+    session.terminalCwd = value;
+  }
+
+  /// Installs a `PROMPT_COMMAND` that emits OSC 7 on every prompt, so we can
+  /// track the shell's real cwd without polling. Best-effort: harmless on
+  /// shells that ignore `PROMPT_COMMAND` (they just fall back to the explorer
+  /// path). Sent with a small delay so it lands after the login shell is ready,
+  /// and with a leading space so it's kept out of history when `HISTCONTROL`
+  /// includes `ignorespace`.
+  void _seedCwdReporting(TerminalSession session) {
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (session.connectionStatus != ConnectionStatus.remote) return;
+      const cmd =
+          " PROMPT_COMMAND='printf \"\\033]7;file://\$HOSTNAME\$PWD\\033\\134\"'"
+          "\${PROMPT_COMMAND:+;\$PROMPT_COMMAND}\r";
+      try {
+        session.sshSession?.write(utf8.encode(cmd));
+      } catch (e) {
+        debugPrint('Error seeding cwd reporting: $e');
+      }
+    });
+  }
+
+  /// The directory git operations should run in for [session]: the terminal's
+  /// tracked cwd when known, otherwise the file explorer's path.
+  String _workingDirFor(TerminalSession session) {
+    final cwd = session.terminalCwd;
+    if (cwd != null && cwd.isNotEmpty) return cwd;
+    return session.currentPath;
+  }
+
   // --- GIT STATUS WORKFLOW ---
 
   Future<List<GitChangedFile>> getGitStatus() async {
     final session = activeSession;
     if (session == null) return [];
 
-    final currentDir = session.currentPath;
+    final currentDir = _workingDirFor(session);
     String output = '';
 
     if (session.connectionStatus == ConnectionStatus.remote) {
@@ -2418,7 +2486,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final session = activeSession;
     if (session == null) return '';
 
-    final currentDir = session.currentPath;
+    final currentDir = _workingDirFor(session);
     if (session.connectionStatus == ConnectionStatus.remote) {
       if (session.sshClient == null) return currentDir;
       try {
@@ -2495,12 +2563,88 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return dirs;
   }
 
+  /// Like [listDirectoriesOf] but also returns files, so the git panel's tree
+  /// can show file leaves. Directories come first, then files, each sorted by
+  /// name. Hidden entries (dotfiles) are skipped, matching the folder listing.
+  Future<List<FileSystemEntityInfo>> listTreeEntries(String path) async {
+    final session = activeSession;
+    if (session == null) return [];
+
+    final List<FileSystemEntityInfo> dirs = [];
+    final List<FileSystemEntityInfo> files = [];
+    try {
+      if (session.connectionStatus == ConnectionStatus.remote && session.sshClient != null) {
+        final sftp = await _getSftpClient(session);
+        final list = await sftp.listdir(path).timeout(const Duration(seconds: 5));
+        for (final item in list) {
+          if (item.filename == '.' || item.filename == '..') continue;
+          if (item.filename.startsWith('.')) continue;
+          final entry = FileSystemEntityInfo(
+            name: item.filename,
+            path: '$path/${item.filename}'.replaceAll('//', '/'),
+            isDirectory: item.attr.isDirectory,
+            size: item.attr.size ?? 0,
+            modified: DateTime.fromMillisecondsSinceEpoch((item.attr.modifyTime ?? 0) * 1000),
+          );
+          (item.attr.isDirectory ? dirs : files).add(entry);
+        }
+      } else {
+        final dir = Directory(path);
+        if (await dir.exists()) {
+          await for (final entity in dir.list(followLinks: false)) {
+            final name = entity.path.split(Platform.pathSeparator).last;
+            if (name.startsWith('.')) continue;
+            final isDir = entity is Directory;
+            final stat = await entity.stat();
+            (isDir ? dirs : files).add(FileSystemEntityInfo(
+              name: name,
+              path: entity.path,
+              isDirectory: isDir,
+              size: stat.size,
+              modified: stat.modified,
+            ));
+          }
+        }
+      }
+      dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      files.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } catch (e) {
+      debugPrint('Error listing tree entries of $path: $e');
+    }
+    return [...dirs, ...files];
+  }
+
+  /// Sends [prompt] straight to the AI agent running in the active terminal
+  /// (pastes it, then submits with Enter). Returns `null` on success or a
+  /// human-readable error when there's no live agent to receive it — no active
+  /// session, a dropped connection, or no full-screen agent TUI on screen
+  /// (which also covers the "agent exited / out of tokens" case, since a
+  /// crashed agent drops back to the shell and leaves the alt-screen).
+  String? sendAgentPrompt(String prompt) {
+    final session = activeSession;
+    if (session == null) return 'No hay una sesión activa.';
+    if (session.connectionStatus != ConnectionStatus.remote) {
+      return 'No hay una conexión activa.';
+    }
+    if (!session.terminal.isUsingAltBuffer) {
+      return 'No hay un agente de IA abierto en la terminal. Ábrelo (p. ej. claude) y vuelve a intentarlo.';
+    }
+    session.terminal.paste(prompt);
+    // Give the agent a beat to ingest the bracketed paste before submitting.
+    Future.delayed(const Duration(milliseconds: 120), () {
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        sendTerminalInput('\r');
+      }
+    });
+    return null;
+  }
+
   Future<String?> commitChanges(String message) async {
     final session = activeSession;
     if (session == null) return 'Sin sesión activa';
     if (message.trim().isEmpty) return 'El mensaje de commit no puede estar vacío';
 
-    final currentDir = session.currentPath;
+    final currentDir = _workingDirFor(session);
     try {
       if (session.connectionStatus == ConnectionStatus.remote) {
         if (session.sshClient == null) return 'Desconectado';

@@ -373,21 +373,37 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         onInserted: () => _terminalFocusNode.requestFocus());
   }
 
-  /// Opens the Git changes slide panel.
+  /// Opens the Git changes / project panel as a full-height drawer that slides
+  /// in from the left edge.
   void _showGitSlider(AppState state) {
-    showModalBottomSheet(
+    showGeneralDialog(
       context: context,
-      backgroundColor: AppColors.panel,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.zero,
-      ),
-      builder: (sheetCtx) {
-        return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.85,
+      barrierDismissible: true,
+      barrierLabel: 'Cerrar',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (dialogCtx, _, _) {
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Material(
+            color: AppColors.panel,
+            child: SizedBox(
+              width: MediaQuery.of(dialogCtx).size.width * 0.86,
+              height: double.infinity,
+              child: GitFolderExplorerSheet(state: state),
+            ),
           ),
-          child: GitFolderExplorerSheet(state: state),
+        );
+      },
+      transitionBuilder: (_, anim, _, child) {
+        final curved =
+            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(-1, 0),
+            end: Offset.zero,
+          ).animate(curved),
+          child: child,
         );
       },
     );
@@ -790,22 +806,21 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 // then a letter on the system keyboard yields Alt+<letter>.
                 _key('ALT', () => state.sendTerminalInput('\x1b')),
                 _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
-                _key('COPIAR', () => _copySelection(state),
-                    icon: Icons.content_copy_outlined),
-                _key('PEGAR', () => _paste(state),
-                    icon: Icons.content_paste_outlined),
               ],
             ),
             const SizedBox(height: 5),
-            // Row 2 — navigation, confirmations, symbols.
+            // Row 2 — navigation + copy/paste (moved here from row 1, replacing
+            // the ~ and / keys) + attach/links.
             Row(
               children: [
                 _key('↑', () => state.sendTerminalInput('\x1b[A')),
                 _key('↓', () => state.sendTerminalInput('\x1b[B')),
                 _key('←', () => state.sendTerminalInput('\x1b[D')),
                 _key('→', () => state.sendTerminalInput('\x1b[C')),
-                _key('~', () => state.sendTerminalInput('~')),
-                _key('/', () => state.sendTerminalInput('/')),
+                _key('COPIAR', () => _copySelection(state),
+                    icon: Icons.content_copy_outlined),
+                _key('PEGAR', () => _paste(state),
+                    icon: Icons.content_paste_outlined),
                 _key('ADJUNTAR', () => _attach(state),
                     icon: Icons.attach_file),
                 _key('ENLACES', () => _showLinksSheet(state),
