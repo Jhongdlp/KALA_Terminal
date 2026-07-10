@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
-import 'package:pasteboard/pasteboard.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
@@ -310,10 +308,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         children: [
           Expanded(child: _sessionSelector(context, state)),
           Container(width: 1, height: 46, color: AppColors.hairline),
-          _toolbarIcon(Icons.bolt_outlined, 'Prompts',
-              () => _showPrompts(state)),
-          _toolbarIcon(Icons.commit_outlined, 'Cambios Git',
-              () => _showGitSlider(state)),
           _toolbarIcon(Icons.text_decrease, 'Reducir letra',
               () => state.bumpTerminalFontSize(-1)),
           _toolbarIcon(Icons.text_increase, 'Aumentar letra',
@@ -329,41 +323,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         ],
       ),
     );
-  }
-
-  /// Copies the active terminal's current selection to the clipboard. If
-  /// nothing is selected, nudges the user to long-press and drag first.
-  Future<void> _copySelection(AppState state) async {
-    final selection = _terminalController.selection;
-    if (selection == null) {
-      _toast('Mantén pulsado y arrastra para seleccionar texto');
-      return;
-    }
-    final text = state.terminal.buffer.getText(selection);
-    _terminalController.clearSelection();
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    _toast('Copiado al portapapeles');
-  }
-
-  /// Pastes clipboard text into the active shell as raw input.
-  Future<void> _paste(AppState state) async {
-    try {
-      final imageBytes = await Pasteboard.image;
-      if (imageBytes != null) {
-        await state.pasteImageBytes(imageBytes);
-        _terminalFocusNode.requestFocus();
-        return;
-      }
-    } catch (e) {
-      debugPrint('Error leyendo imagen de portapapeles: $e');
-    }
-
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
-    if (text == null || text.isEmpty) return;
-    state.insertPromptText(text);
-    _terminalFocusNode.requestFocus();
   }
 
   /// Opens the saved-prompt library / composer; after inserting, focus goes
@@ -385,12 +344,21 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       pageBuilder: (dialogCtx, _, _) {
         return Align(
           alignment: Alignment.centerLeft,
-          child: Material(
-            color: AppColors.panel,
-            child: SizedBox(
-              width: MediaQuery.of(dialogCtx).size.width * 0.86,
-              height: double.infinity,
-              child: GitFolderExplorerSheet(state: state),
+          child: SizedBox(
+            width: MediaQuery.of(dialogCtx).size.width * 0.86,
+            height: double.infinity,
+            // Own ScaffoldMessenger so the panel's SnackBars render in front of
+            // the slide instead of behind it on the root Scaffold.
+            child: ScaffoldMessenger(
+              child: Scaffold(
+                backgroundColor: AppColors.panel,
+                body: GitFolderExplorerSheet(
+                  state: state,
+                  // Shown after the panel closes, so it must go to the root
+                  // messenger (over the terminal), not the panel's.
+                  onToast: _toast,
+                ),
+              ),
             ),
           ),
         );
@@ -809,18 +777,18 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 5),
-            // Row 2 — navigation + copy/paste (moved here from row 1, replacing
-            // the ~ and / keys) + attach/links.
+            // Row 2 — navigation + Prompts/Commit (moved down from the top
+            // toolbar, in place of the old copy/paste keys) + attach/links.
             Row(
               children: [
                 _key('↑', () => state.sendTerminalInput('\x1b[A')),
                 _key('↓', () => state.sendTerminalInput('\x1b[B')),
                 _key('←', () => state.sendTerminalInput('\x1b[D')),
                 _key('→', () => state.sendTerminalInput('\x1b[C')),
-                _key('COPIAR', () => _copySelection(state),
-                    icon: Icons.content_copy_outlined),
-                _key('PEGAR', () => _paste(state),
-                    icon: Icons.content_paste_outlined),
+                _key('PROMPTS', () => _showPrompts(state),
+                    icon: Icons.bolt_outlined),
+                _key('COMMIT', () => _showGitSlider(state),
+                    icon: Icons.commit_outlined),
                 _key('ADJUNTAR', () => _attach(state),
                     icon: Icons.attach_file),
                 _key('ENLACES', () => _showLinksSheet(state),

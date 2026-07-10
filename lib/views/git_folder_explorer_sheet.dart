@@ -25,10 +25,14 @@ class FolderTreeNode {
 
 class GitFolderExplorerSheet extends StatefulWidget {
   final AppState state;
+  // Shown by the caller (on the root messenger) after the panel closes, e.g.
+  // the "sent to AI" confirmation for the delegate-commit buttons.
+  final void Function(String message)? onToast;
 
   const GitFolderExplorerSheet({
     super.key,
     required this.state,
+    this.onToast,
   });
 
   @override
@@ -195,7 +199,8 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
       return;
     }
     Navigator.pop(context);
-    _snack(okLabel, AppColors.accent);
+    // Panel is gone now; show the confirmation on the root messenger.
+    widget.onToast?.call(okLabel);
   }
 
   void _snack(String message, Color color) {
