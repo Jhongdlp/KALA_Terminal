@@ -9,7 +9,7 @@ import 'connections_tab.dart';
 import 'terminal_tab.dart';
 import 'explorer_tab.dart';
 import 'editor_tab.dart';
-import 'vps_tab.dart';
+import 'server_tab.dart';
 import 'settings_tab.dart';
 import 'update_dialog.dart';
 
@@ -96,7 +96,7 @@ class _HomeViewState extends State<HomeView> {
       TerminalTab(),
       ExplorerTab(),
       EditorTab(),
-      VpsTab(),
+      ServerTab(),
       SettingsTab(),
     ];
 
@@ -136,7 +136,7 @@ class _HomeViewState extends State<HomeView> {
                         return Expanded(
                           child: _TopNavItem(
                             spec: _items[i],
-                            active: activeTabIndex == i || (i == 4 && (activeTabIndex == 4 || activeTabIndex == 5)),
+                            active: activeTabIndex == i || (i == 4 && activeTabIndex >= 4),
                             dirty: i == 3 && isFileDirty,
                             onTap: () {
                               if (i == 4) {

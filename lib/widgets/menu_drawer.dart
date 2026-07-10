@@ -9,10 +9,7 @@ class MenuDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Listen to the session status so the drawer can show/hide remote actions
     final state = Provider.of<AppState>(context);
-    final isRemote = state.connectionStatus == ConnectionStatus.remote;
-    final activeProfileName = state.activeProfile?.name ?? 'SIN CONEXIÓN';
 
     return Drawer(
       backgroundColor: AppColors.ink,
@@ -36,25 +33,23 @@ class MenuDrawer extends StatelessWidget {
             ),
             Hairline(),
             
-            // Section 1: Server Management
+            // Section 1: Server console (monitor + Docker). Always enabled —
+            // the console picks its own server and opens a dedicated SSH
+            // client, like a cloud-provider console.
             ListTile(
-              enabled: isRemote,
-              leading: Icon(
-                Icons.dashboard_outlined, 
-                color: isRemote ? AppColors.accent : AppColors.muted
-              ),
+              leading: Icon(Icons.dns_outlined, color: AppColors.accent),
               title: Text(
-                'SERVIDORES (VPS)', 
-                style: AppText.mono(11, color: isRemote ? AppColors.bone : AppColors.muted),
+                'SERVIDOR',
+                style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                isRemote ? 'Monitorizar $activeProfileName' : 'Requiere conexión SSH activa',
+                'Monitor, Docker y auditoría por SSH',
                 style: AppText.body(9, color: AppColors.muted),
               ),
-              onTap: isRemote ? () {
+              onTap: () {
                 Navigator.of(context).pop(); // Close drawer
-                state.setActiveTabIndex(4); // Switch to VPS Tab
-              } : null,
+                state.setActiveTabIndex(4); // Switch to Server console
+              },
             ),
             Hairline(),
 

@@ -17,6 +17,7 @@ import '../models/prompt_snippet.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
+import '../services/server_controller.dart';
 import '../services/notification_service.dart';
 import '../services/secure_store.dart';
 
@@ -859,7 +860,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Create a new terminal session for [profile] and connect it over SSH. The
   // session is made active immediately; the shell is opened asynchronously in
   // [_connectSessionToSSH].
-  void createNewSession({required ConnectionProfile profile}) {
+  void createNewSession({
+    required ConnectionProfile profile,
+    String? initialCommand,
+    String? sessionName,
+  }) {
     final String id = const Uuid().v4();
     // `late` because the terminal's callbacks below capture the session that
     // owns them; they can only fire after [Terminal.write], i.e. well after
@@ -900,7 +905,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     session = TerminalSession(
       id: id,
-      name: profile.name,
+      name: sessionName ?? profile.name,
       terminal: terminal,
       connectionStatus: ConnectionStatus.disconnected,
       activeProfile: profile,
@@ -911,7 +916,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionIndex = _sessions.length - 1;
     notifyListeners();
 
-    _connectSessionToSSH(session, profile);
+    _connectSessionToSSH(session, profile, initialCommand: initialCommand);
   }
 
   /// Ask for the legacy storage permission (the app targets SDK 28, so the
@@ -1092,8 +1097,66 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return sftp;
   }
 
+  // Server console state (monitor + Docker). Owned here so the connection,
+  // sudo mode, section and cached data survive tab switches; the ServerTab
+  // listens to it directly (ListenableBuilder) so its refreshes don't trigger
+  // app-wide rebuilds.
+  ServerController? _server;
+  ServerController get server =>
+      _server ??= ServerController(openClient: openClient);
+
+  /// Opens and authenticates a standalone [SSHClient] for [profile], without
+  /// tying it to a terminal session. Non-fatal notices (missing device key,
+  /// unparseable PEM) are reported through [onNotice]; auth/connect failures
+  /// throw. Callers own the returned client and must close() it.
+  Future<SSHClient> openClient(ConnectionProfile profile,
+      {void Function(String msg)? onNotice}) async {
+    final socket = await SSHSocket.connect(profile.host, profile.port,
+        timeout: const Duration(seconds: 15));
+
+    // Public-key auth: the phone's own device key (opt-in per profile) plus
+    // any per-profile PEM. dartssh2 tries identities first and falls back to
+    // the password automatically, so a profile can carry both. A PEM that
+    // fails to parse is reported but doesn't block the connection attempt.
+    final identities = <SSHKeyPair>[];
+    if (profile.useDeviceKey) {
+      final pem = await DeviceKey.privatePem();
+      if (pem == null) {
+        onNotice?.call(
+            'Este perfil usa la llave del dispositivo pero aún no existe; '
+            'génerala en Ajustes.');
+      } else {
+        identities.addAll(SSHKeyPair.fromPem(pem));
+      }
+    }
+    final profilePem = profile.privateKey;
+    if (profilePem != null && profilePem.trim().isNotEmpty) {
+      try {
+        // An encrypted PEM uses the profile password as its passphrase.
+        identities.addAll(SSHKeyPair.fromPem(
+            profilePem,
+            (profile.password?.isNotEmpty ?? false)
+                ? profile.password
+                : null));
+      } catch (e) {
+        onNotice?.call('No se pudo leer la llave privada del perfil: $e');
+      }
+    }
+
+    final client = SSHClient(
+      socket,
+      username: profile.username,
+      identities: identities.isEmpty ? null : identities,
+      onPasswordRequest: () => profile.password ?? '',
+    );
+    // Fail fast on bad credentials instead of on the first channel open.
+    await client.authenticated;
+    return client;
+  }
+
   // Connect a session to a remote SSH server
-  Future<void> _connectSessionToSSH(TerminalSession session, ConnectionProfile profile) async {
+  Future<void> _connectSessionToSSH(TerminalSession session, ConnectionProfile profile,
+      {String? initialCommand}) async {
     _disposeWriters(session);
     // A reconnect reuses the session object: drop every leftover from the
     // previous connection first — bound forward ports (they'd fail to re-bind
@@ -1114,43 +1177,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.terminal.write('\r\nConectando a ${profile.name} (${profile.host}:${profile.port})...\r\n');
 
     try {
-      final socket = await SSHSocket.connect(profile.host, profile.port, timeout: const Duration(seconds: 15));
-
-      // Public-key auth: the phone's own device key (opt-in per profile) plus
-      // any per-profile PEM. dartssh2 tries identities first and falls back to
-      // the password automatically, so a profile can carry both. A PEM that
-      // fails to parse is reported but doesn't block the connection attempt.
-      final identities = <SSHKeyPair>[];
-      if (profile.useDeviceKey) {
-        final pem = await DeviceKey.privatePem();
-        if (pem == null) {
-          session.terminal.write(
-              'Este perfil usa la llave del dispositivo pero aún no existe; '
-              'génerala en Ajustes.\r\n');
-        } else {
-          identities.addAll(SSHKeyPair.fromPem(pem));
-        }
-      }
-      final profilePem = profile.privateKey;
-      if (profilePem != null && profilePem.trim().isNotEmpty) {
-        try {
-          // An encrypted PEM uses the profile password as its passphrase.
-          identities.addAll(SSHKeyPair.fromPem(
-              profilePem,
-              (profile.password?.isNotEmpty ?? false)
-                  ? profile.password
-                  : null));
-        } catch (e) {
-          session.terminal
-              .write('No se pudo leer la llave privada del perfil: $e\r\n');
-        }
-      }
-
-      session.sshClient = SSHClient(
-        socket,
-        username: profile.username,
-        identities: identities.isEmpty ? null : identities,
-        onPasswordRequest: () => profile.password ?? '',
+      session.sshClient = await openClient(
+        profile,
+        onNotice: (msg) => session.terminal.write('$msg\r\n'),
       );
 
       session.terminal.write('Autenticado correctamente. Abriendo terminal shell...\r\n');
@@ -1159,7 +1188,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         width: session.terminal.viewWidth,
         height: session.terminal.viewHeight,
       );
-      if (profile.useTmux) {
+      if (initialCommand != null) {
+        // Dedicated-purpose session (e.g. a `docker exec` shell from the
+        // Docker panel): run the given command instead of a login shell.
+        session.sshSession =
+            await session.sshClient!.execute(initialCommand, pty: pty);
+      } else if (profile.useTmux) {
         // Persistent session: `tmux new -A` attaches to the named session if
         // it exists and creates it otherwise, so reconnecting after a network
         // drop re-attaches to whatever kept running on the server (e.g. an AI
@@ -1298,8 +1332,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // Connect to Remote SSH (API exposed to ConnectionsTab)
-  Future<void> connectToSSH(ConnectionProfile profile) async {
-    createNewSession(profile: profile);
+  Future<void> connectToSSH(ConnectionProfile profile,
+      {String? initialCommand, String? sessionName}) async {
+    createNewSession(
+      profile: profile,
+      initialCommand: initialCommand,
+      sessionName: sessionName,
+    );
     _activeTabIndex = 1; // Switch to terminal tab
     notifyListeners();
   }
@@ -2673,6 +2712,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _server?.dispose();
     for (final session in _sessions) {
       _cleanupSession(session);
     }
