@@ -15,9 +15,12 @@ KALA turns your phone into a real development machine. It combines a multi-sessi
 
 - **Real Linux terminal on Android** — not a fake shell. KALA bundles [proot](https://proot-me.github.io/) and an [Alpine Linux](https://alpinelinux.org/) mini rootfs, so the local terminal is a full userland with `apk` package management. Install `git`, `python`, `nodejs`… directly on your phone, no root required.
 - **Multi-session terminals** — run several local and SSH sessions side by side, switch between them with one tap, rename and close them like browser tabs.
+- **Image pasting in the terminal** — paste images directly from clipboard or keyboards like Gboard. It automatically saves/uploads them (via SFTP for remote sessions) as `pasted_image_timestamp.png` in the active directory, types the filename in the terminal prompt, and refreshes the explorer.
 - **SSH connection manager** — save connection profiles (host, port, user, password or private key). Secrets are stored in the Android Keystore / libsecret via secure storage, never in plain text.
 - **Dual local/remote file explorer** — browse the local filesystem or the remote one over SFTP with the same UI. Open, navigate and edit files wherever they live.
 - **Code editor** — powered by [re_editor](https://pub.dev/packages/re_editor) with syntax highlighting, dirty-state tracking, and transparent save-back over SFTP for remote files.
+- **Unified Cloud-Console Server Dashboard** — monitor system resources (CPU, RAM, Disk, services) and fully manage Docker containers, images, volumes, networks, compose, and system configurations.
+- **Native Office and external document viewer** — open Word, Excel, PowerPoint, EPUB, ZIP, and APK files natively using the system's apps. Remote files are downloaded to temporary files and cleaned up automatically.
 - **Built-in viewers** — render Markdown and PDF files without leaving the app.
 - **Smart keyboard** — a quick-input row above the terminal with Ctrl+C, arrows, tab and common commands, designed for touch screens.
 - **IDE-style dark theme** — flat dark UI with Cascadia Code as the terminal font.

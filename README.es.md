@@ -15,9 +15,12 @@ KALA convierte tu teléfono en una máquina de desarrollo real. Combina un emula
 
 - **Terminal Linux real en Android** — no es un shell falso. KALA incluye [proot](https://proot-me.github.io/) y un mini rootfs de [Alpine Linux](https://alpinelinux.org/), así que la terminal local es un userland completo con gestor de paquetes `apk`. Instala `git`, `python`, `nodejs`… directamente en tu teléfono, sin root.
 - **Terminales multi-sesión** — ejecuta varias sesiones locales y SSH a la vez, cambia entre ellas con un toque, renómbralas y ciérralas como pestañas de navegador.
+- **Pegado de imágenes en la terminal** — pega imágenes directamente desde el portapapeles o teclados como Gboard. Las guarda/sube automáticamente (vía SFTP para sesiones remotas) como `pasted_image_timestamp.png` en el directorio activo, escribe el nombre del archivo en la entrada de la terminal y actualiza el explorador.
 - **Gestor de conexiones SSH** — guarda perfiles de conexión (host, puerto, usuario, contraseña o clave privada). Los secretos se guardan en el Keystore de Android / libsecret mediante almacenamiento seguro, nunca en texto plano.
 - **Explorador de archivos local/remoto** — navega el sistema de archivos local o el remoto por SFTP con la misma interfaz. Abre, navega y edita archivos estén donde estén.
 - **Editor de código** — basado en [re_editor](https://pub.dev/packages/re_editor) con resaltado de sintaxis, indicador de cambios sin guardar, y guardado transparente por SFTP para archivos remotos.
+- **Panel de control unificado Cloud-Console** — monitorea recursos del sistema (CPU, RAM, disco, servicios) y gestiona por completo contenedores Docker, imágenes, volúmenes, redes, compose y configuraciones del sistema.
+- **Visor nativo de documentos Office y externos** — abre archivos de Word, Excel, PowerPoint, EPUB, ZIP y APK de forma nativa usando las aplicaciones del sistema. Los archivos remotos se descargan temporalmente y se eliminan de forma automática al finalizar.
 - **Visores integrados** — renderiza archivos Markdown y PDF sin salir de la app.
 - **Teclado inteligente** — una fila de acceso rápido sobre la terminal con Ctrl+C, flechas, tab y comandos comunes, diseñada para pantallas táctiles.
 - **Tema oscuro estilo IDE** — interfaz plana oscura con Cascadia Code como fuente de terminal.
