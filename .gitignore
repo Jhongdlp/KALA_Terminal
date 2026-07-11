@@ -54,3 +54,7 @@ app.*.map.json
 *.jks
 key.properties
 key.properties.*
+
+# Antigravity / Gemini Skills
+.gemini/
+skills/
