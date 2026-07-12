@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/app_lock.dart';
 import '../services/device_key.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import 'update_dialog.dart';
 
 /// Central configuration screen. Every persisted user preference lives here so
 /// there is a single place to surface anything that can be tuned.
@@ -256,6 +258,8 @@ class SettingsTab extends StatelessWidget {
               _InfoRow(label: 'PAQUETE', value: 'terminal_agent'),
               Hairline(),
               const _VersionRow(),
+              Hairline(),
+              const _UpdateCheckRow(),
             ],
           ),
         ],
@@ -699,6 +703,90 @@ class _InfoRow extends StatelessWidget {
           ),
           Text(value, style: AppText.mono(12, color: AppColors.bone)),
         ],
+      ),
+    );
+  }
+}
+
+class _UpdateCheckRow extends StatefulWidget {
+  const _UpdateCheckRow();
+
+  @override
+  State<_UpdateCheckRow> createState() => _UpdateCheckRowState();
+}
+
+class _UpdateCheckRowState extends State<_UpdateCheckRow> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    try {
+      final update = await UpdateService.checkForUpdate();
+      if (!mounted) return;
+      if (update != null) {
+        showUpdateDialog(context, update);
+      } else {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'Ya tienes la última versión instalada',
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              backgroundColor: AppColors.panelHi,
+            ),
+          );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error al buscar actualizaciones',
+              style: AppText.mono(11, color: AppColors.bone),
+            ),
+            backgroundColor: AppColors.panelHi,
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: _checking ? null : _check,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'ACTUALIZACIONES',
+                style: AppText.label(9, color: AppColors.muted),
+              ),
+            ),
+            if (_checking)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  valueColor: AlwaysStoppedAnimation(AppColors.accent),
+                ),
+              )
+            else
+              Text(
+                'BUSCAR ACTUALIZACIONES',
+                style: AppText.mono(12, color: AppColors.accent, weight: FontWeight.w700),
+              ),
+          ],
+        ),
       ),
     );
   }
