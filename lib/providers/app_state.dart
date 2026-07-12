@@ -26,6 +26,28 @@ enum ConnectionStatus { disconnected, connecting, remote }
 /// Type filter applied by the explorer's filter button.
 enum FileTypeFilter { all, folders, filesOnly }
 
+/// Lifecycle of a file download. [done] and [error] are terminal states that
+/// stay on screen (as the explorer's result bar) until the user dismisses them.
+enum DownloadPhase { idle, scanning, transferring, done, error }
+
+/// One unit of work in a download plan: a directory to create, or a file to
+/// stream from [srcPath] (remote or local) to [destPath] on the device.
+class _DownloadItem {
+  _DownloadItem({
+    required this.srcPath,
+    required this.destPath,
+    required this.name,
+    required this.isDirectory,
+    this.size = 0,
+  });
+
+  final String srcPath;
+  final String destPath;
+  final String name;
+  final bool isDirectory;
+  final int size;
+}
+
 class TerminalSession {
   final String id;
   String name;
@@ -1085,14 +1107,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.terminal.paste(text);
   }
 
-  Future<SftpClient> _getSftpClient(TerminalSession session) async {
-    if (session.sftpClient != null) {
-      return session.sftpClient!;
-    }
-    if (session.sshClient == null) {
+  /// The session's SFTP channel, opening one on demand. Pass [fresh] to force a
+  /// new channel: a cached client can belong to a connection that has since
+  /// dropped, and every operation on it then hangs instead of failing.
+  Future<SftpClient> _getSftpClient(TerminalSession session,
+      {bool fresh = false}) async {
+    final ssh = session.sshClient;
+    if (ssh == null || ssh.isClosed) {
+      session.sftpClient = null;
       throw Exception('El cliente SSH no está conectado');
     }
-    final sftp = await session.sshClient!.sftp().timeout(const Duration(seconds: 5));
+    if (!fresh && session.sftpClient != null) {
+      return session.sftpClient!;
+    }
+    final sftp = await ssh.sftp().timeout(const Duration(seconds: 10));
     session.sftpClient = sftp;
     return sftp;
   }
@@ -1652,17 +1680,74 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   bool get clipboardIsMove => _clipboardIsMove;
 
   // ---- Download state -------------------------------------------------------
-  // Progress of an in-flight SSH → local download. [_downloadCurrent] and
-  // [_downloadTotal] count top-level entries so the bar ticks once per item.
-  // [_downloadCurrentName] is the entry name shown in the progress bar.
-  bool _isDownloading = false;
-  bool get isDownloading => _isDownloading;
-  int _downloadCurrent = 0;
-  int _downloadTotal = 0;
-  int get downloadCurrent => _downloadCurrent;
-  int get downloadTotal => _downloadTotal;
+  // A download runs in two phases: first the selection is walked (over SFTP or
+  // the local filesystem) to build the full list of files to copy, then those
+  // files are streamed to disk. Both phases publish progress here so the
+  // explorer can show a real bar (bytes, not just "item 1 of 2"), and the
+  // terminal result — success or the per-file failures — stays in
+  // [_downloadPhase] until the user dismisses it, so a download that finished
+  // while the user was on another tab is still visible when they come back.
+  DownloadPhase _downloadPhase = DownloadPhase.idle;
+  DownloadPhase get downloadPhase => _downloadPhase;
+  bool get isDownloading =>
+      _downloadPhase == DownloadPhase.scanning ||
+      _downloadPhase == DownloadPhase.transferring;
+
+  int _downloadFilesDone = 0;
+  int _downloadFilesTotal = 0;
+  int get downloadFilesDone => _downloadFilesDone;
+  int get downloadFilesTotal => _downloadFilesTotal;
+
+  int _downloadBytesDone = 0;
+  int _downloadBytesTotal = 0;
+  int get downloadBytesDone => _downloadBytesDone;
+  int get downloadBytesTotal => _downloadBytesTotal;
+
   String _downloadCurrentName = '';
   String get downloadCurrentName => _downloadCurrentName;
+
+  String _downloadDestDir = '';
+  String get downloadDestDir => _downloadDestDir;
+
+  String _downloadError = '';
+  String get downloadError => _downloadError;
+
+  List<String> _downloadFailures = const [];
+  List<String> get downloadFailures => _downloadFailures;
+
+  bool _downloadCancelled = false;
+
+  /// Fraction of the transfer that is done, or null while the size of the job
+  /// is still unknown (scanning) — the bar shows an indeterminate spinner then.
+  double? get downloadProgress {
+    if (_downloadPhase == DownloadPhase.scanning) return null;
+    if (_downloadBytesTotal > 0) {
+      return (_downloadBytesDone / _downloadBytesTotal).clamp(0.0, 1.0);
+    }
+    if (_downloadFilesTotal > 0) {
+      return (_downloadFilesDone / _downloadFilesTotal).clamp(0.0, 1.0);
+    }
+    return null;
+  }
+
+  /// Ask the in-flight download to stop. It finishes the chunk it is on, drops
+  /// the partial file and settles into [DownloadPhase.done] with whatever it
+  /// had already written.
+  void cancelDownload() {
+    if (!isDownloading) return;
+    _downloadCancelled = true;
+    notifyListeners();
+  }
+
+  /// Clear the finished/failed result bar.
+  void dismissDownloadStatus() {
+    if (isDownloading) return;
+    if (_downloadPhase == DownloadPhase.idle) return;
+    _downloadPhase = DownloadPhase.idle;
+    _downloadFailures = const [];
+    _downloadError = '';
+    notifyListeners();
+  }
 
   void setFileSearchQuery(String query) {
     if (_fileSearchQuery == query) return;
@@ -1955,28 +2040,39 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// `/storage/emulated/0` on Android). No-op off Android.
   Future<void> ensureStoragePermission() => _ensureStoragePermission();
 
-  /// Download the selected remote or local entries to a local folder. Pass [destDir]
-  /// to save to a specific directory the user chose; when null, falls back to the
-  /// public Downloads folder. Progress is surfaced through [isDownloading],
-  /// [downloadCurrent], [downloadTotal], and [downloadCurrentName] so the
-  /// explorer can show a bar.
+  /// Download the selected remote (SFTP) or local entries into a local folder.
+  /// Pass [destDir] to save into the folder the user picked; when null it falls
+  /// back to the public Downloads folder.
+  ///
+  /// The selection is first walked to build the complete file list (so the
+  /// progress bar knows the real byte total up front), then each file is
+  /// *streamed* to a `.part` file and renamed into place, so an interrupted
+  /// download never leaves a truncated file that looks complete. A file that
+  /// fails (permissions, a broken symlink, a vanished file) is recorded in
+  /// [downloadFailures] and the rest of the batch keeps going — one bad file no
+  /// longer aborts the whole download half-way through.
   Future<void> downloadSelection({String? destDir}) async {
     final session = activeSession;
     final entries = _selectedEntries;
-    if (session == null || entries.isEmpty) {
-      return;
-    }
+    if (session == null || entries.isEmpty || isDownloading) return;
 
-    // Verify remote dependencies if remote
-    if (session.connectionStatus == ConnectionStatus.remote && session.sshClient == null) {
+    final isRemote = session.connectionStatus == ConnectionStatus.remote;
+    if (isRemote && (session.sshClient == null || session.sshClient!.isClosed)) {
+      _finishDownloadWithError('La sesión SSH no está conectada.');
       return;
     }
 
     _selectedPaths = const {};
-    _isDownloading = true;
-    _downloadCurrent = 0;
-    _downloadTotal = entries.length;
+    _downloadCancelled = false;
+    _downloadFailures = const [];
+    _downloadError = '';
+    _downloadFilesDone = 0;
+    _downloadFilesTotal = 0;
+    _downloadBytesDone = 0;
+    _downloadBytesTotal = 0;
     _downloadCurrentName = '';
+    _downloadDestDir = '';
+    _downloadPhase = DownloadPhase.scanning;
     notifyListeners();
 
     try {
@@ -1985,7 +2081,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // Destination: the folder the user picked, or — as a fallback — the
       // public Downloads/KALA on Android, ~/Downloads/KALA elsewhere.
       final String finalDir;
-      if (destDir != null) {
+      if (destDir != null && destDir.isNotEmpty) {
         finalDir = destDir;
       } else if (Platform.isAndroid) {
         finalDir = '/storage/emulated/0/Download/KALA';
@@ -1993,80 +2089,302 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         final base = await getApplicationDocumentsDirectory();
         finalDir = '${base.path}/Downloads/KALA';
       }
-      await Directory(finalDir).create(recursive: true);
+      _downloadDestDir = finalDir;
 
-      if (session.connectionStatus == ConnectionStatus.remote) {
-        final sftp = await _getSftpClient(session);
-        for (final entry in entries) {
-          _downloadCurrentName = entry.name;
-          notifyListeners();
-          await _downloadEntry(
-              sftp, entry.path, entry.isDirectory, '$finalDir/${entry.name}');
-          _downloadCurrent++;
-          notifyListeners();
-        }
-      } else {
-        // Local download (export files/folders from Alpine sandbox to shared storage)
-        for (final entry in entries) {
-          _downloadCurrentName = entry.name;
-          notifyListeners();
-          await _downloadEntryLocal(
-              entry.path, entry.isDirectory, '$finalDir/${entry.name}');
-          _downloadCurrent++;
-          notifyListeners();
+      try {
+        await Directory(finalDir).create(recursive: true);
+        // create() succeeds on a read-only path on some Android volumes; only a
+        // real write proves the folder is usable, and failing here (instead of
+        // on the first file) keeps the error understandable.
+        final probe = File('$finalDir/.kala_write_test');
+        await probe.writeAsBytes(const [0]);
+        await probe.delete();
+      } catch (e) {
+        throw Exception(
+            'No se puede escribir en $finalDir. Concede el permiso de '
+            'almacenamiento o elige otra carpeta.');
+      }
+
+      // A cached SFTP client can belong to a connection that has since dropped;
+      // ask for a fresh one so a stale handle can't hang the download.
+      final sftp = isRemote ? await _getSftpClient(session, fresh: true) : null;
+
+      // ---- Phase 1: plan ----------------------------------------------------
+      final plan = <_DownloadItem>[];
+      for (final entry in entries) {
+        if (_downloadCancelled) break;
+        _downloadCurrentName = entry.name;
+        notifyListeners();
+        final dest = _childPath(finalDir, entry.name, Platform.pathSeparator);
+        if (sftp != null) {
+          await _planRemote(sftp, entry.path, dest, plan);
+        } else {
+          await _planLocal(entry.path, dest, plan);
         }
       }
 
-      session.terminal
-          .write('✓ ${entries.length} elemento(s) descargado(s) → $finalDir\r\n');
-    } catch (e) {
-      activeSession?.terminal.write('Error al descargar: $e\r\n');
-      session.sftpClient = null;
-    } finally {
-      _isDownloading = false;
+      _downloadFilesTotal = plan.where((i) => !i.isDirectory).length;
+      _downloadBytesTotal =
+          plan.fold<int>(0, (sum, i) => sum + (i.isDirectory ? 0 : i.size));
+      _downloadPhase = DownloadPhase.transferring;
       notifyListeners();
+
+      // ---- Phase 2: transfer ------------------------------------------------
+      var settledBytes = 0;
+      for (final item in plan) {
+        if (_downloadCancelled) break;
+
+        if (item.isDirectory) {
+          try {
+            await Directory(item.destPath).create(recursive: true);
+          } catch (e) {
+            _recordDownloadFailure(item.srcPath, e);
+          }
+          continue;
+        }
+
+        _downloadCurrentName = item.name;
+        notifyListeners();
+        try {
+          await _downloadFile(sftp, item, onBytes: (n) {
+            _downloadBytesDone = settledBytes + n;
+            _notifyDownloadProgress();
+          });
+          _downloadFilesDone++;
+        } catch (e) {
+          _recordDownloadFailure(item.srcPath, e);
+        }
+        // Whether it landed or failed, this file is settled: charge its full
+        // size so the bar keeps advancing monotonically.
+        settledBytes += item.size;
+        _downloadBytesDone = settledBytes;
+        notifyListeners();
+      }
+
+      _downloadCurrentName = '';
+      _downloadPhase = DownloadPhase.done;
+
+      final ok = _downloadFilesDone;
+      final failed = _downloadFailures.length;
+      if (_downloadCancelled) {
+        session.terminal.write(
+            'Descarga cancelada — $ok archivo(s) guardado(s) en $finalDir\r\n');
+      } else if (failed > 0) {
+        session.terminal.write('✓ $ok archivo(s) → $finalDir '
+            '($failed con errores)\r\n');
+      } else {
+        session.terminal.write('✓ $ok archivo(s) → $finalDir\r\n');
+      }
+      notifyListeners();
+    } catch (e) {
+      // The SFTP channel may be the thing that broke; drop it so the next
+      // operation opens a fresh one.
+      session.sftpClient = null;
+      session.terminal.write('Error al descargar: ${_briefError(e)}\r\n');
+      _finishDownloadWithError(_briefError(e));
     }
   }
 
-  // Recursively copy a local file or directory.
-  Future<void> _downloadEntryLocal(String srcPath, bool isDirectory, String destPath) async {
-    if (!isDirectory) {
-      final srcFile = File(srcPath);
-      if (await srcFile.exists()) {
-        await srcFile.copy(destPath);
-      }
-      return;
-    }
-    await Directory(destPath).create(recursive: true);
-    final srcDir = Directory(srcPath);
-    if (await srcDir.exists()) {
-      await for (final entity in srcDir.list(recursive: false)) {
-        final name = entity.path.split('/').last;
-        final isDir = (await entity.stat()).type == FileSystemEntityType.directory;
-        await _downloadEntryLocal(entity.path, isDir, '$destPath/$name');
-      }
-    }
+  void _finishDownloadWithError(String message) {
+    _downloadPhase = DownloadPhase.error;
+    _downloadError = message;
+    _downloadCurrentName = '';
+    notifyListeners();
   }
 
-  // Recursively download a remote entry (file or directory) via SFTP.
-  Future<void> _downloadEntry(SftpClient sftp, String remotePath,
-      bool isDirectory, String localPath) async {
-    if (!isDirectory) {
-      final f = await sftp.open(remotePath, mode: SftpFileOpenMode.read);
-      final bytes = await f.readBytes();
-      await f.close();
-      await File(localPath).writeAsBytes(bytes);
+  void _recordDownloadFailure(String path, Object error) {
+    _downloadFailures = [
+      ..._downloadFailures,
+      '${path.split('/').last}: ${_briefError(error)}',
+    ];
+  }
+
+  static String _briefError(Object error) {
+    var msg = error.toString();
+    if (msg.startsWith('Exception: ')) msg = msg.substring(11);
+    return msg.length > 160 ? '${msg.substring(0, 157)}…' : msg;
+  }
+
+  // Progress ticks arrive per 32KB chunk; rebuilding the explorer that often
+  // would starve the transfer itself, so throttle the UI to ~10fps.
+  DateTime _lastDownloadTick = DateTime.fromMillisecondsSinceEpoch(0);
+  void _notifyDownloadProgress() {
+    final now = DateTime.now();
+    if (now.difference(_lastDownloadTick) < const Duration(milliseconds: 100)) {
       return;
     }
-    await Directory(localPath).create(recursive: true);
-    for (final item in await sftp.listdir(remotePath)) {
-      if (item.filename == '.' || item.filename == '..') continue;
-      await _downloadEntry(
+    _lastDownloadTick = now;
+    notifyListeners();
+  }
+
+  static const Duration _sftpOpTimeout = Duration(seconds: 20);
+  // Idle timeout *between* chunks — a big file may legitimately take minutes,
+  // but a silent server for this long means the connection is gone.
+  static const Duration _sftpStallTimeout = Duration(seconds: 45);
+
+  // Walk a remote entry, appending the directories to create and the files to
+  // fetch. `stat` (which follows symlinks) decides the type: the `listdir`
+  // attributes report a symlinked directory as a plain link, and treating that
+  // as a file used to blow up the whole download.
+  Future<void> _planRemote(
+      SftpClient sftp, String srcPath, String destPath, List<_DownloadItem> out,
+      {int depth = 0}) async {
+    if (_downloadCancelled || depth > 32) return;
+    final name = srcPath.split('/').last;
+
+    SftpFileAttrs attrs;
+    try {
+      attrs = await sftp.stat(srcPath).timeout(_sftpOpTimeout);
+    } catch (e) {
+      _recordDownloadFailure(srcPath, e);
+      return;
+    }
+
+    if (attrs.isDirectory) {
+      out.add(_DownloadItem(
+          srcPath: srcPath, destPath: destPath, name: name, isDirectory: true));
+      final List<SftpName> items;
+      try {
+        items = await sftp.listdir(srcPath).timeout(_sftpOpTimeout);
+      } catch (e) {
+        _recordDownloadFailure(srcPath, e);
+        return;
+      }
+      for (final item in items) {
+        if (item.filename == '.' || item.filename == '..') continue;
+        await _planRemote(
           sftp,
-          '$remotePath/${item.filename}'.replaceAll('//', '/'),
-          item.attr.isDirectory,
-          '$localPath/${item.filename}');
+          _childPath(srcPath, item.filename, '/'),
+          _childPath(destPath, item.filename, Platform.pathSeparator),
+          out,
+          depth: depth + 1,
+        );
+      }
+      return;
     }
+
+    // Sockets, pipes and devices aren't downloadable; skip them silently rather
+    // than failing the batch on them.
+    if (attrs.type != null && !attrs.isFile) return;
+
+    out.add(_DownloadItem(
+      srcPath: srcPath,
+      destPath: destPath,
+      name: name,
+      isDirectory: false,
+      size: attrs.size ?? 0,
+    ));
+    _downloadFilesTotal = out.where((i) => !i.isDirectory).length;
+    _notifyDownloadProgress();
+  }
+
+  Future<void> _planLocal(
+      String srcPath, String destPath, List<_DownloadItem> out,
+      {int depth = 0}) async {
+    if (_downloadCancelled || depth > 32) return;
+    final name = srcPath.split(Platform.pathSeparator).last;
+
+    final FileSystemEntityType type;
+    try {
+      type = await FileSystemEntity.type(srcPath); // follows symlinks
+    } catch (e) {
+      _recordDownloadFailure(srcPath, e);
+      return;
+    }
+
+    if (type == FileSystemEntityType.directory) {
+      out.add(_DownloadItem(
+          srcPath: srcPath, destPath: destPath, name: name, isDirectory: true));
+      try {
+        for (final entity in Directory(srcPath).listSync(followLinks: false)) {
+          final child = entity.path.split(Platform.pathSeparator).last;
+          await _planLocal(
+            entity.path,
+            _childPath(destPath, child, Platform.pathSeparator),
+            out,
+            depth: depth + 1,
+          );
+        }
+      } catch (e) {
+        _recordDownloadFailure(srcPath, e);
+      }
+      return;
+    }
+
+    if (type != FileSystemEntityType.file) return;
+
+    var size = 0;
+    try {
+      size = await File(srcPath).length();
+    } catch (_) {/* unreadable size — still try to copy it */}
+    out.add(_DownloadItem(
+      srcPath: srcPath,
+      destPath: destPath,
+      name: name,
+      isDirectory: false,
+      size: size,
+    ));
+    _downloadFilesTotal = out.where((i) => !i.isDirectory).length;
+    _notifyDownloadProgress();
+  }
+
+  // Stream one file to disk. Writes to `<dest>.part` and renames on success, so
+  // a cancelled or broken transfer can never be mistaken for a complete file.
+  Future<void> _downloadFile(SftpClient? sftp, _DownloadItem item,
+      {required void Function(int bytesRead) onBytes}) async {
+    final dest = File(item.destPath);
+    await dest.parent.create(recursive: true);
+
+    // A directory sitting where the file must go would make rename() fail.
+    if (await Directory(item.destPath).exists()) {
+      await Directory(item.destPath).delete(recursive: true);
+    }
+
+    final part = File('${item.destPath}.part');
+    final sink = part.openWrite();
+    var written = 0;
+    var completed = false;
+    try {
+      final Stream<List<int>> source;
+      SftpFile? handle;
+      if (sftp != null) {
+        handle = await sftp
+            .open(item.srcPath, mode: SftpFileOpenMode.read)
+            .timeout(_sftpOpTimeout);
+        source = handle.read();
+      } else {
+        source = File(item.srcPath).openRead();
+      }
+
+      try {
+        await for (final chunk in source.timeout(_sftpStallTimeout)) {
+          if (_downloadCancelled) break;
+          sink.add(chunk);
+          written += chunk.length;
+          onBytes(written);
+        }
+        completed = !_downloadCancelled;
+      } finally {
+        await handle?.close();
+      }
+      await sink.flush();
+    } finally {
+      // close() rethrows whatever the sink swallowed, so it goes first — but the
+      // .part file must never outlive a failed or cancelled transfer either way.
+      try {
+        await sink.close();
+      } finally {
+        if (!completed) await _deleteQuietly(part);
+      }
+    }
+
+    await part.rename(item.destPath);
+  }
+
+  static Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {/* best effort */}
   }
 
   /// Send a `cd` into the active SSH session's shell and jump to the terminal
