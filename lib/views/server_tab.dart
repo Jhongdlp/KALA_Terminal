@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../services/server_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../widgets/swiss_gauge_chart.dart';
 
 /// Server console: pick a saved SSH server (GCP-console style selector in the
 /// header), then audit and manage it — monitor (CPU/RAM/disk/services) plus
@@ -716,12 +717,52 @@ class _ServerTabState extends State<ServerTab> {
     final m = server.monitor;
     return _sectionList([
       if (m.loaded) ...[
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Text(
-            '${m.hostname.toUpperCase()} · ${m.osInfo}',
-            style: AppText.mono(9, color: AppColors.muted, spacing: 1.0),
-            overflow: TextOverflow.ellipsis,
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.panel,
+            border: Border.all(color: AppColors.hairline),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.dns_outlined, size: 16, color: AppColors.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      m.hostname.toUpperCase(),
+                      style: AppText.mono(11,
+                          color: AppColors.bone, weight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      m.osInfo,
+                      style: AppText.mono(8.5, color: AppColors.muted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.green,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.green.withOpacity(0.4),
+                      blurRadius: 4,
+                      spreadRadius: 1,
+                    )
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -730,25 +771,28 @@ class _ServerTabState extends State<ServerTab> {
         physics: const NeverScrollableScrollPhysics(),
         crossAxisCount: 3,
         crossAxisSpacing: 10,
-        childAspectRatio: 0.9,
+        childAspectRatio: 0.72,
         children: [
-          _metricCard(
-            'CARGA CPU',
-            m.loaded ? m.cpuLoad.toStringAsFixed(2) : '…',
-            m.cpuLoad / 4.0,
-            m.cpuLoad > 3.0 ? AppColors.danger : AppColors.accent,
+          SwissGaugeChart(
+            value: m.cpuLoad / 4.0,
+            label: 'CARGA CPU',
+            valueText: m.loaded ? m.cpuLoad.toStringAsFixed(2) : '…',
+            detailsText: m.loaded ? 'PROMEDIO' : '…',
+            color: m.cpuLoad > 3.0 ? AppColors.danger : AppColors.accent,
           ),
-          _metricCard(
-            'MEMORIA RAM',
-            m.loaded ? m.ramText : '…',
-            m.ramPercent,
-            m.ramPercent > 0.85 ? AppColors.danger : AppColors.accent,
+          SwissGaugeChart(
+            value: m.ramPercent,
+            label: 'MEMORIA RAM',
+            valueText: m.loaded ? '${(m.ramPercent * 100).toStringAsFixed(0)}%' : '…',
+            detailsText: m.loaded ? m.ramText.replaceAll('MB', 'M') : '…',
+            color: m.ramPercent > 0.85 ? AppColors.danger : AppColors.accent,
           ),
-          _metricCard(
-            'DISCO',
-            m.loaded ? m.diskText : '…',
-            m.diskPercent,
-            m.diskPercent > 0.9 ? AppColors.danger : AppColors.accent,
+          SwissGaugeChart(
+            value: m.diskPercent,
+            label: 'DISCO',
+            valueText: m.loaded ? '${(m.diskPercent * 100).toStringAsFixed(0)}%' : '…',
+            detailsText: m.loaded ? m.diskText : '…',
+            color: m.diskPercent > 0.9 ? AppColors.danger : AppColors.accent,
           ),
         ],
       ),
@@ -764,36 +808,6 @@ class _ServerTabState extends State<ServerTab> {
         ],
       ),
     ]);
-  }
-
-  Widget _metricCard(String title, String value, double progress, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style: AppText.label(9, color: AppColors.muted, spacing: 1.0)),
-          const SizedBox(height: 8),
-          Text(value,
-              style: AppText.mono(12,
-                  color: AppColors.bone, weight: FontWeight.w700),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis),
-          const Spacer(),
-          LinearProgressIndicator(
-            value: progress.clamp(0.0, 1.0),
-            backgroundColor: AppColors.ink,
-            color: color,
-            minHeight: 4,
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _serviceRow(
