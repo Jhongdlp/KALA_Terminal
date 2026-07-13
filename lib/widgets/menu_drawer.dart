@@ -80,7 +80,7 @@ class MenuDrawer extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'KALA TERMINAL v1.3.4',
+                    'KALA TERMINAL v2.3.1',
                     style: AppText.mono(8, color: AppColors.muted),
                   ),
                   const SizedBox(height: 4),

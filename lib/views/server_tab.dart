@@ -112,8 +112,58 @@ class _ServerTabState extends State<ServerTab> {
 
     return ListView(
       children: [
-        const ScreenHeader('SERVIDOR',
-            eyebrow: 'CONSOLA DE ADMINISTRACIÓN Y AUDITORÍA'),
+        ScreenHeader(
+          'SERVIDOR',
+          eyebrow: 'CONSOLA DE ADMINISTRACIÓN Y AUDITORÍA',
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.accent, width: 1.5),
+              color: AppColors.panel,
+            ),
+            child: Icon(
+              Icons.analytics_outlined,
+              color: AppColors.accent,
+              size: 24,
+            ),
+          ),
+        ),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.panel,
+            border: Border(
+              left: BorderSide(color: AppColors.accent, width: 3),
+              top: BorderSide(color: AppColors.hairline),
+              right: BorderSide(color: AppColors.hairline),
+              bottom: BorderSide(color: AppColors.hairline),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.monitor_heart_outlined, color: AppColors.accent, size: 18),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'MODO AUDITORÍA Y ANALÍTICAS',
+                      style: AppText.mono(9, color: AppColors.accent, weight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Selecciona un servidor para monitorizar el rendimiento (CPU/RAM/disco), ver estadísticas y administrar contenedores Docker.',
+                      style: AppText.body(9.5, color: AppColors.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
         if (active != null && !active.isLocal) ...[
           SwissPanel(
             title: 'CONEXIÓN ACTIVA',
@@ -362,6 +412,8 @@ class _ServerTabState extends State<ServerTab> {
             ),
           ),
           const SizedBox(width: 8),
+          MonoTag('AUDITORÍA', bordered: true, color: AppColors.accent),
+          const SizedBox(width: 6),
           if (server.serverVersion != null) ...[
             MonoTag('v${server.serverVersion}', bordered: true),
             const SizedBox(width: 6),

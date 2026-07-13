@@ -9,15 +9,14 @@
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20Linux-green)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-KALA turns your phone into a real development machine. It combines a multi-session terminal emulator, an SSH connection manager, a local/remote file explorer and a syntax-highlighting code editor behind a single dark, IDE-style interface.
+KALA turns your phone into a real development machine. It combines a multi-session terminal emulator, an SSH connection manager, a remote file explorer and a syntax-highlighting code editor behind a single dark, IDE-style interface.
 
 ## ✨ Features
 
-- **Real Linux terminal on Android** — not a fake shell. KALA bundles [proot](https://proot-me.github.io/) and an [Alpine Linux](https://alpinelinux.org/) mini rootfs, so the local terminal is a full userland with `apk` package management. Install `git`, `python`, `nodejs`… directly on your phone, no root required.
-- **Multi-session terminals** — run several local and SSH sessions side by side, switch between them with one tap, rename and close them like browser tabs.
-- **Image pasting in the terminal** — paste images directly from clipboard or keyboards like Gboard. It automatically saves/uploads them (via SFTP for remote sessions) as `pasted_image_timestamp.png` in the active directory, types the filename in the terminal prompt, and refreshes the explorer.
 - **SSH connection manager** — save connection profiles (host, port, user, password or private key). Secrets are stored in the Android Keystore / libsecret via secure storage, never in plain text.
-- **Dual local/remote file explorer** — browse the local filesystem or the remote one over SFTP with the same UI. Open, navigate and edit files wherever they live.
+- **Multi-session terminals** — run several SSH sessions side by side, switch between them with one tap, rename and close them like browser tabs.
+- **Image pasting in the terminal** — paste images directly from clipboard or keyboards like Gboard. It automatically uploads them via SFTP as `pasted_image_timestamp.png` in the active directory, types the filename in the terminal prompt, and refreshes the explorer.
+- **Remote file explorer** — browse the remote filesystem over SFTP. Open, navigate and edit files.
 - **Code editor** — powered by [re_editor](https://pub.dev/packages/re_editor) with syntax highlighting, dirty-state tracking, and transparent save-back over SFTP for remote files.
 - **Unified Cloud-Console Server Dashboard** — monitor system resources (CPU, RAM, Disk, services) and fully manage Docker containers, images, volumes, networks, compose, and system configurations.
 - **Native Office and external document viewer** — open Word, Excel, PowerPoint, EPUB, ZIP, and APK files natively using the system's apps. Remote files are downloaded to temporary files and cleaned up automatically.
@@ -63,7 +62,7 @@ flutter build linux        # Linux
 
 ### A note on Android `targetSdk`
 
-`targetSdk` is intentionally pinned to **28** in `android/app/build.gradle.kts`. From API 29 onward Android blocks executing binaries from the app's data directory, which breaks the bundled proot/Alpine terminal. Please don't raise it without reading the comment in that file first.
+`targetSdk` is intentionally pinned to **28** in `android/app/build.gradle.kts` for legacy shared storage compatibility.
 
 ## 🏗 Architecture overview
 
@@ -74,8 +73,7 @@ lib/
 │   └── app_state.dart     # Single ChangeNotifier holding ALL app state
 ├── models/                # ConnectionProfile, session/file models
 ├── services/
-│   ├── distro_service.dart    # proot + Alpine rootfs install & bootstrap
-│   ├── secure_store.dart      # Keystore/libsecret-backed secret storage
+│   ├── secure_store.dart      # Keystore/libsecret-backed secure storage
 │   └── background_service.dart
 ├── theme/                 # Dark IDE theme + editor highlight themes
 ├── views/                 # One file per tab (terminal, explorer, editor…)
@@ -85,8 +83,8 @@ lib/
 Key design decisions:
 
 - **Single source of truth**: all state lives in `AppState` (`ChangeNotifier` + `provider`). New stateful features should extend `AppState`, not add local widget state that dies on tab switches.
-- **Sessions**: `AppState` holds a list of `TerminalSession`s, each owning its own `xterm.Terminal` plus either a local PTY (`flutter_pty`) or an SSH client (`dartssh2`). Only one session is active at a time.
-- **Local/remote duality**: file listing, navigation and editing branch on the session's `ConnectionStatus` — `dart:io` locally, SFTP remotely — and normalize into the same models. New file/editor features must follow this dual-path pattern.
+- **Sessions**: `AppState` holds a list of `TerminalSession`s, each owning its own `xterm.Terminal` plus an SSH client (`dartssh2`). Only one session is active at a time.
+- **SFTP Integration**: file listing, navigation and editing are performed remotely over SFTP.
 
 See [CLAUDE.md](CLAUDE.md) for a deeper architecture walkthrough.
 
@@ -114,8 +112,6 @@ This project is licensed under the [MIT License](LICENSE).
 
 | Component | License | Use |
 |-----------|---------|-----|
-| [proot](https://github.com/proot-me/proot) (prebuilt binary in `assets/distro/`) | GPL-2.0 | User-space chroot for the Android terminal |
-| [Alpine Linux mini rootfs](https://alpinelinux.org/) (`assets/distro/`) | Various (MIT/GPL per package) | Local Linux userland |
 | [Cascadia Code](https://github.com/microsoft/cascadia-code) (`assets/fonts/`) | SIL OFL 1.1 | Terminal/editor font |
 
 These components are distributed alongside the app under their own licenses.

@@ -22,7 +22,8 @@ class ScreenHeader extends StatelessWidget {
   final String title;
   final String? eyebrow;
   final Widget? trailing;
-  const ScreenHeader(this.title, {super.key, this.eyebrow, this.trailing});
+  final Widget? leading;
+  const ScreenHeader(this.title, {super.key, this.eyebrow, this.trailing, this.leading});
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +32,10 @@ class ScreenHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          if (leading != null) ...[
+            leading!,
+            const SizedBox(width: 12),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
