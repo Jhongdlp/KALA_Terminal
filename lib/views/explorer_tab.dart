@@ -17,6 +17,9 @@ class ExplorerTab extends StatefulWidget {
 class _ExplorerTabState extends State<ExplorerTab> {
   late final TextEditingController _searchController;
   bool _searchOpen = false;
+  // Last phase this tab rendered, so the "download finished" toast fires once
+  // on the transition instead of on every rebuild.
+  DownloadPhase _lastDownloadPhase = DownloadPhase.idle;
 
   @override
   void initState() {
@@ -57,14 +60,9 @@ class _ExplorerTabState extends State<ExplorerTab> {
         (s) => s.connectionStatus == ConnectionStatus.remote);
     final canNavigateBack =
         context.select<AppState, bool>((s) => s.canNavigateBack);
-    final isDownloading =
-        context.select<AppState, bool>((s) => s.isDownloading);
-    final downloadCurrent =
-        context.select<AppState, int>((s) => s.downloadCurrent);
-    final downloadTotal =
-        context.select<AppState, int>((s) => s.downloadTotal);
-    final downloadCurrentName =
-        context.select<AppState, String>((s) => s.downloadCurrentName);
+    final downloadPhase =
+        context.select<AppState, DownloadPhase>((s) => s.downloadPhase);
+    _onDownloadPhaseChanged(context, downloadPhase);
     // AppColors is a global, mutable palette swapped on theme change; depend on
     // themeChoice so this isolated tab rebuilds and re-reads the new colors.
     context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
@@ -88,8 +86,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
         children: [
           _buildPathBar(context, currentPath, typeFilter, canNavigateBack),
           if (_searchOpen) _buildSearchBar(context, searchQuery),
-          if (isDownloading)
-            _buildDownloadBar(downloadCurrent, downloadTotal, downloadCurrentName)
+          if (downloadPhase != DownloadPhase.idle)
+            _buildDownloadBar(context, downloadPhase)
           else if (selected.isNotEmpty)
             _buildSelectionBar(context, selected, visible, isRemote)
           else if (clipboardCount > 0)
@@ -294,36 +292,190 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
-  Widget _buildDownloadBar(int current, int total, String name) {
-    final progress = total > 0 ? current / total : 0.0;
-    final label = current < total
-        ? 'DESCARGANDO $name… ($current/$total)'
-        : 'DESCARGA COMPLETA';
+  /// The download strip: a live progress bar while files are transferring, and
+  /// — once it finishes — a result bar that stays up (with the destination path
+  /// and any per-file errors) until the user dismisses it, so a download that
+  /// completed while the user was on another tab is still visible when they
+  /// come back.
+  Widget _buildDownloadBar(BuildContext context, DownloadPhase phase) {
+    final state = context.watch<AppState>();
+
+    if (phase == DownloadPhase.done || phase == DownloadPhase.error) {
+      return _buildDownloadResultBar(context, state, phase);
+    }
+
+    final progress = state.downloadProgress;
+    final scanning = phase == DownloadPhase.scanning;
+    final pct = progress == null ? null : (progress * 100).round();
+
+    final String detail;
+    if (scanning) {
+      detail = state.downloadCurrentName.isEmpty
+          ? 'CALCULANDO…'
+          : 'CALCULANDO · ${state.downloadCurrentName}';
+    } else {
+      final counts =
+          '${state.downloadFilesDone}/${state.downloadFilesTotal} archivos';
+      final bytes = state.downloadBytesTotal > 0
+          ? ' · ${_formatBytes(state.downloadBytesDone)} / ${_formatBytes(state.downloadBytesTotal)}'
+          : '';
+      final name = state.downloadCurrentName;
+      detail = name.isEmpty ? '$counts$bytes' : '$name · $counts$bytes';
+    }
+
     return Container(
-      height: 42,
       decoration: BoxDecoration(
-        color: AppColors.panel,
+        color: AppColors.panelHi,
         border:
             Border(bottom: BorderSide(color: AppColors.hairline, width: 1)),
       ),
-      padding: const EdgeInsets.only(left: 12, right: 12),
-      child: Row(
+      padding: const EdgeInsets.only(left: 12, top: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              value: total == 0 ? null : progress,
-              strokeWidth: 1.5,
-              color: AppColors.bone,
-            ),
+          Row(
+            children: [
+              SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  value: scanning ? null : progress,
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      scanning
+                          ? 'PREPARANDO DESCARGA'
+                          : 'DESCARGANDO${pct != null ? ' · $pct%' : ''}',
+                      style:
+                          AppText.mono(9, color: AppColors.bone, spacing: 1.5),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(detail,
+                        style: AppText.mono(9,
+                            color: AppColors.muted, spacing: 0.6),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              _barIcon(Icons.close,
+                  tooltip: 'Cancelar descarga', onTap: state.cancelDownload),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(label,
-                style: AppText.mono(9, color: AppColors.muted, spacing: 1.0),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+            value: scanning ? null : progress,
+            minHeight: 2,
+            backgroundColor: AppColors.hairline,
+            color: AppColors.accent,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDownloadResultBar(
+      BuildContext context, AppState state, DownloadPhase phase) {
+    final failed = state.downloadFailures.length;
+    final isError = phase == DownloadPhase.error;
+    final tint = isError || failed > 0 ? AppColors.danger : AppColors.accent;
+
+    final String title;
+    final String detail;
+    if (isError) {
+      title = 'DESCARGA FALLIDA';
+      detail = state.downloadError;
+    } else {
+      title = failed > 0
+          ? '${state.downloadFilesDone} DESCARGADO(S) · $failed CON ERRORES'
+          : '${state.downloadFilesDone} ARCHIVO(S) DESCARGADO(S)';
+      detail = state.downloadDestDir;
+    }
+
+    return InkWell(
+      onTap: failed > 0 ? () => _showDownloadFailures(context, state) : null,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.panelHi,
+          border: Border(
+            bottom: BorderSide(color: AppColors.hairline, width: 1),
+            left: BorderSide(color: tint, width: 3),
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 10, top: 8, bottom: 8),
+        child: Row(
+          children: [
+            Icon(isError ? Icons.error_outline : Icons.check_circle_outline,
+                size: 15, color: tint),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style:
+                          AppText.mono(9, color: AppColors.bone, spacing: 1.5),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(
+                      failed > 0
+                          ? '$detail — toca para ver los errores'
+                          : detail,
+                      style: AppText.mono(9,
+                          color: AppColors.muted, spacing: 0.6),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            _barIcon(Icons.close,
+                tooltip: 'Cerrar', onTap: state.dismissDownloadStatus),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDownloadFailures(
+      BuildContext context, AppState state) async {
+    final failures = state.downloadFailures;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('ERRORES DE DESCARGA',
+            style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final f in failures)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child:
+                      Text(f, style: AppText.mono(11, color: AppColors.muted)),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('CERRAR',
+                style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
           ),
         ],
       ),
@@ -361,6 +513,47 @@ class _ExplorerTabState extends State<ExplorerTab> {
         ],
       ),
     );
+  }
+
+  /// Toast the outcome the moment a download settles. The result bar keeps the
+  /// details around afterwards; this is the "it actually happened" nudge.
+  void _onDownloadPhaseChanged(BuildContext context, DownloadPhase phase) {
+    if (phase == _lastDownloadPhase) return;
+    final previous = _lastDownloadPhase;
+    _lastDownloadPhase = phase;
+    final settled =
+        phase == DownloadPhase.done || phase == DownloadPhase.error;
+    if (!settled ||
+        (previous != DownloadPhase.transferring &&
+            previous != DownloadPhase.scanning)) {
+      return;
+    }
+
+    final state = context.read<AppState>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final failed = state.downloadFailures.length;
+      final String message;
+      if (phase == DownloadPhase.error) {
+        message = 'Descarga fallida: ${state.downloadError}';
+      } else if (failed > 0) {
+        message =
+            '${state.downloadFilesDone} archivo(s) descargado(s), $failed con errores';
+      } else {
+        message =
+            '${state.downloadFilesDone} archivo(s) descargado(s) en ${state.downloadDestDir}';
+      }
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          content: Text(message,
+              style: AppText.mono(11, color: AppColors.bone),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ));
+    });
   }
 
   /// Ask the user where to save the downloaded files, then kick off the
