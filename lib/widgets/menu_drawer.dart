@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
@@ -79,9 +80,16 @@ class MenuDrawer extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'KALA TERMINAL v2.3.1',
-                    style: AppText.mono(8, color: AppColors.muted),
+                  FutureBuilder<PackageInfo>(
+                    future: PackageInfo.fromPlatform(),
+                    builder: (context, snapshot) {
+                      final info = snapshot.data;
+                      final version = info != null ? '${info.version}+${info.buildNumber}' : '…';
+                      return Text(
+                        'KALA TERMINAL v$version',
+                        style: AppText.mono(8, color: AppColors.muted),
+                      );
+                    },
                   ),
                   const SizedBox(height: 4),
                   Text(
