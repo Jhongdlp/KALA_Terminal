@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -20,6 +21,13 @@ enum ServerSection {
   system,
 }
 
+/// One published port of a container: host port → container port/protocol.
+class PortMapping {
+  final String hostPort; // '8080'
+  final String containerPort; // '80/tcp'
+  const PortMapping(this.hostPort, this.containerPort);
+}
+
 class DockerContainer {
   final String id, name, image, state, status, ports;
   const DockerContainer({
@@ -31,6 +39,47 @@ class DockerContainer {
     required this.ports,
   });
   bool get running => state == 'running';
+  bool get paused => state == 'paused';
+
+  static final RegExp _portRe = RegExp(r':(\d+)->(\d+(?:-\d+)?/\w+)');
+
+  /// Host-published ports parsed from the `docker ps` PORTS column,
+  /// deduplicated (IPv4/IPv6 bindings repeat the same mapping).
+  List<PortMapping> get publishedPorts {
+    final seen = <String>{};
+    final out = <PortMapping>[];
+    for (final m in _portRe.allMatches(ports)) {
+      if (seen.add('${m[1]}->${m[2]}')) {
+        out.add(PortMapping(m[1]!, m[2]!));
+      }
+    }
+    return out;
+  }
+}
+
+/// Detailed view of one container, parsed from `docker inspect`.
+class ContainerDetails {
+  final String id, image, created, startedAt, state, restartPolicy, cmd;
+  final int restartCount, exitCode;
+  final List<String> ports; // '0.0.0.0:8080 → 80/tcp'
+  final List<String> mounts; // 'bind /src → /dst'
+  final List<String> networks; // 'bridge · 172.17.0.2'
+  final List<String> env; // 'KEY=value'
+  const ContainerDetails({
+    required this.id,
+    required this.image,
+    required this.created,
+    required this.startedAt,
+    required this.state,
+    required this.restartPolicy,
+    required this.cmd,
+    required this.restartCount,
+    required this.exitCode,
+    required this.ports,
+    required this.mounts,
+    required this.networks,
+    required this.env,
+  });
 }
 
 class DockerImage {
@@ -252,6 +301,7 @@ class ServerController extends ChangeNotifier {
     lastError = null;
     busy = false;
     loading = false;
+    statsLoading = false;
     monitor = ServerMonitor();
     containers = [];
     containerStats = {};
@@ -627,15 +677,104 @@ fi
               ports: f[5],
             ))
         .toList();
+    // Refresh CPU/MEM figures in the background so the list paints first
+    // (`docker stats --no-stream` takes a couple of seconds).
+    if (containers.any((c) => c.running)) {
+      unawaited(fetchStats(quiet: true));
+    } else {
+      containerStats = {};
+    }
   }
 
-  /// 'start' | 'stop' | 'restart' | 'rm' | 'rm -f'
+  static const Set<String> _containerVerbs = {
+    'start',
+    'stop',
+    'restart',
+    'pause',
+    'unpause',
+    'kill',
+    'rm',
+    'rm -f',
+  };
+
+  /// One of [_containerVerbs].
   Future<String?> containerAction(String id, String verb) async {
+    if (!_containerVerbs.contains(verb)) return 'Acción no válida.';
     final guard = _guardToken(id);
     if (guard != null) return guard;
     final err = await _action(() => runDocker("$verb '$id'"));
     await refresh();
     return err;
+  }
+
+  /// Full detail of one container. Returns the details or an error message.
+  Future<(ContainerDetails?, String?)> inspectContainer(String id) async {
+    final guard = _guardToken(id);
+    if (guard != null) return (null, guard);
+    final r = await runDocker("inspect '$id'");
+    if (!r.ok) return (null, r.errorText);
+    try {
+      final j = ((jsonDecode(r.stdout) as List).first) as Map<String, dynamic>;
+      final state = j['State'] as Map<String, dynamic>? ?? const {};
+      final config = j['Config'] as Map<String, dynamic>? ?? const {};
+      final host = j['HostConfig'] as Map<String, dynamic>? ?? const {};
+      final net = j['NetworkSettings'] as Map<String, dynamic>? ?? const {};
+
+      final ports = <String>[];
+      final seenPorts = <String>{};
+      (net['Ports'] as Map<String, dynamic>? ?? const {})
+          .forEach((cPort, binds) {
+        if (binds is List && binds.isNotEmpty) {
+          for (final b in binds) {
+            final line = '${b['HostIp']}:${b['HostPort']} → $cPort';
+            if (seenPorts.add(line)) ports.add(line);
+          }
+        } else {
+          ports.add('$cPort (sin publicar)');
+        }
+      });
+
+      final mounts = <String>[
+        for (final m in (j['Mounts'] as List? ?? const []))
+          '${m['Type']} ${m['Source'] ?? m['Name'] ?? '?'} → ${m['Destination']}',
+      ];
+      final networks = <String>[
+        for (final e
+            in (net['Networks'] as Map<String, dynamic>? ?? const {}).entries)
+          '${e.key} · ${(e.value as Map)['IPAddress'] ?? '—'}',
+      ];
+      final policy =
+          (host['RestartPolicy'] as Map<String, dynamic>?)?['Name'] as String?;
+      final rawId = j['Id'] as String? ?? id;
+      return (
+        ContainerDetails(
+          id: rawId.length > 12 ? rawId.substring(0, 12) : rawId,
+          image: config['Image'] as String? ?? '',
+          created: _fmtIso(j['Created'] as String?),
+          startedAt: _fmtIso(state['StartedAt'] as String?),
+          state: state['Status'] as String? ?? '',
+          restartPolicy: (policy == null || policy.isEmpty) ? 'no' : policy,
+          cmd: (config['Cmd'] as List?)?.join(' ') ?? '',
+          restartCount: j['RestartCount'] as int? ?? 0,
+          exitCode: state['ExitCode'] as int? ?? 0,
+          ports: ports,
+          mounts: mounts,
+          networks: networks,
+          env: List<String>.from(config['Env'] as List? ?? const []),
+        ),
+        null
+      );
+    } catch (e) {
+      return (null, 'No se pudo interpretar docker inspect: $e');
+    }
+  }
+
+  /// ISO-8601 → 'YYYY-MM-DD HH:MM' local, or '—' for Docker's zero time.
+  static String _fmtIso(String? iso) {
+    final t = iso == null ? null : DateTime.tryParse(iso)?.toLocal();
+    if (t == null || t.year < 2000) return '—';
+    String p(int n) => n.toString().padLeft(2, '0');
+    return '${t.year}-${p(t.month)}-${p(t.day)} ${p(t.hour)}:${p(t.minute)}';
   }
 
   Future<String> fetchLogs(String id, {int tail = 200}) async {
@@ -647,21 +786,32 @@ fi
     return r.ok ? r.stdout : r.errorText;
   }
 
-  Future<void> fetchStats() async {
-    busy = true;
+  /// A stats refresh is in flight (kept apart from [busy] so it never
+  /// disables the action buttons).
+  bool statsLoading = false;
+
+  Future<void> fetchStats({bool quiet = false}) async {
+    if (statsLoading || !dockerAvailable) return;
+    final gen = _generation;
+    statsLoading = true;
     notifyListeners();
     try {
       final r = await runDocker(
           "stats --no-stream --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}'");
+      if (gen != _generation) return;
       if (r.ok) {
         containerStats = {
           for (final f in _parseLines(r.stdout, 4))
             f[0]: 'CPU ${f[1]} · MEM ${f[2]} (${f[3]})',
         };
+      } else if (!quiet) {
+        lastError = r.errorText;
       }
     } finally {
-      busy = false;
-      notifyListeners();
+      if (gen == _generation) {
+        statsLoading = false;
+        notifyListeners();
+      }
     }
   }
 
