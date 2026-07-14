@@ -395,12 +395,39 @@ class _ServerTabState extends State<ServerTab>
   // Phase: ready — console shell
   // ---------------------------------------------------------------------
 
+  Widget _buildSegmentBar(ServerController server) {
+    return Container(
+      decoration: BoxDecoration(
+        border:
+            Border(bottom: BorderSide(color: AppColors.hairline, width: 1)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (int i = 0; i < _sections.length; i++) ...[
+              if (i > 0)
+                Container(width: 1, height: 52, color: AppColors.hairline),
+              _SegmentCell(
+                label: _sections[i].$2,
+                icon: _sections[i].$3,
+                active: server.section == _sections[i].$1,
+                onTap: () => server.setSection(_sections[i].$1),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPanel(
       BuildContext context, AppState state, ServerController server) {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildHeaderBar(context, state, server),
+        _buildSegmentBar(server),
         if (server.needsSudoPassword) _buildSudoBanner(server),
         if (server.lastError != null) _buildErrorBanner(server),
         Expanded(
@@ -2305,6 +2332,48 @@ class _DetailsSheetState extends State<_DetailsSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SegmentCell extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _SegmentCell({
+    required this.label,
+    required this.icon,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = active ? AppColors.ink : AppColors.bone;
+    return Material(
+      color: active ? AppColors.bone : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: 106,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              icon != null
+                  ? Icon(icon, size: 16, color: fg)
+                  : DockerLogo(size: 16, color: active ? fg : kDockerBlue),
+              const SizedBox(height: 5),
+              Text(label,
+                  style: AppText.label(8,
+                      color: fg,
+                      weight: active ? FontWeight.w800 : FontWeight.w600,
+                      spacing: 1.0)),
+            ],
+          ),
+        ),
       ),
     );
   }
