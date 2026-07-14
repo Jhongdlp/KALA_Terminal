@@ -391,6 +391,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kAgentAlerts = 'settings_agent_alerts';
   static const String _kAccentColorHex = 'settings_accent_color_hex';
   static const String _kMonoFontChoice = 'settings_mono_font_choice';
+  static const String _kShortcutLayout = 'settings_shortcut_layout';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -442,6 +443,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   String _monoFontChoice = 'cascadia';
   String get monoFontChoice => _monoFontChoice;
+
+  TerminalShortcutLayout _shortcutLayout = TerminalShortcutLayout.classic;
+  TerminalShortcutLayout get shortcutLayout => _shortcutLayout;
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
@@ -789,6 +793,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _accentColorHex = prefs.getString(_kAccentColorHex) ?? 'auto';
     _monoFontChoice = prefs.getString(_kMonoFontChoice) ?? 'cascadia';
 
+    final shortcutLayoutIdx = prefs.getInt(_kShortcutLayout);
+    if (shortcutLayoutIdx != null &&
+        shortcutLayoutIdx >= 0 &&
+        shortcutLayoutIdx < TerminalShortcutLayout.values.length) {
+      _shortcutLayout = TerminalShortcutLayout.values[shortcutLayoutIdx];
+    }
+
     await _loadSnippets(prefs);
 
     _settingsLoaded = true;
@@ -809,6 +820,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMonoFontChoice, value);
+  }
+
+  Future<void> setShortcutLayout(TerminalShortcutLayout layout) async {
+    if (_shortcutLayout == layout) return;
+    _shortcutLayout = layout;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kShortcutLayout, layout.index);
   }
 
   Future<void> setIconScale(AppIconScale scale) async {

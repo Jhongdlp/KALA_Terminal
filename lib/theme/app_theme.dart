@@ -11,6 +11,9 @@ enum AppThemeChoice { system, light, dark, oled }
 /// and `large` multiply every chrome icon size by 1.25× and 1.5× respectively.
 enum AppIconScale { small, medium, large }
 
+/// User-selectable layout for the terminal smart keyboard keys.
+enum TerminalShortcutLayout { classic, dpadLeft, dpadRight }
+
 /// One full set of chrome colors. The app ships three: the original monochrome
 /// "DARKROOM" dark palette, an inverted "PAPER" light palette, and a true-black
 /// "OLED" variant of the dark theme.

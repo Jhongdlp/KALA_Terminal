@@ -749,10 +749,71 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   // ---- Smart keyboard (extra keys, Termux-style) ---------------------------
 
+  Widget _buildDpad(AppState state) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34, height: 61),
+        const SizedBox(width: 4),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34, height: 28),
+            const SizedBox(height: 5),
+            _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34, height: 28),
+          ],
+        ),
+        const SizedBox(width: 4),
+        _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34, height: 61),
+      ],
+    );
+  }
+
+  Widget _buildScrollableRow1(AppState state) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
+          _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
+          _key('ESC', () => state.sendTerminalInput('\x1b'), width: 36),
+          _key('TAB', () => state.sendTerminalInput('\t'), width: 36),
+          _key('ALT', () => state.sendTerminalInput('\x1b'), width: 36),
+          _key('^C', () => state.sendTerminalInput('\x03'), inverted: true, width: 32),
+          _key('^D', () => state.sendTerminalInput('\x04'), width: 32),
+          _key('y', () => state.sendTerminalInput('y'), inverted: true, width: 26),
+          _key('n', () => state.sendTerminalInput('n'), inverted: true, width: 26),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScrollableRow2(AppState state) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _key('~', () => state.sendTerminalInput('~'), width: 26),
+          _key('/', () => state.sendTerminalInput('/'), width: 26),
+          _key('-', () => state.sendTerminalInput('-'), width: 26),
+          _key('|', () => state.sendTerminalInput('|'), width: 26),
+          _key(r'$', () => state.sendTerminalInput(r'$'), width: 26),
+          _key('&', () => state.sendTerminalInput('&'), width: 26),
+          _key('*', () => state.sendTerminalInput('*'), width: 26),
+          _key('\\', () => state.sendTerminalInput('\\'), width: 26),
+          _key('_', () => state.sendTerminalInput('_'), width: 26),
+          _key('=', () => state.sendTerminalInput('='), width: 26),
+          _key('+', () => state.sendTerminalInput('+'), width: 26),
+          _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76),
+          _key('COMMIT', () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76),
+          _key('ADJUNTAR', () => _attach(state), icon: Icons.attach_file, width: 76),
+          _key('ENLACES', () => _showLinksSheet(state), icon: Icons.link, width: 76),
+        ],
+      ),
+    );
+  }
+
   Widget _buildKeys(AppState state) {
-    // Two fixed rows, each an Expanded Row so every key shares the available
-    // width evenly: the strip is always exactly two lines, never wraps to a
-    // third, and stays compact regardless of screen width.
     return Container(
       decoration: BoxDecoration(
         color: AppColors.ink,
@@ -763,42 +824,90 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         top: false,
         child: Column(
           children: [
-            // Row 1 — modifiers + signals.
-            Row(
-              children: [
-                _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed),
-                _key('SHIFT', state.toggleShift, armed: state.shiftArmed),
-                _key('ESC', () => state.sendTerminalInput('\x1b')),
-                _key('TAB', () => state.sendTerminalInput('\t')),
-                // ALT acts as the Meta prefix: it sends ESC, so pressing ALT
-                // then a letter on the system keyboard yields Alt+<letter>.
-                _key('ALT', () => state.sendTerminalInput('\x1b')),
-                _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
-              ],
-            ),
-            const SizedBox(height: 5),
-            // Row 2 — navigation + Prompts/Commit (moved down from the top
-            // toolbar, in place of the old copy/paste keys) + attach/links.
-            Row(
-              children: [
-                _key('↑', () => state.sendTerminalInput('\x1b[A')),
-                _key('↓', () => state.sendTerminalInput('\x1b[B')),
-                _key('←', () => state.sendTerminalInput('\x1b[D')),
-                _key('→', () => state.sendTerminalInput('\x1b[C')),
-                _key('PROMPTS', () => _showPrompts(state),
-                    icon: Icons.bolt_outlined),
-                _key('COMMIT', () => _showGitSlider(state),
-                    icon: Icons.commit_outlined),
-                _key('ADJUNTAR', () => _attach(state),
-                    icon: Icons.attach_file),
-                _key('ENLACES', () => _showLinksSheet(state),
-                    icon: Icons.link),
-              ],
-            ),
-            // Row 3 — agent mode: only while a full-screen TUI runs (that's
-            // when an agent is driving the screen). Decision keys any TUI
-            // agent understands: Shift+Tab cycles modes, digits pick options
-            // in approval menus, Enter accepts, Esc interrupts.
+            if (state.shortcutLayout == TerminalShortcutLayout.dpadLeft) ...[
+              Row(
+                children: [
+                  _buildDpad(state),
+                  const SizedBox(width: 6),
+                  Container(width: 1, height: 61, color: AppColors.hairline),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildScrollableRow1(state),
+                        const SizedBox(height: 5),
+                        _buildScrollableRow2(state),
+                      ],
+                    ),
+                  ),
+                ],
+              )
+            ] else if (state.shortcutLayout == TerminalShortcutLayout.dpadRight) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildScrollableRow1(state),
+                        const SizedBox(height: 5),
+                        _buildScrollableRow2(state),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(width: 1, height: 61, color: AppColors.hairline),
+                  const SizedBox(width: 6),
+                  _buildDpad(state),
+                ],
+              )
+            ] else ...[
+              // Classic double row layout.
+              // Row 1 — modifiers + signals (Expanded to fit screen width evenly)
+              Row(
+                children: [
+                  _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed),
+                  _key('SHIFT', state.toggleShift, armed: state.shiftArmed),
+                  _key('ESC', () => state.sendTerminalInput('\x1b')),
+                  _key('TAB', () => state.sendTerminalInput('\t')),
+                  _key('ALT', () => state.sendTerminalInput('\x1b')),
+                  _key('^C', () => state.sendTerminalInput('\x03'), inverted: true),
+                ],
+              ),
+              const SizedBox(height: 5),
+              // Row 2 — Horizontally scrollable row including arrows, colleague's extra keys, and actions.
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34),
+                    _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34),
+                    _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34),
+                    _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34),
+                    _key('^D', () => state.sendTerminalInput('\x04'), width: 32),
+                    _key('y', () => state.sendTerminalInput('y'), inverted: true, width: 26),
+                    _key('n', () => state.sendTerminalInput('n'), inverted: true, width: 26),
+                    _key('~', () => state.sendTerminalInput('~'), width: 26),
+                    _key('/', () => state.sendTerminalInput('/'), width: 26),
+                    _key('-', () => state.sendTerminalInput('-'), width: 26),
+                    _key('|', () => state.sendTerminalInput('|'), width: 26),
+                    _key(r'$', () => state.sendTerminalInput(r'$'), width: 26),
+                    _key('&', () => state.sendTerminalInput('&'), width: 26),
+                    _key('*', () => state.sendTerminalInput('*'), width: 26),
+                    _key('\\', () => state.sendTerminalInput('\\'), width: 26),
+                    _key('_', () => state.sendTerminalInput('_'), width: 26),
+                    _key('=', () => state.sendTerminalInput('='), width: 26),
+                    _key('+', () => state.sendTerminalInput('+'), width: 26),
+                    _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76),
+                    _key('COMMIT', () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76),
+                    _key('ADJUNTAR', () => _attach(state), icon: Icons.attach_file, width: 76),
+                    _key('ENLACES', () => _showLinksSheet(state), icon: Icons.link, width: 76),
+                  ],
+                ),
+              ),
+            ],
+            // Row 3 — agent mode: only while a full-screen TUI runs.
             if (_altScreen) ...[
               const SizedBox(height: 5),
               Row(
@@ -827,43 +936,49 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     bool inverted = false,
     bool armed = false,
     IconData? icon,
+    double? width,
+    double height = 28.0,
   }) {
     // `armed` (the live CTRL toggle) wins over the static `inverted` accent.
     final highlighted = armed || inverted;
     final bg = highlighted ? AppColors.bone : Colors.transparent;
     final fg = highlighted ? AppColors.ink : AppColors.bone;
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Material(
-          color: bg,
-          child: InkWell(
-            onTap: onPressed,
-            child: Container(
-              height: 28,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: highlighted ? Colors.transparent : AppColors.hairline,
-                  width: 1,
-                ),
+
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Material(
+        color: bg,
+        child: InkWell(
+          onTap: onPressed,
+          child: Container(
+            height: height,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: highlighted ? Colors.transparent : AppColors.hairline,
+                width: 1,
               ),
-              child: icon != null
-                  ? Icon(icon, size: 15, color: fg)
-                  : Text(
-                      label,
-                      textAlign: TextAlign.center,
-                      style: AppText.mono(11,
-                          color: fg,
-                          weight:
-                              highlighted ? FontWeight.w700 : FontWeight.w500,
-                          spacing: 0.3),
-                    ),
             ),
+            child: icon != null
+                ? Icon(icon, size: 14, color: fg)
+                : Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: AppText.mono(10.5,
+                        color: fg,
+                        weight:
+                            highlighted ? FontWeight.w700 : FontWeight.w500,
+                        spacing: 0.2),
+                  ),
           ),
         ),
       ),
     );
+
+    if (width != null) {
+      return SizedBox(width: width, child: content);
+    }
+    return Expanded(child: content);
   }
 }
 

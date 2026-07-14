@@ -180,6 +180,19 @@ class SettingsTab extends StatelessWidget {
                   onChanged: state.setMonoFontChoice,
                 ),
               ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Text('DISTRIBUCIÓN DE ATAJOS',
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _ShortcutLayoutSelector(
+                  value: state.shortcutLayout,
+                  onChanged: state.setShortcutLayout,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -907,6 +920,50 @@ class _FontSelector extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShortcutLayoutSelector extends StatelessWidget {
+  final TerminalShortcutLayout value;
+  final ValueChanged<TerminalShortcutLayout> onChanged;
+
+  const _ShortcutLayoutSelector({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.panelHi,
+        border: Border.all(color: AppColors.hairline),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<TerminalShortcutLayout>(
+          value: value,
+          dropdownColor: AppColors.panel,
+          iconEnabledColor: AppColors.bone,
+          isExpanded: true,
+          style: AppText.mono(11, color: AppColors.bone),
+          items: const [
+            DropdownMenuItem(
+              value: TerminalShortcutLayout.classic,
+              child: Text('CLÁSICO (DOBLE FILA)'),
+            ),
+            DropdownMenuItem(
+              value: TerminalShortcutLayout.dpadLeft,
+              child: Text('D-PAD A LA IZQUIERDA'),
+            ),
+            DropdownMenuItem(
+              value: TerminalShortcutLayout.dpadRight,
+              child: Text('D-PAD A LA DERECHA'),
+            ),
+          ],
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
         ),
       ),
     );
