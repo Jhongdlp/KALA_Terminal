@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import 'package:open_filex/open_filex.dart';
 import '../models/connection_profile.dart';
 import '../models/prompt_snippet.dart';
+import '../models/terminal_shortcut.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
@@ -392,6 +393,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kAccentColorHex = 'settings_accent_color_hex';
   static const String _kMonoFontChoice = 'settings_mono_font_choice';
   static const String _kShortcutLayout = 'settings_shortcut_layout';
+  static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -446,6 +448,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   TerminalShortcutLayout _shortcutLayout = TerminalShortcutLayout.classic;
   TerminalShortcutLayout get shortcutLayout => _shortcutLayout;
+
+  List<TerminalShortcut> _customShortcuts = [];
+  List<TerminalShortcut> get customShortcuts => _customShortcuts;
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
@@ -791,13 +796,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _agentAlertsEnabled = prefs.getBool(_kAgentAlerts) ?? true;
 
     _accentColorHex = prefs.getString(_kAccentColorHex) ?? 'auto';
-    _monoFontChoice = prefs.getString(_kMonoFontChoice) ?? 'cascadia';
-
     final shortcutLayoutIdx = prefs.getInt(_kShortcutLayout);
     if (shortcutLayoutIdx != null &&
         shortcutLayoutIdx >= 0 &&
         shortcutLayoutIdx < TerminalShortcutLayout.values.length) {
       _shortcutLayout = TerminalShortcutLayout.values[shortcutLayoutIdx];
+    }
+    _monoFontChoice = prefs.getString(_kMonoFontChoice) ?? 'cascadia';
+
+
+    final customShortcutsJson = prefs.getString(_kCustomShortcuts);
+    if (customShortcutsJson != null) {
+      try {
+        final decoded = json.decode(customShortcutsJson) as List<dynamic>;
+        _customShortcuts = decoded
+            .map((item) => TerminalShortcut.fromJson(item as Map<String, dynamic>))
+            .toList();
+      } catch (e) {
+        _customShortcuts = getDefaultShortcuts();
+      }
+    } else {
+      _customShortcuts = getDefaultShortcuts();
     }
 
     await _loadSnippets(prefs);
@@ -828,6 +847,62 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kShortcutLayout, layout.index);
+  }
+
+  List<TerminalShortcut> getDefaultShortcuts() {
+    return [
+      TerminalShortcut(label: '←', value: r'\x1b[D'),
+      TerminalShortcut(label: '↓', value: r'\x1b[B'),
+      TerminalShortcut(label: '↑', value: r'\x1b[A'),
+      TerminalShortcut(label: '→', value: r'\x1b[C'),
+      TerminalShortcut(label: 'TAB', value: r'\t'),
+      TerminalShortcut(label: 'ESC', value: r'\x1b'),
+      TerminalShortcut(label: '^C', value: r'\x03'),
+      TerminalShortcut(label: '^D', value: r'\x04'),
+      TerminalShortcut(label: 'y', value: 'y'),
+      TerminalShortcut(label: 'n', value: 'n'),
+      TerminalShortcut(label: 'clear', value: 'clear\n'),
+    ];
+  }
+
+  Future<void> _saveCustomShortcuts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = json.encode(_customShortcuts.map((s) => s.toJson()).toList());
+    await prefs.setString(_kCustomShortcuts, jsonStr);
+    notifyListeners();
+  }
+
+  Future<void> setCustomShortcuts(List<TerminalShortcut> shortcuts) async {
+    _customShortcuts = List.from(shortcuts);
+    await _saveCustomShortcuts();
+  }
+
+  Future<void> addCustomShortcut(TerminalShortcut shortcut) async {
+    _customShortcuts.add(shortcut);
+    await _saveCustomShortcuts();
+  }
+
+  Future<void> updateCustomShortcut(int index, TerminalShortcut shortcut) async {
+    if (index >= 0 && index < _customShortcuts.length) {
+      _customShortcuts[index] = shortcut;
+      await _saveCustomShortcuts();
+    }
+  }
+
+  Future<void> deleteCustomShortcut(int index) async {
+    if (index >= 0 && index < _customShortcuts.length) {
+      _customShortcuts.removeAt(index);
+      await _saveCustomShortcuts();
+    }
+  }
+
+  Future<void> reorderCustomShortcuts(int oldIndex, int newIndex) async {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final item = _customShortcuts.removeAt(oldIndex);
+    _customShortcuts.insert(newIndex, item);
+    await _saveCustomShortcuts();
   }
 
   Future<void> setIconScale(AppIconScale scale) async {

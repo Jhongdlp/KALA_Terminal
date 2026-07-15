@@ -8,6 +8,7 @@ import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
 import 'prompts_sheet.dart';
 import 'git_folder_explorer_sheet.dart';
+import '../models/terminal_shortcut.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -807,17 +808,13 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          _key('~', () => state.sendTerminalInput('~'), width: 26),
-          _key('/', () => state.sendTerminalInput('/'), width: 26),
-          _key('-', () => state.sendTerminalInput('-'), width: 26),
-          _key('|', () => state.sendTerminalInput('|'), width: 26),
-          _key(r'$', () => state.sendTerminalInput(r'$'), width: 26),
-          _key('&', () => state.sendTerminalInput('&'), width: 26),
-          _key('*', () => state.sendTerminalInput('*'), width: 26),
-          _key('\\', () => state.sendTerminalInput('\\'), width: 26),
-          _key('_', () => state.sendTerminalInput('_'), width: 26),
-          _key('=', () => state.sendTerminalInput('='), width: 26),
-          _key('+', () => state.sendTerminalInput('+'), width: 26),
+          ...state.customShortcuts.map((shortcut) {
+            return _key(
+              shortcut.label,
+              () => state.sendTerminalInput(shortcut.parsedValue),
+            );
+          }),
+          _key('', () => _showShortcutManager(context, state), icon: Icons.settings, width: 34),
           _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76),
           _key('COMMIT', () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76),
           _key('ADJUNTAR', () => _attach(state), icon: Icons.attach_file, width: 76),
@@ -890,29 +887,18 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 ],
               ),
               const SizedBox(height: 5),
-              // Row 2 — Horizontally scrollable row including arrows, colleague's extra keys, and actions.
+              // Row 2 — Horizontally scrollable row of custom shortcuts.
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
-                    _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34),
-                    _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34),
-                    _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34),
-                    _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34),
-                    _key('^D', () => state.sendTerminalInput('\x04'), width: 32),
-                    _key('y', () => state.sendTerminalInput('y'), inverted: true, width: 26),
-                    _key('n', () => state.sendTerminalInput('n'), inverted: true, width: 26),
-                    _key('~', () => state.sendTerminalInput('~'), width: 26),
-                    _key('/', () => state.sendTerminalInput('/'), width: 26),
-                    _key('-', () => state.sendTerminalInput('-'), width: 26),
-                    _key('|', () => state.sendTerminalInput('|'), width: 26),
-                    _key(r'$', () => state.sendTerminalInput(r'$'), width: 26),
-                    _key('&', () => state.sendTerminalInput('&'), width: 26),
-                    _key('*', () => state.sendTerminalInput('*'), width: 26),
-                    _key('\\', () => state.sendTerminalInput('\\'), width: 26),
-                    _key('_', () => state.sendTerminalInput('_'), width: 26),
-                    _key('=', () => state.sendTerminalInput('='), width: 26),
-                    _key('+', () => state.sendTerminalInput('+'), width: 26),
+                    ...state.customShortcuts.map((shortcut) {
+                      return _key(
+                        shortcut.label,
+                        () => state.sendTerminalInput(shortcut.parsedValue),
+                      );
+                    }),
+                    _key('', () => _showShortcutManager(context, state), icon: Icons.settings, width: 34),
                     _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76),
                     _key('COMMIT', () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76),
                     _key('ADJUNTAR', () => _attach(state), icon: Icons.attach_file, width: 76),
@@ -939,6 +925,229 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showShortcutManager(BuildContext context, AppState state) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.panel,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setSheetState) {
+            return Container(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.of(dialogCtx).viewInsets.bottom + 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('PERSONALIZAR ATAJOS', style: AppText.mono(12, color: AppColors.bone, weight: FontWeight.w700)),
+                      IconButton(
+                        icon: Icon(Icons.add, color: AppColors.accent),
+                        onPressed: () => _showAddEditShortcutDialog(dialogCtx, state, null, (newShortcut) {
+                          state.addCustomShortcut(newShortcut);
+                          setSheetState(() {});
+                        }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(dialogCtx).size.height * 0.45,
+                    ),
+                    child: state.customShortcuts.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text('No hay atajos personalizados', style: AppText.body(13, color: AppColors.muted)),
+                            ),
+                          )
+                        : ReorderableListView.builder(
+                            shrinkWrap: true,
+                            itemCount: state.customShortcuts.length,
+                            onReorder: (oldIndex, newIndex) {
+                              state.reorderCustomShortcuts(oldIndex, newIndex);
+                              setSheetState(() {});
+                            },
+                            itemBuilder: (itemCtx, index) {
+                              final shortcut = state.customShortcuts[index];
+                              return ListTile(
+                                key: ValueKey(shortcut.label + index.toString()),
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(shortcut.label, style: AppText.mono(12, color: AppColors.bone, weight: FontWeight.w600)),
+                                subtitle: Text(
+                                  shortcut.value,
+                                  style: AppText.mono(10, color: AppColors.muted),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.edit, size: 16, color: AppColors.bone),
+                                      onPressed: () => _showAddEditShortcutDialog(dialogCtx, state, shortcut, (updatedShortcut) {
+                                        state.updateCustomShortcut(index, updatedShortcut);
+                                        setSheetState(() {});
+                                      }),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
+                                      onPressed: () {
+                                        state.deleteCustomShortcut(index);
+                                        setSheetState(() {});
+                                      },
+                                    ),
+                                    Icon(Icons.drag_handle, color: AppColors.muted),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      GhostButton(
+                        label: 'Restablecer',
+                        dense: true,
+                        onPressed: () {
+                          state.setCustomShortcuts(state.getDefaultShortcuts());
+                          setSheetState(() {});
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      InvertedButton(
+                        label: 'Cerrar',
+                        dense: true,
+                        onPressed: () => Navigator.of(sheetCtx).pop(),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAddEditShortcutDialog(
+      BuildContext context,
+      AppState state,
+      TerminalShortcut? existing,
+      void Function(TerminalShortcut shortcut) onSave) {
+    final labelController = TextEditingController(text: existing?.label ?? '');
+    final valueController = TextEditingController(text: existing?.value ?? '');
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(4))),
+          title: Text(existing == null ? 'AGREGAR ATAJO' : 'EDITAR ATAJO',
+              style: AppText.mono(11, color: AppColors.bone, weight: FontWeight.w700)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: labelController,
+                  autofocus: true,
+                  enableIMEPersonalizedLearning: true,
+                  decoration: InputDecoration(
+                    labelText: 'ETIQUETA (ej: ls, ^C, ~)',
+                    labelStyle: TextStyle(color: AppColors.muted),
+                  ),
+                  style: AppText.body(13),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: valueController,
+                  enableIMEPersonalizedLearning: true,
+                  decoration: InputDecoration(
+                    labelText: 'VALOR A ENVIAR (ej: ls\\n, \\x03, ~)',
+                    labelStyle: TextStyle(color: AppColors.muted),
+                  ),
+                  style: AppText.body(13),
+                ),
+                const SizedBox(height: 16),
+                Text('Atajos rápidos de control:', style: AppText.mono(8.5, color: AppColors.muted)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _dialogHelperButton(dialogCtx, 'Tab', r'\t', valueController),
+                    _dialogHelperButton(dialogCtx, 'Esc', r'\x1b', valueController),
+                    _dialogHelperButton(dialogCtx, 'Enter', r'\n', valueController),
+                    _dialogHelperButton(dialogCtx, 'Ctrl+C', r'\x03', valueController),
+                    _dialogHelperButton(dialogCtx, 'Ctrl+D', r'\x04', valueController),
+                    _dialogHelperButton(dialogCtx, 'Ctrl+A', r'\x01', valueController),
+                    _dialogHelperButton(dialogCtx, 'F1', r'\x1b[11~', valueController),
+                    _dialogHelperButton(dialogCtx, 'F2', r'\x1b[12~', valueController),
+                    _dialogHelperButton(dialogCtx, 'F3', r'\x1b[13~', valueController),
+                    _dialogHelperButton(dialogCtx, 'F4', r'\x1b[14~', valueController),
+                    _dialogHelperButton(dialogCtx, 'F5', r'\x1b[15~', valueController),
+                    _dialogHelperButton(dialogCtx, 'Re Pág', r'\x1b[5~', valueController),
+                    _dialogHelperButton(dialogCtx, 'Av Pág', r'\x1b[6~', valueController),
+                    _dialogHelperButton(dialogCtx, 'Inicio', r'\x1b[H', valueController),
+                    _dialogHelperButton(dialogCtx, 'Fin', r'\x1b[F', valueController),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            GhostButton(
+              label: 'Cancelar',
+              dense: true,
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+            ),
+            InvertedButton(
+              label: 'Guardar',
+              dense: true,
+              onPressed: () {
+                if (labelController.text.isNotEmpty && valueController.text.isNotEmpty) {
+                  onSave(TerminalShortcut(
+                    label: labelController.text,
+                    value: valueController.text,
+                  ));
+                  Navigator.of(dialogCtx).pop();
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _dialogHelperButton(BuildContext context, String label, String val, TextEditingController controller) {
+    return InkWell(
+      onTap: () {
+        controller.text = val;
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppColors.hairline, width: 1),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        child: Text(
+          label,
+          style: AppText.mono(8.5, color: AppColors.bone),
         ),
       ),
     );
