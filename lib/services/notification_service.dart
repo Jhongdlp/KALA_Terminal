@@ -19,12 +19,15 @@ class NotificationService {
   /// Posts (or refreshes) the alert notification for [sessionId]. Tapping it
   /// opens the app on that session (see `consumePendingSession`). [agent] is
   /// the detected agent id ('claude', 'antigravity', …) used to pick the
-  /// notification's large icon badge; null/unknown falls back to a generic one.
+  /// notification's large icon badge; null/unknown falls back to a generic
+  /// one. [sessionName] is shown as the notification's subtext so the user
+  /// knows which tab to expect.
   static Future<void> showAlert({
     required String sessionId,
     required String title,
     required String body,
     String? agent,
+    String? sessionName,
   }) async {
     if (!Platform.isAndroid) return;
     try {
@@ -33,6 +36,7 @@ class NotificationService {
         'title': title,
         'body': body,
         'agent': agent,
+        'sessionName': sessionName,
       });
     } catch (_) {
       // Notifications blocked or native side unavailable — the in-app badge

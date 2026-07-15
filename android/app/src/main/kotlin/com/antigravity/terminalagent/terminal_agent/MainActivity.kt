@@ -83,6 +83,7 @@ class MainActivity : FlutterFragmentActivity() {
                             call.argument<String>("title") ?: "KALA",
                             call.argument<String>("body") ?: "",
                             call.argument<String>("agent"),
+                            call.argument<String>("sessionName"),
                         )
                         result.success(true)
                     }

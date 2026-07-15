@@ -87,6 +87,16 @@ class TerminalSession {
   // Last time an agent alert fired for this session — debounce window so a
   // burst of BELs collapses into a single notification.
   DateTime? lastAlertAt;
+  // ---- Background agent-watch state (see [_evaluateAgentActivity]) ----
+  // Signature (hash) of the normalized visible tail of the terminal the last
+  // time it was inspected while backgrounded. Spinner glyphs, counters and
+  // whitespace are stripped before hashing so idle redraw loops (Claude Code's
+  // "✻ Thinking… (10s · esc to interrupt)") don't count as new output.
+  int? watchSignature;
+  // True once an autodetect alert fired for the current idle period; reset
+  // whenever the (normalized) screen content actually changes again, so a
+  // static prompt can never re-notify.
+  bool watchAlertFired = false;
   // True while a reconnect attempt is in flight, so the banner button and the
   // on-resume sweep can't double-connect the same session.
   bool reconnecting = false;
@@ -180,8 +190,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final List<TerminalSession> _sessions = [];
   List<TerminalSession> get sessions => _sessions;
 
-  // Track background inactivity alert timers per session to only notify when agents stop writing
+  // Per-session idle timers: armed when the (normalized) screen content
+  // changes while backgrounded, fire after [_agentIdleDelay] of no further
+  // meaningful change — the "the agent stopped writing" signal.
   final Map<String, Timer> _sessionAlertTimers = {};
+  // Per-session throttle timers so a flood of output chunks costs at most one
+  // buffer inspection every [_agentCheckThrottle].
+  final Map<String, Timer> _sessionCheckTimers = {};
 
   int _activeSessionIndex = -1;
   int get activeSessionIndex => _activeSessionIndex;
@@ -558,10 +573,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           .where((s) => s.connectionStatus == ConnectionStatus.remote)
           .map((s) => s.id)
           .toSet();
+      // Seed each session's watch state with what's on screen right now, so a
+      // prompt that was already visible when the user left doesn't fire an
+      // alert by itself — only output produced *after* backgrounding counts.
+      for (final session in _sessions) {
+        session.watchSignature = _screenSignature(session);
+        session.watchAlertFired = false;
+      }
     }
   }
 
   void _onAppResumed() {
+    // The user is back: pending idle timers would alert about things they are
+    // already looking at.
+    for (final t in _sessionAlertTimers.values) {
+      t.cancel();
+    }
+    _sessionAlertTimers.clear();
+    for (final t in _sessionCheckTimers.values) {
+      t.cancel();
+    }
+    _sessionCheckTimers.clear();
     // The user is looking at the app again: posted alerts are now noise.
     NotificationService.cancelAlerts();
     // If a notification tap resumed us, jump to that session.
@@ -609,8 +641,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     (marker: 'deepmind', id: 'antigravity', label: 'Antigravity'),
     (marker: 'claude', id: 'claude', label: 'Claude Code'),
     (marker: 'aider', id: 'aider', label: 'Aider'),
+    // Before 'codex'/'gemini': their names could appear in opencode output.
+    (marker: 'opencode', id: 'opencode', label: 'OpenCode'),
     (marker: 'codex', id: 'codex', label: 'Codex'),
     (marker: 'gemini', id: 'gemini', label: 'Gemini CLI'),
+    (marker: 'copilot', id: 'copilot', label: 'Copilot CLI'),
+    // 'cursor' alone would match ordinary terminal text ("cursor position"),
+    // so only the CLI binary name counts.
+    (marker: 'cursor-agent', id: 'cursor', label: 'Cursor'),
+    (marker: 'qwen', id: 'qwen', label: 'Qwen Code'),
   ];
 
   /// Best guess at which agent is running in [session]: the window title
@@ -621,14 +660,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     for (final m in _agentMarkers) {
       if (title.contains(m.marker)) return (id: m.id, label: m.label);
     }
-    String tail;
-    try {
-      final text = session.terminal.buffer.getText();
-      tail = (text.length > 4000 ? text.substring(text.length - 4000) : text)
-          .toLowerCase();
-    } catch (_) {
-      return null;
-    }
+    final tail = _terminalTail(session, 60).toLowerCase();
+    if (tail.isEmpty) return null;
     ({String id, String label})? best;
     var bestIdx = -1;
     for (final m in _agentMarkers) {
@@ -641,8 +674,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return best;
   }
 
-  /// Shared endpoint for every agent-attention signal (BEL, OSC 9, OSC 777),
-  /// wired per-session in [createNewSession]. Policy:
+  /// Shared endpoint for every agent-attention signal (BEL, OSC 9, OSC 777 and
+  /// the idle autodetector), wired per-session in [createNewSession]. Policy:
   ///  - app in background → system notification (tap reopens the session);
   ///  - app visible but the session isn't the active one → in-app badge;
   ///  - app visible and session active → nothing beyond the bell's haptic.
@@ -655,26 +688,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     if (!_appInForeground) {
       final agent = _detectAgent(session);
-      
-      String finalTitle = title ?? '';
-      String finalBody = body ?? '';
-      
-      if (agent != null) {
-        if (finalTitle.isEmpty || finalTitle == session.name) {
-          finalTitle = '${agent.label} 🤖';
-        } else {
-          finalTitle = '${agent.label}: $finalTitle';
-        }
-        if (finalBody.isEmpty) {
-          finalBody = 'Espera tu respuesta en la sesión "${session.name}"';
-        }
+
+      // An explicit signal (BEL/OSC) covers the current idle period too: mark
+      // it consumed so the autodetector can't post a duplicate 3s later.
+      session.watchAlertFired = true;
+      session.watchSignature = _screenSignature(session);
+      _sessionAlertTimers.remove(session.id)?.cancel();
+
+      String finalTitle;
+      if (title != null && title.isNotEmpty && title != session.name) {
+        // Explicit OSC 777 title — the program knows best what to announce.
+        finalTitle = agent != null ? '${agent.label} · $title' : title;
       } else {
-        if (finalTitle.isEmpty) {
-          finalTitle = session.name;
-        }
-        if (finalBody.isEmpty) {
-          finalBody = 'El terminal espera tu respuesta';
-        }
+        finalTitle = agent?.label ?? session.name;
+      }
+      String finalBody = body ?? '';
+      if (finalBody.isEmpty) {
+        finalBody = agent != null
+            ? 'Espera tu respuesta'
+            : 'El terminal pide tu atención';
       }
 
       NotificationService.showAlert(
@@ -682,6 +714,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         title: finalTitle,
         body: finalBody,
         agent: agent?.id,
+        sessionName: session.name,
       );
     } else if (!identical(session, activeSession)) {
       session.hasPendingAlert = true;
@@ -689,57 +722,198 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _checkAutodetectQuestion(TerminalSession session, String text) {
-    if (!_agentAlertsEnabled) return;
-    if (_appInForeground) return;
+  // ---- Background autodetector -------------------------------------------
+  // Detects, without any cooperation from the program, the two moments worth
+  // a notification while the app is backgrounded:
+  //  - the agent stopped writing and is waiting for an answer (question/menu);
+  //  - the agent stopped writing because it finished the task.
+  //
+  // It works on transitions, not on content alone: output must first *change*
+  // (beyond spinner/counter redraw noise) and then stay still for
+  // [_agentIdleDelay]. One alert per idle period ([watchAlertFired]), so a
+  // static prompt on screen can never re-notify no matter how many redraws or
+  // heartbeats the program emits.
 
-    // Reset the inactivity timer for this session since we just received new text
-    _sessionAlertTimers[session.id]?.cancel();
-    _sessionAlertTimers.remove(session.id);
+  /// How long the normalized screen must stay unchanged before the agent
+  /// counts as "stopped writing". LLM streams pause between tokens; 3s avoids
+  /// firing inside those gaps.
+  static const Duration _agentIdleDelay = Duration(seconds: 3);
 
+  /// Inspection cadence while output is flowing: at most one buffer read per
+  /// session per throttle window, regardless of how many chunks arrive.
+  static const Duration _agentCheckThrottle = Duration(milliseconds: 300);
+
+  /// Rows from the bottom of the buffer that feed detection — roughly one
+  /// phone screen of a TUI agent.
+  static const int _watchTailLines = 40;
+
+  /// Everything that idle TUIs redraw without meaning anything new: spaces,
+  /// digits (elapsed-time and token counters), braille and geometric spinner
+  /// glyphs, progress-bar characters.
+  static final RegExp _watchNoiseRegex = RegExp(
+    r"[\s\d⠀-⣿✻✳✶✽✢·∙•●○◌◍◐◓◑◒◴◵◶◷⏳⌛|/\\*+~↑↓█▉▊▋▌▍▎▏░▒▓-]",
+  );
+
+  /// Status-line hints that mean the program is *still working* (streaming or
+  /// running a tool), even though the visible text hasn't changed for a while
+  /// — e.g. Claude Code's "(esc to interrupt)". Suppresses the idle alert; a
+  /// real state change re-arms it.
+  static final RegExp _busyMarkerRegex = RegExp(
+    r'esc to interrupt|esc para interrumpir|esc to cancel|esc para cancelar|'
+    r'ctrl\+c to|ctrl-c to|ctrl\+c para|press esc|thinking…|pensando…',
+  );
+
+  /// UI chrome lines of known agents that would pollute classification and
+  /// snippets (Claude Code's "? for shortcuts" bar would read as a question).
+  static final RegExp _chromeLineRegex = RegExp(
+    r'\?\s*for shortcuts|for commands|for newline|@ for file|shift\+tab|'
+    r'bypass permissions|auto-accept|plan mode|context left|/help|'
+    r'tokens used|tokens remaining',
+  );
+
+  /// Last [lines] rows of the terminal (screen + tail of scrollback) as plain
+  /// text, without serializing the whole 10k-line buffer.
+  String _terminalTail(TerminalSession session, int lines) {
     try {
-      final terminalText = session.terminal.buffer.getText();
-      final tail = (terminalText.length > 150 
-          ? terminalText.substring(terminalText.length - 150) 
-          : terminalText).trim();
-
-      // Robust regex for interactive questions or approval prompts
-      final questionRegex = RegExp(
-        r'(?:\?|[\(\[\/\s]?(?:y/n|yes/no|s/n|sí/no|y\/n|s\/n)[\)\]\?\s]?|\b(?:confirm|approve|input|select|choose|write|type|option|confirmar|aprobar|escribir|ingresar|presione|press|opción)\b|[:>]\s*$)',
-        caseSensitive: false,
-      );
-
-      // Robust regex for task completion or success markers
-      final completionRegex = RegExp(
-        r'\b(?:done|finished|completed|success|successfully|finalizado|completado|terminado|exitoso|exitosamente|passed)\b',
-        caseSensitive: false,
-      );
-
-      final isQuestion = questionRegex.hasMatch(tail);
-      final isCompletion = completionRegex.hasMatch(tail);
-
-      if (isQuestion || isCompletion) {
-        // Schedule alert after 500ms of silence. If more text arrives before this,
-        // it gets canceled, preventing spam during active outputs (e.g. logs/builds).
-        _sessionAlertTimers[session.id] = Timer(const Duration(milliseconds: 500), () {
-          _sessionAlertTimers.remove(session.id);
-
-          final String bodyText;
-          if (isQuestion) {
-            bodyText = 'El agente espera tu respuesta';
-          } else {
-            bodyText = 'El agente ha finalizado la tarea';
-          }
-
-          _onSessionAlert(session, 
-            title: session.name, 
-            body: bodyText
-          );
-        });
-      }
+      final buffer = session.terminal.buffer;
+      final height = buffer.height;
+      final start = height > lines ? height - lines : 0;
+      return buffer.getText(BufferRangeLine(
+        CellOffset(0, start),
+        CellOffset(buffer.viewWidth - 1, height - 1),
+      ));
     } catch (_) {
-      // Ignore buffer read errors
+      return '';
     }
+  }
+
+  /// Hash of the visible tail with redraw noise stripped: two screens with the
+  /// same signature show the same *meaningful* content, even if a spinner or
+  /// an elapsed-seconds counter differs.
+  int _screenSignature(TerminalSession session) => _terminalTail(session, _watchTailLines)
+      .replaceAll(_watchNoiseRegex, '')
+      .hashCode;
+
+  /// Entry point wired to every remote-output batch (see [_TerminalWriter]).
+  void _onTerminalOutput(TerminalSession session) {
+    if (!_agentAlertsEnabled || _appInForeground) return;
+    if (_sessionCheckTimers.containsKey(session.id)) return;
+    _sessionCheckTimers[session.id] = Timer(_agentCheckThrottle, () {
+      _sessionCheckTimers.remove(session.id);
+      _evaluateAgentActivity(session);
+    });
+  }
+
+  void _evaluateAgentActivity(TerminalSession session) {
+    if (!_agentAlertsEnabled || _appInForeground) return;
+    final sig = _screenSignature(session);
+    if (sig == session.watchSignature) {
+      // Pure redraw (spinner frame, counter tick): not activity — whatever
+      // idle timer is already running keeps counting.
+      return;
+    }
+    session.watchSignature = sig;
+    session.watchAlertFired = false;
+    _sessionAlertTimers[session.id]?.cancel();
+    _sessionAlertTimers[session.id] = Timer(_agentIdleDelay, () {
+      _sessionAlertTimers.remove(session.id);
+      _maybeFireIdleAlert(session);
+    });
+  }
+
+  void _maybeFireIdleAlert(TerminalSession session) {
+    if (!_agentAlertsEnabled || _appInForeground) return;
+    if (session.watchAlertFired) return;
+    // Output can land inside the throttle window after the last evaluation:
+    // if the screen moved again, this wasn't real silence — restart the cycle.
+    if (_screenSignature(session) != session.watchSignature) {
+      _evaluateAgentActivity(session);
+      return;
+    }
+
+    final lines = _terminalTail(session, _watchTailLines)
+        .split('\n')
+        .map((l) => l.trimRight())
+        .toList();
+    while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+      lines.removeLast();
+    }
+    final recent =
+        lines.length > 14 ? lines.sublist(lines.length - 14) : lines;
+    if (_busyMarkerRegex.hasMatch(recent.join('\n').toLowerCase())) {
+      // Still streaming/running a tool with a static screen (long silent
+      // step). Don't consume the idle period: when the busy hint disappears
+      // the signature changes and the cycle restarts.
+      return;
+    }
+
+    session.watchAlertFired = true;
+    final isQuestion = _looksLikeQuestion(recent);
+    final snippet = _alertSnippet(recent);
+    final headline =
+        isQuestion ? 'Espera tu respuesta' : 'Terminó de escribir';
+    _onSessionAlert(
+      session,
+      body: snippet.isEmpty ? headline : '$headline\n$snippet',
+    );
+  }
+
+  /// Whether the tail of the screen looks like an interactive prompt (the
+  /// agent is waiting for the user) rather than a finished task.
+  bool _looksLikeQuestion(List<String> recent) {
+    final meaningful = recent
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !_chromeLineRegex.hasMatch(l.toLowerCase()))
+        .toList();
+    if (meaningful.isEmpty) return false;
+
+    var numbered = 0;
+    for (final line in meaningful) {
+      final lower = line.toLowerCase();
+      // Selection menus: "❯ 1. Yes", "› Option", numbered choices.
+      if (line.startsWith('❯') || line.startsWith('›')) return true;
+      if (RegExp(r'^\d+[.)]\s').hasMatch(line)) numbered++;
+      // Question mark closing a sentence (box borders already trimmed).
+      final stripped = line.replaceAll(RegExp(r'[│┃║╮╯┐┘\s]+$'), '');
+      if (stripped.endsWith('?')) return true;
+      if (lower.contains('¿')) return true;
+      if (RegExp(r'\((?:y/n|yes/no|s/n|sí/no)\)|\[(?:y/n|y/N|Y/n|yes/no|s/n)\]',
+              caseSensitive: false)
+          .hasMatch(line)) {
+        return true;
+      }
+      if (RegExp(r'\b(?:do you want|would you like|allow this|approve|confirm|'
+              r'select an option|choose an option|press enter|enter a|'
+              r'deseas|quieres|permitir|aprobar|confirmar|selecciona|elige|'
+              r'escribe|ingresa|contraseña|password|passphrase)\b')
+          .hasMatch(lower)) {
+        return true;
+      }
+    }
+    return numbered >= 2;
+  }
+
+  /// Short human-readable excerpt of what's on screen for the notification
+  /// body: the last meaningful lines with TUI chrome and box borders removed.
+  String _alertSnippet(List<String> recent) {
+    final cleaned = <String>[];
+    for (final raw in recent) {
+      final line = raw
+          .replaceAll(RegExp(r'[│┃║╭╮╰╯┌┐└┘├┤┬┴─━═╌╍]'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (line.isEmpty) continue;
+      if (_chromeLineRegex.hasMatch(line.toLowerCase())) continue;
+      cleaned.add(line);
+    }
+    if (cleaned.isEmpty) return '';
+    final lastLines =
+        cleaned.length > 3 ? cleaned.sublist(cleaned.length - 3) : cleaned;
+    var snippet = lastLines.join('\n');
+    if (snippet.length > 200) {
+      snippet = '…${snippet.substring(snippet.length - 200)}';
+    }
+    return snippet;
   }
 
   // Ensures the Android foreground service (which keeps the process — and its
@@ -1378,12 +1552,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final stdoutWriter = _TerminalWriter(
         session.terminal,
         isInForeground: () => _appInForeground,
-        onTextWritten: (text) => _checkAutodetectQuestion(session, text),
+        onTextWritten: (_) => _onTerminalOutput(session),
       );
       final stderrWriter = _TerminalWriter(
         session.terminal,
         isInForeground: () => _appInForeground,
-        onTextWritten: (text) => _checkAutodetectQuestion(session, text),
+        onTextWritten: (_) => _onTerminalOutput(session),
       );
       session._outputWriters.addAll([stdoutWriter, stderrWriter]);
       session.sshSession!.stdout.listen(stdoutWriter.add);
@@ -1549,8 +1723,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _cleanupSession(TerminalSession session) {
-    _sessionAlertTimers[session.id]?.cancel();
-    _sessionAlertTimers.remove(session.id);
+    _sessionAlertTimers.remove(session.id)?.cancel();
+    _sessionCheckTimers.remove(session.id)?.cancel();
     _disposeWriters(session);
     for (final server in session.forwardServers) {
       server.close();

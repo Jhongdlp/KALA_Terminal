@@ -30,6 +30,11 @@ object AlertNotifier {
     private const val ID_BASE = 2000
     private const val ID_RANGE = 1000
 
+    // Stack key + summary id so alerts from several sessions collapse into one
+    // expandable group instead of flooding the shade.
+    private const val GROUP_KEY = "kala_agent_alerts"
+    private const val SUMMARY_ID = 1999
+
     /**
      * Full-color avatar (Android's largeIcon) identifying the agent that
      * asked for attention. The status-bar smallIcon must stay a monochrome
@@ -41,20 +46,28 @@ object AlertNotifier {
         "aider" -> R.drawable.ic_agent_aider
         "codex" -> R.drawable.ic_agent_codex
         "gemini" -> R.drawable.ic_agent_gemini
+        "copilot" -> R.drawable.ic_agent_copilot
+        "opencode" -> R.drawable.ic_agent_opencode
+        "cursor" -> R.drawable.ic_agent_cursor
+        "qwen" -> R.drawable.ic_agent_qwen
         else -> R.drawable.ic_agent_generic
     }
 
     /**
-     * Resolves the custom brand color for each agent to tint the notification header,
-     * small icon circle, and other elements on Android 5.0+ (API 21+).
+     * Brand accent for each agent: tints the app name, small-icon and action
+     * area of the notification on API 21+.
      */
     private fun agentColor(agent: String?): Int = when (agent) {
-        "claude" -> Color.parseColor("#D96B43")       // Warm terracotta
+        "claude" -> Color.parseColor("#D97757")       // Anthropic clay
         "antigravity" -> Color.parseColor("#1E3A8A")  // Deep indigo
-        "gemini" -> Color.parseColor("#4F46E5")       // Indigo-violet
+        "gemini" -> Color.parseColor("#4796E3")       // Gemini blue
         "aider" -> Color.parseColor("#0D9488")        // Teal
-        "codex" -> Color.parseColor("#7C3AED")        // Violet
-        else -> Color.parseColor("#1F2937")           // Dark gray/charcoal
+        "codex" -> Color.parseColor("#1A7F64")        // OpenAI green
+        "copilot" -> Color.parseColor("#8957E5")      // Copilot purple
+        "opencode" -> Color.parseColor("#4B5563")     // Graphite
+        "cursor" -> Color.parseColor("#374151")       // Slate
+        "qwen" -> Color.parseColor("#6156E6")         // Qwen violet
+        else -> Color.parseColor("#007AFF")           // KALA azure
     }
 
     fun show(
@@ -63,6 +76,7 @@ object AlertNotifier {
         title: String,
         body: String,
         agent: String?,
+        sessionName: String? = null,
     ) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -88,22 +102,64 @@ object AlertNotifier {
             Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
         }
 
+        // First line of the body doubles as the collapsed content text; the
+        // expanded BigText shows the on-screen excerpt the Dart side attached.
+        val collapsed = body.lineSequence().firstOrNull() ?: body
+
         val notification = builder
             .setContentTitle(title)
-            .setContentText(body)
+            .setContentText(collapsed)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(agentColor(agent))
             .setLargeIcon(
                 BitmapFactory.decodeResource(context.resources, agentBadge(agent)),
             )
+            .apply {
+                if (!sessionName.isNullOrBlank() && sessionName != title) {
+                    setSubText(sessionName)
+                }
+            }
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .setGroup(GROUP_KEY)
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
             .build()
 
         manager.notify(notificationId(sessionId), notification)
+        maybePostGroupSummary(context, manager)
+    }
+
+    /**
+     * With two or more live alerts, posts the silent group summary that lets
+     * the system stack them; a single alert needs none.
+     */
+    private fun maybePostGroupSummary(context: Context, manager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val alerts = manager.activeNotifications
+            .count { it.id in ID_BASE until ID_BASE + ID_RANGE }
+        if (alerts < 2) return
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
+        }
+        val summary = builder
+            .setContentTitle("KALA")
+            .setContentText("$alerts sesiones piden tu atención")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(Color.parseColor("#007AFF"))
+            .setGroup(GROUP_KEY)
+            .setGroupSummary(true)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(SUMMARY_ID, summary)
     }
 
     /** Cancels every alert notification (the persistent service one survives). */
@@ -112,7 +168,9 @@ object AlertNotifier {
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (active in manager.activeNotifications) {
-                if (active.id in ID_BASE until ID_BASE + ID_RANGE) {
+                if (active.id == SUMMARY_ID ||
+                    active.id in ID_BASE until ID_BASE + ID_RANGE
+                ) {
                     manager.cancel(active.id)
                 }
             }
