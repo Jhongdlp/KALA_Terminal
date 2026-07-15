@@ -308,7 +308,7 @@ class TerminalViewState extends State<TerminalView> {
       terminalView: this,
       terminalController: _controller,
       onTapUp: _onTapUp,
-      onTapDown: _onTapDown,
+      onSingleTapUp: _onSingleTapUp,
       onSecondaryTapDown:
           widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
       onSecondaryTapUp:
@@ -353,7 +353,7 @@ class TerminalViewState extends State<TerminalView> {
     widget.onTapUp?.call(details, offset);
   }
 
-  void _onTapDown(_) {
+  void _onSingleTapUp(TapUpDetails _) {
     if (_controller.selection != null) {
       _controller.clearSelection();
     } else {

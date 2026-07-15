@@ -169,7 +169,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   _reconnectBanner(state),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => _terminalFocusNode.requestFocus(),
                     onHorizontalDragStart: (details) {
                       if (_terminalController.selection == null) {
                         _dragStartX = details.globalPosition.dx;
