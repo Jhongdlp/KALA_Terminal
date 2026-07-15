@@ -114,7 +114,6 @@ class _HomeViewState extends State<HomeView> {
         key: _scaffoldKey,
         endDrawer: const MenuDrawer(),
         backgroundColor: AppColors.ink,
-        resizeToAvoidBottomInset: activeTabIndex != 1,
         // Keep the soft keyboard from covering navigation: nav lives at the top,
         // the keyboard only ever pushes up the content below it.
         body: SafeArea(

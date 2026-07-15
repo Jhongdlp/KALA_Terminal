@@ -55,6 +55,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final ScrollController _terminalScrollController = ScrollController();
 
   bool _showKeys = true;
+  double? _lastHeight;
 
   // Tracks whether the active terminal is in the alternate screen buffer (a
   // full-screen TUI like vim/htop/claude is running). The smart command bar is
@@ -102,7 +103,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     final state = Provider.of<AppState>(context);
     final fullscreen = state.terminalFullscreen;
     _syncTerminalObserver(state.terminal);
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     if (!state.isTerminalInitialized) {
       return Container(
@@ -142,13 +142,22 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       color: AppColors.ink,
       child: SafeArea(
         top: false,
-        child: ClipRect(
-          child: Transform.translate(
-            offset: Offset(0, -keyboardHeight),
-            child: Stack(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final height = constraints.maxHeight;
+            if (_lastHeight != null && _lastHeight != height) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _terminalScrollController.hasClients) {
+                  _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
+                }
+              });
+            }
+            _lastHeight = height;
+
+            return Stack(
               children: [
-            Column(
-              children: [
+                Column(
+                  children: [
                 if (!fullscreen) _buildToolbar(context, state),
                 // Dropped connection with a known profile → offer to
                 // re-establish it in place (with tmux this re-attaches to
@@ -254,12 +263,12 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 ),
               ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     ),
-    );
-  }
+  );
+}
 
   // ---- Reconnect banner ------------------------------------------------------
 
