@@ -29,19 +29,18 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   @override
   void didChangeMetrics() {
-    if (_terminalFocusNode.hasFocus) {
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted && _terminalScrollController.hasClients) {
-          _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
-        }
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _terminalScrollController.hasClients) {
-          _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
-        }
-      });
-    }
     super.didChangeMetrics();
+    if (_terminalFocusNode.hasFocus) {
+      // Run a series of delayed scrolls to keep the scroll position at the bottom
+      // during the keyboard slide animation without doing it on every single frame.
+      for (final ms in [50, 150, 250, 350]) {
+        Future.delayed(Duration(milliseconds: ms), () {
+          if (mounted && _terminalScrollController.hasClients) {
+            _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
+          }
+        });
+      }
+    }
   }
 
   // Holds the current text selection of the active terminal so the "Copiar"
@@ -56,7 +55,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final ScrollController _terminalScrollController = ScrollController();
 
   bool _showKeys = true;
-  double? _lastHeight;
 
   // Tracks whether the active terminal is in the alternate screen buffer (a
   // full-screen TUI like vim/htop/claude is running). The smart command bar is
@@ -141,15 +139,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         top: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final height = constraints.maxHeight;
-            if (_lastHeight != null && _lastHeight != height) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted && _terminalScrollController.hasClients) {
-                  _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
-                }
-              });
-            }
-            _lastHeight = height;
 
             return Stack(
               children: [
