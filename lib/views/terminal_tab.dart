@@ -961,6 +961,29 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                       Text('${state.shortcutKeyHeight.round()}px', style: AppText.mono(9, color: AppColors.bone)),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Text('ANCHO TECLAS', style: AppText.mono(9, color: AppColors.muted)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Slider(
+                          value: state.shortcutKeyWidth,
+                          min: 20.0,
+                          max: 120.0,
+                          divisions: 100,
+                          label: '${state.shortcutKeyWidth.round()}px',
+                          activeColor: AppColors.accent,
+                          inactiveColor: AppColors.hairline,
+                          onChanged: (val) {
+                            state.setShortcutKeyWidth(val);
+                            setSheetState(() {});
+                          },
+                        ),
+                      ),
+                      Text('${state.shortcutKeyWidth.round()}px', style: AppText.mono(9, color: AppColors.bone)),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   ConstrainedBox(
                     constraints: BoxConstraints(
@@ -1181,6 +1204,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           onTap: onPressed,
           child: Container(
             height: keyHeight,
+            width: width ?? state.shortcutKeyWidth,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               border: Border.all(

@@ -395,6 +395,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kShortcutLayout = 'settings_shortcut_layout';
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
+  static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -455,6 +456,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   double _shortcutKeyHeight = 28.0;
   double get shortcutKeyHeight => _shortcutKeyHeight;
+
+  double _shortcutKeyWidth = 36.0;
+  double get shortcutKeyWidth => _shortcutKeyWidth;
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
@@ -824,6 +828,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
+    _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
 
     await _loadSnippets(prefs);
 
@@ -863,18 +868,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setDouble(_kShortcutKeyHeight, value);
   }
 
+  Future<void> setShortcutKeyWidth(double value) async {
+    if (_shortcutKeyWidth == value) return;
+    _shortcutKeyWidth = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kShortcutKeyWidth, value);
+  }
+
   List<TerminalShortcut> getDefaultShortcuts() {
     return [
-      TerminalShortcut(label: '←', value: r'\x1b[D'),
-      TerminalShortcut(label: '↓', value: r'\x1b[B'),
-      TerminalShortcut(label: '↑', value: r'\x1b[A'),
-      TerminalShortcut(label: '→', value: r'\x1b[C'),
-      TerminalShortcut(label: 'TAB', value: r'\t'),
-      TerminalShortcut(label: 'ESC', value: r'\x1b'),
+      TerminalShortcut(label: 'Re Pág', value: r'\x1b[5~'),
+      TerminalShortcut(label: 'Av Pág', value: r'\x1b[6~'),
+      TerminalShortcut(label: 'Inicio', value: r'\x1b[H'),
+      TerminalShortcut(label: 'Fin', value: r'\x1b[F'),
       TerminalShortcut(label: '^C', value: r'\x03'),
       TerminalShortcut(label: '^D', value: r'\x04'),
-      TerminalShortcut(label: 'y', value: 'y'),
-      TerminalShortcut(label: 'n', value: 'n'),
       TerminalShortcut(label: 'clear', value: 'clear\n'),
     ];
   }
