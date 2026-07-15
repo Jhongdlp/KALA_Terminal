@@ -102,6 +102,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     final state = Provider.of<AppState>(context);
     final fullscreen = state.terminalFullscreen;
     _syncTerminalObserver(state.terminal);
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     if (!state.isTerminalInitialized) {
       return Container(
@@ -141,8 +142,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       color: AppColors.ink,
       child: SafeArea(
         top: false,
-        child: Stack(
-          children: [
+        child: ClipRect(
+          child: Transform.translate(
+            offset: Offset(0, -keyboardHeight),
+            child: Stack(
+              children: [
             Column(
               children: [
                 if (!fullscreen) _buildToolbar(context, state),
@@ -249,9 +253,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   onTap: () => state.setTerminalFullscreen(false),
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
+    ),
     );
   }
 
