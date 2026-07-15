@@ -394,6 +394,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kMonoFontChoice = 'settings_mono_font_choice';
   static const String _kShortcutLayout = 'settings_shortcut_layout';
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
+  static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -451,6 +452,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   List<TerminalShortcut> _customShortcuts = [];
   List<TerminalShortcut> get customShortcuts => _customShortcuts;
+
+  double _shortcutKeyHeight = 28.0;
+  double get shortcutKeyHeight => _shortcutKeyHeight;
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
@@ -819,6 +823,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _customShortcuts = getDefaultShortcuts();
     }
 
+    _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
+
     await _loadSnippets(prefs);
 
     _settingsLoaded = true;
@@ -847,6 +853,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kShortcutLayout, layout.index);
+  }
+
+  Future<void> setShortcutKeyHeight(double value) async {
+    if (_shortcutKeyHeight == value) return;
+    _shortcutKeyHeight = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kShortcutKeyHeight, value);
   }
 
   List<TerminalShortcut> getDefaultShortcuts() {

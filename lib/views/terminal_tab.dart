@@ -65,7 +65,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   // raw terminal takes all keystrokes. We observe the Terminal directly because
   // its alt-buffer changes don't flow through AppState's notifications.
   Terminal? _observedTerminal;
-  bool _altScreen = false;
 
   @override
   void dispose() {
@@ -84,7 +83,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     _observedTerminal?.removeListener(_onTerminalChanged);
     _observedTerminal = terminal;
     terminal.addListener(_onTerminalChanged);
-    _altScreen = terminal.isUsingAltBuffer;
     // Selection anchors belong to the previous terminal's buffer; drop them so
     // "Copiar" never reads a stale selection after a session switch.
     _terminalController.clearSelection();
@@ -92,8 +90,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   void _onTerminalChanged() {
     final alt = _observedTerminal?.isUsingAltBuffer ?? false;
-    if (alt == _altScreen) return;
-    setState(() => _altScreen = alt);
     // Entering a full-screen app: hand keyboard focus to the terminal so it
     // receives keys without the user having to tap it first.
     if (alt) _terminalFocusNode.requestFocus();
@@ -765,21 +761,23 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   // ---- Smart keyboard (extra keys, Termux-style) ---------------------------
 
   Widget _buildDpad(AppState state) {
+    final h = state.shortcutKeyHeight;
+    final totalH = h * 2 + 5;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34, height: 61),
+        _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34, height: totalH),
         const SizedBox(width: 4),
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34, height: 28),
+            _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34, height: h),
             const SizedBox(height: 5),
-            _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34, height: 28),
+            _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34, height: h),
           ],
         ),
         const SizedBox(width: 4),
-        _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34, height: 61),
+        _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34, height: totalH),
       ],
     );
   }
@@ -907,23 +905,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 ),
               ),
             ],
-            // Row 3 — agent mode: only while a full-screen TUI runs.
-            if (_altScreen) ...[
-              const SizedBox(height: 5),
-              Row(
-                children: [
-                  _key('S-TAB', () => state.sendTerminalInput('\x1b[Z')),
-                  _key('1', () => state.sendTerminalInput('1')),
-                  _key('2', () => state.sendTerminalInput('2')),
-                  _key('3', () => state.sendTerminalInput('3')),
-                  _key('ESC', () => state.sendTerminalInput('\x1b')),
-                  _key('PROMPTS', () => _showPrompts(state),
-                      icon: Icons.bolt_outlined),
-                  _key('↵', () => state.sendTerminalInput('\r'),
-                      inverted: true),
-                ],
-              ),
-            ],
           ],
         ),
       ),
@@ -955,6 +936,29 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                           setSheetState(() {});
                         }),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text('ALTO TECLAS', style: AppText.mono(9, color: AppColors.muted)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Slider(
+                          value: state.shortcutKeyHeight,
+                          min: 20.0,
+                          max: 45.0,
+                          divisions: 25,
+                          label: '${state.shortcutKeyHeight.round()}px',
+                          activeColor: AppColors.accent,
+                          inactiveColor: AppColors.hairline,
+                          onChanged: (val) {
+                            state.setShortcutKeyHeight(val);
+                            setSheetState(() {});
+                          },
+                        ),
+                      ),
+                      Text('${state.shortcutKeyHeight.round()}px', style: AppText.mono(9, color: AppColors.bone)),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -1160,8 +1164,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     bool armed = false,
     IconData? icon,
     double? width,
-    double height = 28.0,
+    double? height,
   }) {
+    final state = Provider.of<AppState>(context, listen: false);
+    final keyHeight = height ?? state.shortcutKeyHeight;
     // `armed` (the live CTRL toggle) wins over the static `inverted` accent.
     final highlighted = armed || inverted;
     final bg = highlighted ? AppColors.bone : Colors.transparent;
@@ -1174,7 +1180,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         child: InkWell(
           onTap: onPressed,
           child: Container(
-            height: height,
+            height: keyHeight,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               border: Border.all(
