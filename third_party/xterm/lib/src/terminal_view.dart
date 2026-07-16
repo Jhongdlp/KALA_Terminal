@@ -223,6 +223,10 @@ class TerminalViewState extends State<TerminalView> {
     super.dispose();
   }
 
+  void resetInputConnection() {
+    _customTextEditKey.currentState?.reset();
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget child = Scrollable(
@@ -276,6 +280,14 @@ class TerminalViewState extends State<TerminalView> {
           if (action == TextInputAction.done) {
             widget.terminal.keyInput(TerminalKey.enter);
           }
+        },
+        onArrowLeft: () {
+          _scrollToBottom();
+          widget.terminal.keyInput(TerminalKey.arrowLeft);
+        },
+        onArrowRight: () {
+          _scrollToBottom();
+          widget.terminal.keyInput(TerminalKey.arrowRight);
         },
         onKeyEvent: _handleKeyEvent,
         readOnly: widget.readOnly,

@@ -20,6 +20,8 @@ class CustomTextEdit extends StatefulWidget {
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
     this.onInsertContent,
+    this.onArrowLeft,
+    this.onArrowRight,
   });
 
   final Widget child;
@@ -51,6 +53,10 @@ class CustomTextEdit extends StatefulWidget {
   /// Called when the platform inserts rich content (an image pasted via the
   /// soft keyboard, e.g. Gboard). Null disables rich-content support.
   final void Function(KeyboardInsertedContent)? onInsertContent;
+
+  final void Function()? onArrowLeft;
+
+  final void Function()? onArrowRight;
 
   @override
   CustomTextEditState createState() => CustomTextEditState();
@@ -202,9 +208,15 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     }
   }
 
+  void reset() {
+    _currentEditingState = _initEditingState;
+    _connection?.setEditingState(_initEditingState);
+    widget.onComposing(null);
+  }
+
   TextEditingValue get _initEditingState => widget.deleteDetection
       ? const TextEditingValue(
-          text: '  ',
+          text: '    ',
           selection: TextSelection.collapsed(offset: 2),
         )
       : const TextEditingValue(
@@ -240,18 +252,47 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
     if (_currentEditingState.text.length < _initEditingState.text.length) {
       widget.onDelete();
-    } else {
+      _connection?.setEditingState(_initEditingState);
+      _currentEditingState = _initEditingState;
+      return;
+    }
+
+    if (_currentEditingState.text.length > _initEditingState.text.length) {
       final textDelta = _currentEditingState.text.substring(
         _initEditingState.text.length,
       );
-
       widget.onInsert(textDelta);
+      _connection?.setEditingState(_initEditingState);
+      _currentEditingState = _initEditingState;
+      return;
     }
 
-    // Reset editing state if composing is done
-    if (_currentEditingState.composing.isCollapsed &&
-        _currentEditingState.text != _initEditingState.text) {
-      _connection!.setEditingState(_initEditingState);
+    // Text length is the same, check if selection moved (e.g. Gboard spacebar cursor slide)
+    if (_initEditingState.selection.isCollapsed &&
+        _currentEditingState.selection.isCollapsed) {
+      final oldOffset = _initEditingState.selection.baseOffset;
+      final newOffset = _currentEditingState.selection.baseOffset;
+      if (newOffset != oldOffset) {
+        final diff = newOffset - oldOffset;
+        if (diff < 0) {
+          for (int i = 0; i < diff.abs(); i++) {
+            widget.onArrowLeft?.call();
+          }
+        } else if (diff > 0) {
+          for (int i = 0; i < diff; i++) {
+            widget.onArrowRight?.call();
+          }
+        }
+        _connection?.setEditingState(_initEditingState);
+        _currentEditingState = _initEditingState;
+        return;
+      }
+    }
+
+    // Fallback: reset if text is different from init
+    if (_currentEditingState.text != _initEditingState.text) {
+      _connection?.setEditingState(_initEditingState);
+      _currentEditingState = _initEditingState;
     }
   }
 
