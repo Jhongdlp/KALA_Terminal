@@ -1001,6 +1001,23 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _customShortcuts = getDefaultShortcuts();
     }
 
+    // One-time migration to append new default shortcuts (like Ctrl+Delete, Shift+Tab, and standard Antigravity/TUI keys)
+    final migrated = prefs.getBool('settings_shortcuts_migrated_v3') ?? false;
+    if (!migrated) {
+      final defaults = getDefaultShortcuts();
+      bool modified = false;
+      for (final def in defaults) {
+        if (!_customShortcuts.any((s) => s.value == def.value)) {
+          _customShortcuts.add(def);
+          modified = true;
+        }
+      }
+      if (modified) {
+        await prefs.setString(_kCustomShortcuts, json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      }
+      await prefs.setBool('settings_shortcuts_migrated_v3', true);
+    }
+
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
     _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
 
@@ -1059,6 +1076,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       TerminalShortcut(label: '^C', value: r'\x03'),
       TerminalShortcut(label: '^D', value: r'\x04'),
       TerminalShortcut(label: 'clear', value: 'clear\n'),
+      TerminalShortcut(label: '^DEL', value: r'\x1b[3;5~'),
+      TerminalShortcut(label: 'S-Tab', value: r'\x1b[Z'),
+      TerminalShortcut(label: '^O', value: r'\x0f'),
+      TerminalShortcut(label: '^G', value: r'\x07'),
+      TerminalShortcut(label: '^L', value: r'\x0c'),
+      TerminalShortcut(label: '^R', value: r'\x12'),
+      TerminalShortcut(label: '^W', value: r'\x17'),
+      TerminalShortcut(label: '^J', value: r'\n'),
+      TerminalShortcut(label: '^A', value: r'\x01'),
+      TerminalShortcut(label: '^E', value: r'\x05'),
+      TerminalShortcut(label: '^U', value: r'\x15'),
+      TerminalShortcut(label: '^K', value: r'\x0b'),
     ];
   }
 
@@ -1793,6 +1822,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (!_ctrlArmed || data.isEmpty) return data;
     _ctrlArmed = false;
     notifyListeners();
+    if (data == '\x1b[3~') return '\x1b[3;5~'; // Ctrl + Delete
     final ctrl = String.fromCharCode(data.codeUnitAt(0) & 0x1f);
     return ctrl + data.substring(1);
   }
