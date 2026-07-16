@@ -50,6 +50,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
         context.select<AppState, String>((s) => s.fileSearchQuery);
     final typeFilter =
         context.select<AppState, FileTypeFilter>((s) => s.fileTypeFilter);
+    final showHidden =
+        context.select<AppState, bool>((s) => s.showHidden);
     final selected =
         context.select<AppState, Set<String>>((s) => s.selectedPaths);
     final clipboardCount =
@@ -75,6 +77,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
 
     final query = searchQuery.toLowerCase();
     final visible = files.where((f) {
+      if (!showHidden && f.name.startsWith('.')) return false;
       if (typeFilter == FileTypeFilter.folders && !f.isDirectory) return false;
       if (typeFilter == FileTypeFilter.filesOnly && f.isDirectory) return false;
       return query.isEmpty || f.name.toLowerCase().contains(query);
@@ -84,7 +87,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
       color: AppColors.ink,
       child: Column(
         children: [
-          _buildPathBar(context, currentPath, typeFilter, canNavigateBack),
+          _buildPathBar(context, currentPath, typeFilter, showHidden, canNavigateBack),
           if (_searchOpen) _buildSearchBar(context, searchQuery),
           if (downloadPhase != DownloadPhase.idle)
             _buildDownloadBar(context, downloadPhase)
@@ -119,7 +122,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
   }
 
   Widget _buildPathBar(BuildContext context, String currentPath,
-      FileTypeFilter typeFilter, bool canNavigateBack) {
+      FileTypeFilter typeFilter, bool showHidden, bool canNavigateBack) {
     return Container(
       height: 42,
       decoration: BoxDecoration(
@@ -158,6 +161,11 @@ class _ExplorerTabState extends State<ExplorerTab> {
             setState(() => _searchOpen = !_searchOpen);
             if (!_searchOpen) context.read<AppState>().setFileSearchQuery('');
           }),
+          _barIcon(
+              showHidden ? Icons.visibility : Icons.visibility_off,
+              tooltip: showHidden ? 'Ocultar archivos ocultos' : 'Mostrar archivos ocultos',
+              active: showHidden,
+              onTap: () => context.read<AppState>().setShowHidden(!showHidden)),
           _buildFilterButton(context, typeFilter),
           _barIcon(Icons.refresh,
               tooltip: 'Actualizar',

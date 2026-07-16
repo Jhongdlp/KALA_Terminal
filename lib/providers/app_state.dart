@@ -1994,6 +1994,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   FileTypeFilter _fileTypeFilter = FileTypeFilter.all;
   FileTypeFilter get fileTypeFilter => _fileTypeFilter;
 
+  bool _showHidden = true;
+  bool get showHidden => _showHidden;
+
   List<FileSystemEntityInfo> _clipboard = const [];
   bool _clipboardIsMove = false;
   SSHClient? _clipboardSshClient;
@@ -2079,6 +2082,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void setFileTypeFilter(FileTypeFilter filter) {
     if (_fileTypeFilter == filter) return;
     _fileTypeFilter = filter;
+    notifyListeners();
+  }
+
+  void setShowHidden(bool value) {
+    if (_showHidden == value) return;
+    _showHidden = value;
     notifyListeners();
   }
 

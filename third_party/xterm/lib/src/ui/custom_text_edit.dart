@@ -258,8 +258,11 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     }
 
     if (_currentEditingState.text.length > _initEditingState.text.length) {
+      final prefixLength = _initEditingState.selection.baseOffset;
+      final suffixLength = _initEditingState.text.length - prefixLength;
       final textDelta = _currentEditingState.text.substring(
-        _initEditingState.text.length,
+        prefixLength,
+        _currentEditingState.text.length - suffixLength,
       );
       widget.onInsert(textDelta);
       _connection?.setEditingState(_initEditingState);
