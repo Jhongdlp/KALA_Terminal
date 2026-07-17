@@ -762,51 +762,53 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _key('←', () => _sendTerminalKey(state, '\x1b[D'), width: 34, height: totalH),
+        _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34, height: totalH),
         const SizedBox(width: 4),
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _key('↑', () => _sendTerminalKey(state, '\x1b[A'), width: 34, height: h),
+            _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34, height: h),
             const SizedBox(height: 5),
-            _key('↓', () => _sendTerminalKey(state, '\x1b[B'), width: 34, height: h),
+            _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34, height: h),
           ],
         ),
         const SizedBox(width: 4),
-        _key('→', () => _sendTerminalKey(state, '\x1b[C'), width: 34, height: totalH),
+        _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34, height: totalH),
       ],
     );
   }
 
   Widget _buildScrollableRow1(AppState state) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
-          _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
-          _key('ESC', () => _sendTerminalKey(state, '\x1b'), width: 36),
-          _key('TAB', () => _sendTerminalKey(state, '\t'), width: 36),
-          _key('ALT', () => _sendTerminalKey(state, '\x1b'), width: 36),
-          _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true, width: 32),
-          _key('^D', () => _sendTerminalKey(state, '\x04'), width: 32),
-          _key('HOME', () => _sendTerminalKey(state, '\x1b[H')),
-          _key('END', () => _sendTerminalKey(state, '\x1b[F')),
-          _key('PGUP', () => _sendTerminalKey(state, '\x1b[5~')),
-          _key('PGDN', () => _sendTerminalKey(state, '\x1b[6~')),
-          _key('INS', () => _sendTerminalKey(state, '\x1b[2~')),
-          _key('DEL', () => _sendTerminalKey(state, '\x1b[3~')),
-        ],
-      ),
+    final page = state.shortcutPageIndex;
+    final List<Widget> keys = [];
+    if (page == 0) {
+      keys.addAll([
+        _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
+        _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
+        _key('ESC', () => state.sendTerminalInput('\x1b'), width: 36),
+        _key('TAB', () => state.sendTerminalInput('\t'), width: 36),
+        _key('ALT', () => state.sendTerminalInput('\x1b'), width: 36),
+        _key('^C', () => state.sendTerminalInput('\x03'), inverted: true, width: 32),
+      ]);
+    } else {
+      keys.addAll([
+        _key('^D', () => state.sendTerminalInput('\x04'), width: 32),
+        _key('HOME', () => state.sendTerminalInput('\x1b[H')),
+        _key('END', () => state.sendTerminalInput('\x1b[F')),
+        _key('PGUP', () => state.sendTerminalInput('\x1b[5~')),
+        _key('PGDN', () => state.sendTerminalInput('\x1b[6~')),
+        _key('INS', () => state.sendTerminalInput('\x1b[2~')),
+        _key('DEL', () => state.sendTerminalInput('\x1b[3~')),
+      ]);
+    }
+    return Row(
+      children: keys,
     );
   }
 
   Widget _buildScrollableRow2(AppState state) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: _buildPagedKeys(state),
-      ),
+    return Row(
+      children: _buildPagedKeys(state),
     );
   }
 
@@ -862,16 +864,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             ] else ...[
               // Classic double row layout.
               // Row 1 — modifiers + signals (Expanded to fit screen width evenly)
-              Row(
-                children: [
-                  _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed),
-                  _key('SHIFT', state.toggleShift, armed: state.shiftArmed),
-                  _key('ESC', () => _sendTerminalKey(state, '\x1b')),
-                  _key('TAB', () => _sendTerminalKey(state, '\t')),
-                  _key('ALT', () => _sendTerminalKey(state, '\x1b')),
-                  _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true),
-                ],
-              ),
+              _buildScrollableRow1(state),
               const SizedBox(height: 5),
               // Row 2 — Horizontally scrollable row of custom shortcuts.
               _buildScrollableRow2(state),
@@ -958,7 +951,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     } else {
       return _key(
         shortcut.label,
-        () => _sendTerminalKey(state, shortcut.parsedValue),
+        () => state.sendTerminalInput(shortcut.parsedValue),
       );
     }
   }
