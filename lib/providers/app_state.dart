@@ -466,6 +466,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   TerminalShortcutLayout _shortcutLayout = TerminalShortcutLayout.classic;
   TerminalShortcutLayout get shortcutLayout => _shortcutLayout;
 
+  int _shortcutPageIndex = 0;
+  int get shortcutPageIndex => _shortcutPageIndex;
+
   List<TerminalShortcut> _customShortcuts = [];
   List<TerminalShortcut> get customShortcuts => _customShortcuts;
 
@@ -994,6 +997,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         _customShortcuts = decoded
             .map((item) => TerminalShortcut.fromJson(item as Map<String, dynamic>))
             .toList();
+        
+        // Migration: If no system shortcuts exist in the loaded configuration, prepend them.
+        final hasSystem = _customShortcuts.any((s) => s.value.startsWith('system:'));
+        if (!hasSystem) {
+          final systemShortcuts = [
+            TerminalShortcut(label: 'ADJUNTAR', value: 'system:attach'),
+            TerminalShortcut(label: 'PROMPTS', value: 'system:prompts'),
+            TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
+            TerminalShortcut(label: 'ENLACES', value: 'system:links'),
+            TerminalShortcut(label: 'AJUSTES', value: 'system:settings'),
+          ];
+          _customShortcuts.insertAll(0, systemShortcuts);
+          _saveCustomShortcuts();
+        }
       } catch (e) {
         _customShortcuts = getDefaultShortcuts();
       }
@@ -1051,6 +1068,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setInt(_kShortcutLayout, layout.index);
   }
 
+  void setShortcutPageIndex(int val) {
+    if (_shortcutPageIndex == val) return;
+    _shortcutPageIndex = val;
+    notifyListeners();
+  }
+
   Future<void> setShortcutKeyHeight(double value) async {
     if (_shortcutKeyHeight == value) return;
     _shortcutKeyHeight = value;
@@ -1069,6 +1092,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   List<TerminalShortcut> getDefaultShortcuts() {
     return [
+      TerminalShortcut(label: 'ADJUNTAR', value: 'system:attach'),
+      TerminalShortcut(label: 'PROMPTS', value: 'system:prompts'),
+      TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
+      TerminalShortcut(label: 'ENLACES', value: 'system:links'),
+      TerminalShortcut(label: 'AJUSTES', value: 'system:settings'),
       TerminalShortcut(label: 'Re Pág', value: r'\x1b[5~'),
       TerminalShortcut(label: 'Av Pág', value: r'\x1b[6~'),
       TerminalShortcut(label: 'Inicio', value: r'\x1b[H'),

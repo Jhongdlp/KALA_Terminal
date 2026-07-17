@@ -9,6 +9,7 @@ import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import 'update_dialog.dart';
+import 'shortcut_manager_sheet.dart';
 
 /// Central configuration screen. Every persisted user preference lives here so
 /// there is a single place to surface anything that can be tuned.
@@ -192,6 +193,23 @@ class SettingsTab extends StatelessWidget {
                   value: state.shortcutLayout,
                   onChanged: state.setShortcutLayout,
                 ),
+              ),
+              Hairline(),
+              ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                title: Text('PERSONALIZAR BOTONES DE TECLADO',
+                    style: AppText.label(9, color: AppColors.muted)),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 4.0),
+                  child: Text(
+                      'Arrastra para reordenar y activa/desactiva los atajos y botones del teclado inteligente.',
+                      style: AppText.label(8.5,
+                          color: AppColors.faint, spacing: 0.3)),
+                ),
+                trailing:
+                    Icon(Icons.keyboard_arrow_right, color: AppColors.muted),
+                onTap: () => ShortcutManagerSheet.show(context, state),
               ),
             ],
           ),

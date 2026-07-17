@@ -2,21 +2,25 @@
 class TerminalShortcut {
   final String label;
   final String value;
+  final bool enabled;
 
   TerminalShortcut({
     required this.label,
     required this.value,
+    this.enabled = true,
   });
 
   Map<String, dynamic> toJson() => {
         'label': label,
         'value': value,
+        'enabled': enabled,
       };
 
   factory TerminalShortcut.fromJson(Map<String, dynamic> json) =>
       TerminalShortcut(
         label: json['label'] as String,
         value: json['value'] as String,
+        enabled: json['enabled'] as bool? ?? true,
       );
 
   /// Decodes backslash escape sequences like \n, \t, \e, or hex escapes like \x03.
