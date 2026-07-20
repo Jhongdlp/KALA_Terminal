@@ -762,18 +762,18 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _key('←', () => state.sendTerminalInput('\x1b[D'), width: 34, height: totalH),
+        _key('←', () => _sendTerminalKey(state, '\x1b[D'), width: 34, height: totalH),
         const SizedBox(width: 4),
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _key('↑', () => state.sendTerminalInput('\x1b[A'), width: 34, height: h),
+            _key('↑', () => _sendTerminalKey(state, '\x1b[A'), width: 34, height: h),
             const SizedBox(height: 5),
-            _key('↓', () => state.sendTerminalInput('\x1b[B'), width: 34, height: h),
+            _key('↓', () => _sendTerminalKey(state, '\x1b[B'), width: 34, height: h),
           ],
         ),
         const SizedBox(width: 4),
-        _key('→', () => state.sendTerminalInput('\x1b[C'), width: 34, height: totalH),
+        _key('→', () => _sendTerminalKey(state, '\x1b[C'), width: 34, height: totalH),
       ],
     );
   }
@@ -785,20 +785,20 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       keys.addAll([
         _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
         _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
-        _key('ESC', () => state.sendTerminalInput('\x1b'), width: 36),
-        _key('TAB', () => state.sendTerminalInput('\t'), width: 36),
-        _key('ALT', () => state.sendTerminalInput('\x1b'), width: 36),
-        _key('^C', () => state.sendTerminalInput('\x03'), inverted: true, width: 32),
+        _key('ESC', () => _sendTerminalKey(state, '\x1b'), width: 36),
+        _key('TAB', () => _sendTerminalKey(state, '\t'), width: 36),
+        _key('ALT', () => _sendTerminalKey(state, '\x1b'), width: 36),
+        _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true, width: 32),
       ]);
     } else {
       keys.addAll([
-        _key('^D', () => state.sendTerminalInput('\x04'), width: 32),
-        _key('HOME', () => state.sendTerminalInput('\x1b[H')),
-        _key('END', () => state.sendTerminalInput('\x1b[F')),
-        _key('PGUP', () => state.sendTerminalInput('\x1b[5~')),
-        _key('PGDN', () => state.sendTerminalInput('\x1b[6~')),
-        _key('INS', () => state.sendTerminalInput('\x1b[2~')),
-        _key('DEL', () => state.sendTerminalInput('\x1b[3~')),
+        _key('^D', () => _sendTerminalKey(state, '\x04'), width: 32),
+        _key('HOME', () => _sendTerminalKey(state, '\x1b[H')),
+        _key('END', () => _sendTerminalKey(state, '\x1b[F')),
+        _key('PGUP', () => _sendTerminalKey(state, '\x1b[5~')),
+        _key('PGDN', () => _sendTerminalKey(state, '\x1b[6~')),
+        _key('INS', () => _sendTerminalKey(state, '\x1b[2~')),
+        _key('DEL', () => _sendTerminalKey(state, '\x1b[3~')),
       ]);
     }
     return Row(
@@ -951,7 +951,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     } else {
       return _key(
         shortcut.label,
-        () => state.sendTerminalInput(shortcut.parsedValue),
+        () => _sendTerminalKey(state, shortcut.parsedValue),
       );
     }
   }
