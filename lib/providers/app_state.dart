@@ -1035,6 +1035,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setBool('settings_shortcuts_migrated_v3', true);
     }
 
+    // Migration v4: Reset default shortcuts to clean up unnecessary duplicates that are now standard in Row 1
+    final migratedV4 = prefs.getBool('settings_shortcuts_migrated_v4') ?? false;
+    if (!migratedV4) {
+      _customShortcuts = getDefaultShortcuts();
+      await prefs.setString(_kCustomShortcuts, json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      await prefs.setBool('settings_shortcuts_migrated_v4', true);
+    }
+
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
     _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
 
@@ -1097,25 +1105,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
       TerminalShortcut(label: 'ENLACES', value: 'system:links'),
       TerminalShortcut(label: 'AJUSTES', value: 'system:settings'),
-      TerminalShortcut(label: 'Re Pág', value: r'\x1b[5~'),
-      TerminalShortcut(label: 'Av Pág', value: r'\x1b[6~'),
-      TerminalShortcut(label: 'Inicio', value: r'\x1b[H'),
-      TerminalShortcut(label: 'Fin', value: r'\x1b[F'),
-      TerminalShortcut(label: '^C', value: r'\x03'),
-      TerminalShortcut(label: '^D', value: r'\x04'),
       TerminalShortcut(label: 'clear', value: 'clear\n'),
-      TerminalShortcut(label: '^DEL', value: r'\x1b[3;5~'),
-      TerminalShortcut(label: 'S-Tab', value: r'\x1b[Z'),
-      TerminalShortcut(label: '^O', value: r'\x0f'),
-      TerminalShortcut(label: '^G', value: r'\x07'),
-      TerminalShortcut(label: '^L', value: r'\x0c'),
-      TerminalShortcut(label: '^R', value: r'\x12'),
-      TerminalShortcut(label: '^W', value: r'\x17'),
-      TerminalShortcut(label: '^J', value: r'\n'),
       TerminalShortcut(label: '^A', value: r'\x01'),
       TerminalShortcut(label: '^E', value: r'\x05'),
-      TerminalShortcut(label: '^U', value: r'\x15'),
+      TerminalShortcut(label: '^L', value: r'\x0c'),
       TerminalShortcut(label: '^K', value: r'\x0b'),
+      TerminalShortcut(label: 'exit', value: 'exit\n'),
     ];
   }
 
