@@ -779,36 +779,39 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   }
 
   Widget _buildScrollableRow1(AppState state) {
-    final page = state.shortcutPageIndex;
-    final List<Widget> keys = [];
-    if (page == 0) {
-      keys.addAll([
-        _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
-        _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
-        _key('ESC', () => _sendTerminalKey(state, '\x1b'), width: 36),
-        _key('TAB', () => _sendTerminalKey(state, '\t'), width: 36),
-        _key('ALT', () => _sendTerminalKey(state, '\x1b'), width: 36),
-        _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true, width: 32),
-      ]);
-    } else {
-      keys.addAll([
-        _key('^D', () => _sendTerminalKey(state, '\x04'), width: 32),
-        _key('HOME', () => _sendTerminalKey(state, '\x1b[H')),
-        _key('END', () => _sendTerminalKey(state, '\x1b[F')),
-        _key('PGUP', () => _sendTerminalKey(state, '\x1b[5~')),
-        _key('PGDN', () => _sendTerminalKey(state, '\x1b[6~')),
-        _key('INS', () => _sendTerminalKey(state, '\x1b[2~')),
-        _key('DEL', () => _sendTerminalKey(state, '\x1b[3~')),
-      ]);
-    }
-    return Row(
-      children: keys,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
+          _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
+          _key('ESC', () => _sendTerminalKey(state, '\x1b'), width: 36),
+          _key('TAB', () => _sendTerminalKey(state, '\t'), width: 36),
+          _key('ALT', () => _sendTerminalKey(state, '\x1b'), width: 36),
+          _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true, width: 32),
+          _key('^D', () => _sendTerminalKey(state, '\x04'), width: 32),
+          _key('HOME', () => _sendTerminalKey(state, '\x1b[H')),
+          _key('END', () => _sendTerminalKey(state, '\x1b[F')),
+          _key('PGUP', () => _sendTerminalKey(state, '\x1b[5~')),
+          _key('PGDN', () => _sendTerminalKey(state, '\x1b[6~')),
+          _key('INS', () => _sendTerminalKey(state, '\x1b[2~')),
+          _key('DEL', () => _sendTerminalKey(state, '\x1b[3~')),
+        ],
+      ),
     );
   }
 
   Widget _buildScrollableRow2(AppState state) {
-    return Row(
-      children: _buildPagedKeys(state),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          ...state.customShortcuts.where((s) => s.enabled).map((shortcut) {
+            return _buildShortcutKey(state, shortcut);
+          }),
+          _key('', () => ShortcutManagerSheet.show(context, state), icon: Icons.settings, width: 34),
+        ],
+      ),
     );
   }
 
@@ -875,61 +878,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     );
   }
 
-  List<Widget> _buildPagedKeys(AppState state) {
-    final enabledKeys = state.customShortcuts.where((s) => s.enabled).toList();
-    if (enabledKeys.isEmpty) {
-      return [
-        _key('', () => ShortcutManagerSheet.show(context, state), icon: Icons.settings, width: 34),
-      ];
-    }
-
-    const int pageSize = 5;
-    if (enabledKeys.length <= pageSize) {
-      return enabledKeys.map((s) => _buildShortcutKey(state, s)).toList();
-    }
-
-    final List<List<TerminalShortcut>> pages = [];
-    int index = 0;
-    while (index < enabledKeys.length) {
-      if (pages.isEmpty) {
-        final takeCount = pageSize - 1;
-        pages.add(enabledKeys.sublist(index, index + takeCount));
-        index += takeCount;
-      } else {
-        final remaining = enabledKeys.length - index;
-        if (remaining <= pageSize - 1) {
-          pages.add(enabledKeys.sublist(index));
-          index = enabledKeys.length;
-        } else {
-          pages.add(enabledKeys.sublist(index, index + (pageSize - 2)));
-          index += (pageSize - 2);
-        }
-      }
-    }
-
-    int pageIndex = state.shortcutPageIndex;
-    if (pageIndex >= pages.length) {
-      pageIndex = pages.length - 1;
-      if (pageIndex < 0) pageIndex = 0;
-    }
-
-    final List<Widget> rowKeys = [];
-    final currentPageKeys = pages[pageIndex];
-
-    if (pageIndex > 0) {
-      rowKeys.add(_key('', () => state.setShortcutPageIndex(pageIndex - 1), icon: Icons.arrow_back, width: 34));
-    }
-
-    for (final s in currentPageKeys) {
-      rowKeys.add(_buildShortcutKey(state, s));
-    }
-
-    if (pageIndex < pages.length - 1) {
-      rowKeys.add(_key('', () => state.setShortcutPageIndex(pageIndex + 1), icon: Icons.arrow_forward, width: 34));
-    }
-
-    return rowKeys;
-  }
 
   Widget _buildShortcutKey(AppState state, TerminalShortcut shortcut) {
     if (shortcut.value.startsWith('system:')) {
