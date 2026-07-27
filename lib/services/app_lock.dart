@@ -28,7 +28,7 @@ class AppLock {
   Future<bool> authenticate() async {
     try {
       return await _auth.authenticate(
-        localizedReason: 'Desbloquea KALA para continuar',
+        localizedReason: 'Desbloquea KAMMEL SSH para continuar',
         options: const AuthenticationOptions(
           // Allow the phone's PIN/pattern/password as a fallback, not just
           // biometrics.
@@ -39,7 +39,7 @@ class AppLock {
         ),
         authMessages: const [
           AndroidAuthMessages(
-            signInTitle: 'Desbloquear KALA',
+            signInTitle: 'Desbloquear KAMMEL SSH',
             biometricHint: '',
             cancelButton: 'Cancelar',
             deviceCredentialsRequiredTitle: 'Bloqueo no configurado',

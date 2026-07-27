@@ -71,7 +71,7 @@ class _LockScreenState extends State<LockScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                Text('KALA', style: AppText.display(44, color: AppColors.bone)),
+                Text('KAMMEL SSH', style: AppText.display(44, color: AppColors.bone)),
                 const SizedBox(height: 10),
                 Text(
                   _failed

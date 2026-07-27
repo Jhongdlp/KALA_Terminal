@@ -26,7 +26,7 @@ class MenuDrawer extends StatelessWidget {
                   Icon(Icons.terminal_outlined, color: AppColors.accent, size: 20),
                   const SizedBox(width: 10),
                   Text(
-                    'KALA - MENÚ',
+                    'KAMMEL SSH - MENÚ',
                     style: AppText.label(12, color: AppColors.bone, spacing: 1.5),
                   ),
                 ],
@@ -86,7 +86,7 @@ class MenuDrawer extends StatelessWidget {
                       final info = snapshot.data;
                       final version = info != null ? '${info.version}+${info.buildNumber}' : '…';
                       return Text(
-                        'KALA TERMINAL v$version',
+                        'KAMMEL SSH v$version',
                         style: AppText.mono(8, color: AppColors.muted),
                       );
                     },

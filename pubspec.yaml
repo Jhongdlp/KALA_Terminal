@@ -1,5 +1,5 @@
 name: terminal_agent
-description: "KALA — gestor de conexiones SSH y explorador remoto para agentes IA."
+description: "KAMMEL SSH — gestor de conexiones SSH y explorador remoto para agentes IA."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -111,9 +111,9 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  image_path: "public/icon/image.png"
-  adaptive_icon_background: "#000000"
-  adaptive_icon_foreground: "public/icon/image.png"
+  image_path: "public/icon/IconKAMMEL_icon.png"
+  adaptive_icon_background: "#FAE6CD"
+  adaptive_icon_foreground: "public/icon/IconKAMMEL_icon.png"
   min_sdk_android: 21
 
 # For information on the generic Dart part of this file, see the

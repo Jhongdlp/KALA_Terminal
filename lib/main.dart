@@ -63,7 +63,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     AppColors.apply(themeChoice, platformBrightness, accentColorHex: accentColorHex);
 
     return MaterialApp(
-      title: 'KALA',
+      title: 'KAMMEL SSH',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.themeFor(themeChoice, platformBrightness, accentColorHex: accentColorHex),
       home: const _LockGate(),

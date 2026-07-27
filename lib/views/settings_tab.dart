@@ -264,7 +264,7 @@ class SettingsTab extends StatelessWidget {
               ToggleRow(
                 label: 'BLOQUEO DE LA APLICACIÓN',
                 description:
-                    'Pide tu huella (o el bloqueo del teléfono) al abrir KALA, '
+                    'Pide tu huella (o el bloqueo del teléfono) al abrir KAMMEL SSH, '
                     'para proteger tus conexiones y claves guardadas.',
                 value: appLockEnabled,
                 onChanged: (value) => _onAppLockChanged(context, state, value),
@@ -284,7 +284,7 @@ class SettingsTab extends StatelessWidget {
           SwissPanel(
             title: 'Acerca de',
             children: [
-              _InfoRow(label: 'APLICACIÓN', value: 'KALA'),
+              _InfoRow(label: 'APLICACIÓN', value: 'KAMMEL SSH'),
               Hairline(),
               _InfoRow(label: 'PAQUETE', value: 'terminal_agent'),
               Hairline(),
