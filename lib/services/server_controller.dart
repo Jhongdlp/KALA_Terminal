@@ -3,8 +3,10 @@ import 'dart:convert';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/connection_profile.dart';
+import '../models/db_connection_profile.dart';
 
 /// Lifecycle of the server console: pick a server → connecting → managing.
 enum ServerPhase { pickServer, connecting, ready, error }
@@ -19,7 +21,9 @@ enum ServerSection {
   networks,
   compose,
   system,
+  database,
 }
+
 
 /// One published port of a container: host port → container port/protocol.
 class PortMapping {
@@ -228,7 +232,20 @@ class ServerController extends ChangeNotifier {
   List<ComposeProject> composeProjects = [];
   List<DockerDfRow> dfRows = [];
 
+  // ---- Database section state ----
+  List<DbConnectionProfile> dbProfiles = [];
+  DbConnectionProfile? activeDbProfile;
+  bool dbConnected = false;
+  List<String> dbTables = [];
+  String? activeDbTable;
+  List<Map<String, dynamic>> dbRows = [];
+  List<Map<String, dynamic>> dbColumns = [];
+  List<Map<String, dynamic>> dbRelations = []; // Foreign keys
+  bool dbLoading = false;
+  String? dbError;
+
   /// Bumped on connect/disconnect so awaited work from a previous connection
+
   /// (or a cancelled connect) can detect it's stale and bail out.
   int _generation = 0;
 
@@ -273,6 +290,7 @@ class ServerController extends ChangeNotifier {
 
       phase = ServerPhase.ready;
       notifyListeners();
+      await loadDbProfiles(p.id);
       await refresh();
     } catch (e) {
       if (gen != _generation) return;
@@ -310,8 +328,22 @@ class ServerController extends ChangeNotifier {
     networks = [];
     composeProjects = [];
     dfRows = [];
+
+    // Reset database state
+    dbProfiles = [];
+    activeDbProfile = null;
+    dbConnected = false;
+    dbTables = [];
+    activeDbTable = null;
+    dbRows = [];
+    dbColumns = [];
+    dbRelations = [];
+    dbLoading = false;
+    dbError = null;
+
     if (!silent) notifyListeners();
   }
+
 
   Future<void> reconnect() async {
     final p = profile;
@@ -360,6 +392,8 @@ class ServerController extends ChangeNotifier {
           await _refreshCompose();
         case ServerSection.system:
           await _refreshDf();
+        case ServerSection.database:
+          await fetchTables();
       }
     } finally {
       if (gen == _generation) {
@@ -1027,6 +1061,542 @@ fi
     return rows;
   }
 
+  // ---- Database section methods ----
+
+  Future<void> loadDbProfiles(String sshProfileId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('db_profiles') ?? [];
+      dbProfiles = list
+          .map((item) => DbConnectionProfile.fromJson(item))
+          .where((p) => p.sshProfileId == sshProfileId)
+          .toList();
+    } catch (e) {
+      debugPrint('Error loading db profiles: $e');
+      dbProfiles = [];
+    }
+    notifyListeners();
+  }
+
+  Future<void> saveDbProfile(DbConnectionProfile profile) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('db_profiles') ?? [];
+      final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
+      profiles.removeWhere((p) => p.id == profile.id);
+      profiles.add(profile);
+      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      dbProfiles = profiles.where((p) => p.sshProfileId == profile.sshProfileId).toList();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error saving db profile: $e');
+    }
+  }
+
+  Future<void> deleteDbProfile(String profileId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('db_profiles') ?? [];
+      final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
+      profiles.removeWhere((p) => p.id == profileId);
+      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      if (profile != null) {
+        dbProfiles = profiles.where((p) => p.sshProfileId == profile!.id).toList();
+      }
+      if (activeDbProfile?.id == profileId) {
+        dbConnected = false;
+        activeDbProfile = null;
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error deleting db profile: $e');
+    }
+  }
+
+  void disconnectFromDatabase() {
+    dbConnected = false;
+    activeDbProfile = null;
+    activeDbTable = null;
+    dbRows = [];
+    dbColumns = [];
+    dbRelations = [];
+    dbTables = [];
+    dbError = null;
+    notifyListeners();
+  }
+
+  Future<bool> connectToDatabase(DbConnectionProfile dbProfile) async {
+    dbLoading = true;
+    dbError = null;
+    notifyListeners();
+    try {
+      activeDbProfile = dbProfile;
+      
+      // Test query
+      RemoteCmdResult testResult;
+      if (dbProfile.engine == 'postgres') {
+        testResult = await _executeSqlPostgres("SELECT 1;", dbProfile);
+      } else {
+        testResult = await _executeSqlMysql("SELECT 1;", dbProfile);
+      }
+      
+      if (!testResult.ok) {
+        dbError = testResult.stderr.isNotEmpty ? testResult.stderr.trim() : 'Fallo en la conexión.';
+        dbConnected = false;
+        dbLoading = false;
+        notifyListeners();
+        return false;
+      }
+      
+      dbConnected = true;
+      await fetchTables();
+      return true;
+    } catch (e) {
+      dbError = 'Error conectando a la base de datos: $e';
+      dbConnected = false;
+      dbLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> fetchTables() async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return;
+    
+    dbLoading = true;
+    dbError = null;
+    notifyListeners();
+    
+    try {
+      if (dbProfile.engine == 'postgres') {
+        final query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;";
+        // Wrap in json_agg
+        final wrappedQuery = "SELECT json_agg(t) FROM ($query) t;";
+        final res = await _executeSqlPostgres(wrappedQuery, dbProfile);
+        if (res.ok) {
+          final cleanOutput = res.stdout.trim();
+          if (cleanOutput.isEmpty || cleanOutput == 'null') {
+            dbTables = [];
+          } else {
+            final List<dynamic> data = json.decode(cleanOutput);
+            dbTables = data.map((item) => item['table_name'] as String).toList();
+          }
+        } else {
+          dbError = res.stderr.trim();
+          dbTables = [];
+        }
+      } else {
+        // MySQL
+        final query = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name;";
+        final res = await _executeSqlMysql(query, dbProfile);
+        if (res.ok) {
+          final lines = const LineSplitter().convert(res.stdout);
+          dbTables = lines.map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+        } else {
+          dbError = res.stderr.trim();
+          dbTables = [];
+        }
+      }
+      
+      // Fetch relationships too!
+      await fetchRelationships();
+    } catch (e) {
+      dbError = 'Error cargando tablas: $e';
+      dbTables = [];
+    } finally {
+      dbLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> fetchRelationships() async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return;
+    
+    try {
+      if (dbProfile.engine == 'postgres') {
+        final query = """
+          SELECT
+              tc.table_name AS from_table,
+              kcu.column_name AS from_column,
+              ccu.table_name AS to_table,
+              ccu.column_name AS to_column
+          FROM
+              information_schema.table_constraints AS tc
+              JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+              JOIN information_schema.constraint_column_usage AS ccu
+                ON ccu.constraint_name = tc.constraint_name
+                AND ccu.table_schema = tc.table_schema
+          WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public';
+        """;
+        final wrappedQuery = "SELECT json_agg(t) FROM ($query) t;";
+        final res = await _executeSqlPostgres(wrappedQuery, dbProfile);
+        if (res.ok) {
+          final clean = res.stdout.trim();
+          if (clean.isEmpty || clean == 'null') {
+            dbRelations = [];
+          } else {
+            final List<dynamic> list = json.decode(clean);
+            dbRelations = list.cast<Map<String, dynamic>>();
+          }
+        }
+      } else {
+        // MySQL foreign keys
+        final query = """
+          SELECT 
+              table_name AS from_table, 
+              column_name AS from_column, 
+              referenced_table_name AS to_table, 
+              referenced_column_name AS to_column 
+          FROM 
+              information_schema.key_column_usage 
+          WHERE 
+              referenced_table_name IS NOT NULL 
+              AND table_schema = DATABASE();
+        """;
+        final res = await _executeSqlMysql(query, dbProfile);
+        if (res.ok) {
+          final lines = const LineSplitter().convert(res.stdout);
+          dbRelations = [];
+          for (final line in lines) {
+            if (line.trim().isEmpty) continue;
+            final parts = line.split('\t');
+            if (parts.length >= 4) {
+              dbRelations.add({
+                'from_table': parts[0],
+                'from_column': parts[1],
+                'to_table': parts[2],
+                'to_column': parts[3],
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading db relations: $e');
+      dbRelations = [];
+    }
+  }
+
+  Future<void> fetchTableData(String tableName) async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return;
+    
+    dbLoading = true;
+    dbError = null;
+    activeDbTable = tableName;
+    notifyListeners();
+    
+    try {
+      // 1. Fetch Columns with primary key info
+      if (dbProfile.engine == 'postgres') {
+        final colQuery = """
+          SELECT 
+              c.column_name, 
+              c.data_type, 
+              c.is_nullable, 
+              c.column_default,
+              COALESCE(tc.constraint_type = 'PRIMARY KEY', false) AS is_primary
+          FROM information_schema.columns c
+          LEFT JOIN information_schema.key_column_usage kcu 
+              ON c.table_name = kcu.table_name 
+              AND c.column_name = kcu.column_name 
+              AND c.table_schema = kcu.table_schema
+          LEFT JOIN information_schema.table_constraints tc 
+              ON kcu.constraint_name = tc.constraint_name 
+              AND kcu.table_schema = tc.table_schema 
+              AND tc.constraint_type = 'PRIMARY KEY'
+          WHERE c.table_name = '$tableName' AND c.table_schema = 'public'
+          ORDER BY c.ordinal_position;
+        """;
+        final colWrapped = "SELECT json_agg(t) FROM ($colQuery) t;";
+        final colRes = await _executeSqlPostgres(colWrapped, dbProfile);
+        if (!colRes.ok) {
+          dbError = colRes.stderr.trim();
+          dbColumns = [];
+          dbRows = [];
+          dbLoading = false;
+          notifyListeners();
+          return;
+        }
+        final colClean = colRes.stdout.trim();
+        if (colClean.isEmpty || colClean == 'null') {
+          dbColumns = [];
+        } else {
+          final List<dynamic> list = json.decode(colClean);
+          dbColumns = list.cast<Map<String, dynamic>>();
+        }
+        
+        // 2. Fetch Rows
+        final rowQuery = "SELECT * FROM \"$tableName\" LIMIT 100;";
+        final rowWrapped = "SELECT json_agg(t) FROM ($rowQuery) t;";
+        final rowRes = await _executeSqlPostgres(rowWrapped, dbProfile);
+        if (rowRes.ok) {
+          final rowClean = rowRes.stdout.trim();
+          if (rowClean.isEmpty || rowClean == 'null') {
+            dbRows = [];
+          } else {
+            final List<dynamic> list = json.decode(rowClean);
+            dbRows = list.cast<Map<String, dynamic>>();
+          }
+        } else {
+          dbError = rowRes.stderr.trim();
+          dbRows = [];
+        }
+      } else {
+        // MySQL Columns with primary key info
+        final colQuery = """
+          SELECT 
+              c.column_name, 
+              c.data_type, 
+              c.is_nullable, 
+              c.column_default,
+              c.column_key = 'PRI' AS is_primary
+          FROM information_schema.columns c
+          WHERE c.table_name = '$tableName' AND c.table_schema = DATABASE() 
+          ORDER BY c.ordinal_position;
+        """;
+        final colRes = await _executeSqlMysql(colQuery, dbProfile);
+        if (!colRes.ok) {
+          dbError = colRes.stderr.trim();
+          dbColumns = [];
+          dbRows = [];
+          dbLoading = false;
+          notifyListeners();
+          return;
+        }
+        
+        dbColumns = [];
+        final colLines = const LineSplitter().convert(colRes.stdout);
+        for (final line in colLines) {
+          if (line.trim().isEmpty) continue;
+          final parts = line.split('\t');
+          if (parts.length >= 4) {
+            dbColumns.add({
+              'column_name': parts[0],
+              'data_type': parts[1],
+              'is_nullable': parts[2],
+              'column_default': parts[3] == 'NULL' ? null : parts[3],
+              'is_primary': parts.length >= 5 ? parts[4] == '1' || parts[4] == 'true' : false,
+            });
+          }
+        }
+        
+        // MySQL Rows
+        final colNames = dbColumns.map((c) => c['column_name'] as String).toList();
+        final rowRes = await _executeSqlMysql("SELECT * FROM `$tableName` LIMIT 100;", dbProfile);
+        if (rowRes.ok) {
+          dbRows = _parseTsv(rowRes.stdout, colNames);
+        } else {
+          dbError = rowRes.stderr.trim();
+          dbRows = [];
+        }
+      }
+    } catch (e) {
+      dbError = 'Error cargando datos de tabla: $e';
+      dbColumns = [];
+      dbRows = [];
+    } finally {
+      dbLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String> executeCustomSql(String sqlQuery) async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return 'Error: Base de datos no conectada.';
+    
+    dbLoading = true;
+    dbError = null;
+    notifyListeners();
+    
+    try {
+      RemoteCmdResult res;
+      if (dbProfile.engine == 'postgres') {
+        res = await _executeSqlPostgresRaw(sqlQuery, dbProfile);
+      } else {
+        res = await _executeSqlMysqlRaw(sqlQuery, dbProfile);
+      }
+      
+      if (res.ok) {
+        return res.stdout.isNotEmpty ? res.stdout.trim() : 'Sentencia ejecutada correctamente.';
+      } else {
+        return 'Error:\n${res.stderr.trim()}';
+      }
+    } catch (e) {
+      return 'Error ejecutando SQL: $e';
+    } finally {
+      dbLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> insertRow(String tableName, Map<String, dynamic> data) async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return false;
+    
+    dbLoading = true;
+    dbError = null;
+    notifyListeners();
+    
+    try {
+      final columns = data.keys.toList();
+      final values = data.values.map((v) {
+        if (v == null) return 'NULL';
+        final s = v.toString().replaceAll("'", "''");
+        return "'$s'";
+      }).toList();
+      
+      String sql;
+      if (dbProfile.engine == 'postgres') {
+        sql = 'INSERT INTO "$tableName" (${columns.map((c) => '"$c"').join(', ')}) VALUES (${values.join(', ')});';
+      } else {
+        sql = 'INSERT INTO `$tableName` (${columns.map((c) => '`$c`').join(', ')}) VALUES (${values.join(', ')});';
+      }
+      
+      RemoteCmdResult res;
+      if (dbProfile.engine == 'postgres') {
+        res = await _executeSqlPostgresRaw(sql, dbProfile);
+      } else {
+        res = await _executeSqlMysqlRaw(sql, dbProfile);
+      }
+      
+      if (res.ok) {
+        await fetchTableData(tableName);
+        return true;
+      } else {
+        dbError = res.stderr.trim();
+        return false;
+      }
+    } catch (e) {
+      dbError = 'Error insertando fila: $e';
+      return false;
+    } finally {
+      dbLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> deleteRow(String tableName, Map<String, dynamic> keys) async {
+    final dbProfile = activeDbProfile;
+    if (dbProfile == null || !dbConnected) return false;
+    
+    dbLoading = true;
+    dbError = null;
+    notifyListeners();
+    
+    try {
+      final List<String> whereClauses = [];
+      keys.forEach((col, val) {
+        if (val == null) {
+          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" IS NULL' : '`$col` IS NULL');
+        } else {
+          final s = val.toString().replaceAll("'", "''");
+          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" = \'$s\'' : '`$col` = \'$s\'');
+        }
+      });
+      
+      String sql;
+      if (dbProfile.engine == 'postgres') {
+        sql = 'DELETE FROM "$tableName" WHERE ${whereClauses.join(' AND ')};';
+      } else {
+        sql = 'DELETE FROM `$tableName` WHERE ${whereClauses.join(' AND ')};';
+      }
+      
+      RemoteCmdResult res;
+      if (dbProfile.engine == 'postgres') {
+        res = await _executeSqlPostgresRaw(sql, dbProfile);
+      } else {
+        res = await _executeSqlMysqlRaw(sql, dbProfile);
+      }
+      
+      if (res.ok) {
+        await fetchTableData(tableName);
+        return true;
+      } else {
+        dbError = res.stderr.trim();
+        return false;
+      }
+    } catch (e) {
+      dbError = 'Error eliminando fila: $e';
+      return false;
+    } finally {
+      dbLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<RemoteCmdResult> _executeSqlPostgres(String sql, DbConnectionProfile dbProfile) async {
+    final escapedSql = sql.replaceAll('"', '\\"');
+    if (dbProfile.dockerContainer != null) {
+      return runDocker(
+          "exec -i -e PGPASSWORD='${dbProfile.password}' ${dbProfile.dockerContainer} psql -U ${dbProfile.username} -d ${dbProfile.databaseName} -h localhost -p 5432 -A -t -c \"$escapedSql\"");
+    } else {
+      return _run(
+          "env PGPASSWORD='${dbProfile.password}' psql -h ${dbProfile.host} -p ${dbProfile.port} -U ${dbProfile.username} -d ${dbProfile.databaseName} -A -t -c \"$escapedSql\"");
+    }
+  }
+
+  Future<RemoteCmdResult> _executeSqlPostgresRaw(String sql, DbConnectionProfile dbProfile) async {
+    final escapedSql = sql.replaceAll('"', '\\"');
+    if (dbProfile.dockerContainer != null) {
+      return runDocker(
+          "exec -i -e PGPASSWORD='${dbProfile.password}' ${dbProfile.dockerContainer} psql -U ${dbProfile.username} -d ${dbProfile.databaseName} -h localhost -p 5432 -c \"$escapedSql\"");
+    } else {
+      return _run(
+          "env PGPASSWORD='${dbProfile.password}' psql -h ${dbProfile.host} -p ${dbProfile.port} -U ${dbProfile.username} -d ${dbProfile.databaseName} -c \"$escapedSql\"");
+    }
+  }
+
+  Future<RemoteCmdResult> _executeSqlMysql(String sql, DbConnectionProfile dbProfile) async {
+    final escapedSql = sql.replaceAll('"', '\\"');
+    if (dbProfile.dockerContainer != null) {
+      return runDocker(
+          "exec -i ${dbProfile.dockerContainer} mysql -u${dbProfile.username} -p'${dbProfile.password}' ${dbProfile.databaseName} -h localhost -P 3306 -s -N -e \"$escapedSql\"");
+    } else {
+      return _run(
+          "mysql -u${dbProfile.username} -p'${dbProfile.password}' -h ${dbProfile.host} -P ${dbProfile.port} ${dbProfile.databaseName} -s -N -e \"$escapedSql\"");
+    }
+  }
+
+  Future<RemoteCmdResult> _executeSqlMysqlRaw(String sql, DbConnectionProfile dbProfile) async {
+    final escapedSql = sql.replaceAll('"', '\\"');
+    if (dbProfile.dockerContainer != null) {
+      return runDocker(
+          "exec -i ${dbProfile.dockerContainer} mysql -u${dbProfile.username} -p'${dbProfile.password}' ${dbProfile.databaseName} -h localhost -P 3306 -t -e \"$escapedSql\"");
+    } else {
+      return _run(
+          "mysql -u${dbProfile.username} -p'${dbProfile.password}' -h ${dbProfile.host} -P ${dbProfile.port} ${dbProfile.databaseName} -t -e \"$escapedSql\"");
+    }
+  }
+
+  List<Map<String, dynamic>> _parseTsv(String stdout, List<String> colNames) {
+    final lines = const LineSplitter().convert(stdout);
+    final List<Map<String, dynamic>> results = [];
+    for (final line in lines) {
+      if (line.trim().isEmpty) continue;
+      final parts = line.split('\t');
+      final Map<String, dynamic> row = {};
+      for (int i = 0; i < colNames.length; i++) {
+        if (i < parts.length) {
+          final val = parts[i];
+          if (val == '\\N' || val == 'NULL' || val == 'null') {
+            row[colNames[i]] = null;
+          } else {
+            row[colNames[i]] = val.replaceAll('\\n', '\n').replaceAll('\\t', '\t');
+          }
+        } else {
+          row[colNames[i]] = null;
+        }
+      }
+      results.add(row);
+    }
+    return results;
+  }
+
   @override
   void dispose() {
     _generation++;
@@ -1035,3 +1605,4 @@ fi
     super.dispose();
   }
 }
+

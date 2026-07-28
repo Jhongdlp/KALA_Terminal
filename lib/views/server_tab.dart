@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../widgets/docker_logo.dart';
 import '../widgets/swiss.dart';
 import '../widgets/swiss_gauge_chart.dart';
+import 'server_db_tab.dart';
 
 /// Quick state filter for the containers list.
 enum _ContainerFilter { all, running, stopped }
@@ -586,6 +587,7 @@ class _ServerTabState extends State<ServerTab>
     (ServerSection.networks, 'REDES', Icons.lan_outlined),
     (ServerSection.compose, 'COMPOSE', Icons.account_tree_outlined),
     (ServerSection.system, 'SISTEMA', Icons.data_usage_outlined),
+    (ServerSection.database, 'BASE DE DATOS', Icons.storage_rounded),
   ];
 
   /// Slide-in navigation rail: server identity on top, every section listed
@@ -882,7 +884,9 @@ class _ServerTabState extends State<ServerTab>
 
   Widget _buildSection(
       BuildContext context, AppState state, ServerController server) {
-    if (server.section != ServerSection.monitor && !server.dockerAvailable) {
+    if (server.section != ServerSection.monitor &&
+        server.section != ServerSection.database &&
+        !server.dockerAvailable) {
       return _dockerUnavailable(server);
     }
     switch (server.section) {
@@ -900,6 +904,8 @@ class _ServerTabState extends State<ServerTab>
         return _buildCompose(context, server);
       case ServerSection.system:
         return _buildSystem(context, server);
+      case ServerSection.database:
+        return ServerDbTab(server: server);
     }
   }
 

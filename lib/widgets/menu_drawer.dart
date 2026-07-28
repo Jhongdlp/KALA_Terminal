@@ -54,20 +54,56 @@ class MenuDrawer extends StatelessWidget {
             ),
             Hairline(),
 
-            // Section 2: App Settings
+            // Section 2: General settings
             ListTile(
               leading: Icon(Icons.tune, color: AppColors.bone),
               title: Text(
-                'AJUSTES DE LA APP', 
+                'AJUSTES GENERALES', 
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Temas, fuentes y llaves de seguridad',
+                'Seguridad, explorador y llaves',
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
                 Navigator.of(context).pop(); // Close drawer
                 state.setActiveTabIndex(5); // Switch to Settings Tab
+              },
+            ),
+            Hairline(),
+
+            // Section 3: Personalization
+            ListTile(
+              leading: Icon(Icons.palette_outlined, color: AppColors.accent),
+              title: Text(
+                'PERSONALIZACIÓN', 
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                'Temas, colores y fuentes',
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(6); // Switch to Personalization Tab
+              },
+            ),
+            Hairline(),
+
+            // Section 4: About
+            ListTile(
+              leading: Icon(Icons.info_outline, color: AppColors.bone),
+              title: Text(
+                'ACERCA DE LA APP', 
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                'Información, versión y actualizaciones',
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(7); // Switch to About Tab
               },
             ),
             Hairline(),

@@ -11,6 +11,8 @@ import 'explorer_tab.dart';
 import 'editor_tab.dart';
 import 'server_tab.dart';
 import 'settings_tab.dart';
+import 'personalization_tab.dart';
+import 'about_tab.dart';
 import 'update_dialog.dart';
 
 class HomeView extends StatefulWidget {
@@ -98,6 +100,8 @@ class _HomeViewState extends State<HomeView> {
       EditorTab(),
       ServerTab(),
       SettingsTab(),
+      PersonalizationTab(),
+      AboutTab(),
     ];
 
     return PopScope(

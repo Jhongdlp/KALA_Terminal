@@ -1948,6 +1948,63 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return (ok: true, message: 'Adjuntado: $name');
   }
 
+  /// Picks files from the user's phone/device and uploads them directly to the
+  /// current folder in the active explorer session.
+  Future<({bool ok, String message})> uploadFilesFromPhone() async {
+    final session = activeSession;
+    if (session == null) return (ok: false, message: 'No hay sesión activa');
+
+    try {
+      await _ensureStoragePermission();
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: true,
+      );
+      if (picked == null || picked.files.isEmpty) {
+        return (ok: false, message: ''); // User cancelled
+      }
+
+      session.isLoadingFiles = true;
+      notifyListeners();
+
+      int count = 0;
+      for (final file in picked.files) {
+        final src = file.path;
+        if (src == null) continue;
+        final rawName = file.name;
+        final name = _sanitizeFilename(rawName);
+
+        if (session.connectionStatus == ConnectionStatus.remote) {
+          final sftp = await _getSftpClient(session);
+          final remoteFilePath = '${session.currentPath}/$name'.replaceAll('//', '/');
+          final bytes = await File(src).readAsBytes();
+          final f = await sftp.open(
+            remoteFilePath,
+            mode: SftpFileOpenMode.write |
+                SftpFileOpenMode.create |
+                SftpFileOpenMode.truncate,
+          );
+          await f.write(Stream.value(bytes));
+          await f.close();
+        } else {
+          final localFilePath = '${session.currentPath}/$name'.replaceAll('//', '/');
+          final bytes = await File(src).readAsBytes();
+          await File(localFilePath).writeAsBytes(bytes);
+        }
+        count++;
+      }
+
+      return (ok: true, message: 'Se subió $count archivo(s) correctamente');
+    } catch (e) {
+      return (ok: false, message: 'Error al subir: $e');
+    } finally {
+      session.isLoadingFiles = false;
+      notifyListeners();
+      await _loadFiles();
+    }
+  }
+
+
   // File Explorer Operations
   Future<void> changeDirectory(String newPath) async {
     final session = activeSession;

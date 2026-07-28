@@ -87,7 +87,16 @@ class _ExplorerTabState extends State<ExplorerTab> {
       color: AppColors.ink,
       child: Column(
         children: [
-          _buildPathBar(context, currentPath, typeFilter, showHidden, canNavigateBack),
+          _buildPathBar(
+            context,
+            currentPath,
+            typeFilter,
+            showHidden,
+            canNavigateBack,
+            visible,
+            selected,
+            clipboardCount,
+          ),
           if (_searchOpen) _buildSearchBar(context, searchQuery),
           if (downloadPhase != DownloadPhase.idle)
             _buildDownloadBar(context, downloadPhase)
@@ -121,8 +130,15 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
-  Widget _buildPathBar(BuildContext context, String currentPath,
-      FileTypeFilter typeFilter, bool showHidden, bool canNavigateBack) {
+  Widget _buildPathBar(
+      BuildContext context,
+      String currentPath,
+      FileTypeFilter typeFilter,
+      bool showHidden,
+      bool canNavigateBack,
+      List<FileSystemEntityInfo> visible,
+      Set<String> selected,
+      int clipboardCount) {
     return Container(
       height: 42,
       decoration: BoxDecoration(
@@ -167,6 +183,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
               active: showHidden,
               onTap: () => context.read<AppState>().setShowHidden(!showHidden)),
           _buildFilterButton(context, typeFilter),
+          _buildActionsDropdown(context, visible, selected, clipboardCount),
           _barIcon(Icons.refresh,
               tooltip: 'Actualizar',
               onTap: () =>
@@ -209,6 +226,114 @@ class _ExplorerTabState extends State<ExplorerTab> {
             color: typeFilter == FileTypeFilter.all
                 ? AppColors.muted
                 : AppColors.bone),
+      ),
+    );
+  }
+
+  Widget _buildActionsDropdown(
+      BuildContext context,
+      List<FileSystemEntityInfo> visible,
+      Set<String> selected,
+      int clipboardCount) {
+    final state = context.read<AppState>();
+    return PopupMenuButton<String>(
+      tooltip: 'Acciones de archivos',
+      color: AppColors.panel,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: AppColors.hairline, width: 1),
+      ),
+      onSelected: (value) async {
+        if (value == 'upload') {
+          final result = await state.uploadFilesFromPhone();
+          if (result.message.isNotEmpty && context.mounted) {
+            ScaffoldMessenger.of(context)
+              ..clearSnackBars()
+              ..showSnackBar(SnackBar(
+                content: Text(result.message,
+                    style: AppText.mono(11, color: AppColors.bone)),
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 4),
+              ));
+          }
+        } else if (value == 'select') {
+          state.selectPaths(visible.map((f) => f.path));
+        } else if (value == 'copy') {
+          state.copySelectionToClipboard(move: false);
+        } else if (value == 'paste') {
+          await state.pasteClipboard();
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'upload',
+          height: 38,
+          child: Row(
+            children: [
+              Icon(Icons.mobile_screen_share, size: 16, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text('Subir desde celular',
+                  style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
+            ],
+          ),
+        ),
+        PopupMenuDivider(height: 1),
+        PopupMenuItem(
+          value: 'select',
+          height: 38,
+          enabled: visible.isNotEmpty,
+          child: Row(
+            children: [
+              Icon(Icons.select_all, size: 16, color: AppColors.muted),
+              const SizedBox(width: 8),
+              Text('Seleccionar todo',
+                  style: AppText.mono(10,
+                      color: visible.isNotEmpty ? AppColors.bone : AppColors.muted,
+                      spacing: 1.0)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'copy',
+          height: 38,
+          enabled: selected.isNotEmpty,
+          child: Row(
+            children: [
+              Icon(Icons.copy_outlined, size: 16, color: AppColors.muted),
+              const SizedBox(width: 8),
+              Text('Copiar seleccionados',
+                  style: AppText.mono(10,
+                      color: selected.isNotEmpty ? AppColors.bone : AppColors.muted,
+                      spacing: 1.0)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'paste',
+          height: 38,
+          enabled: clipboardCount > 0,
+          child: Row(
+            children: [
+              Icon(Icons.content_paste, size: 16, color: AppColors.muted),
+              const SizedBox(width: 8),
+              Text('Pegar aquí',
+                  style: AppText.mono(10,
+                      color: clipboardCount > 0 ? AppColors.bone : AppColors.muted,
+                      spacing: 1.0)),
+            ],
+          ),
+        ),
+      ],
+      child: SizedBox(
+        width: 34,
+        height: 34,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(Icons.cloud_upload_outlined, size: 16, color: AppColors.bone),
+            Icon(Icons.arrow_drop_down, size: 12, color: AppColors.muted),
+          ],
+        ),
       ),
     );
   }

@@ -114,6 +114,7 @@ flutter_launcher_icons:
   image_path: "public/icon/IconKAMMEL_icon.png"
   adaptive_icon_background: "#FAE6CD"
   adaptive_icon_foreground: "public/icon/IconKAMMEL_icon.png"
+  adaptive_icon_foreground_inset: 24
   min_sdk_android: 21
 
 # For information on the generic Dart part of this file, see the
