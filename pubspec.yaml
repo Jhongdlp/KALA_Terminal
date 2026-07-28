@@ -111,9 +111,9 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  image_path: "public/icon/IconKAMMEL_icon.png"
+  image_path: "public/icon/IconKAMMEL.png"
   adaptive_icon_background: "#FAE6CD"
-  adaptive_icon_foreground: "public/icon/IconKAMMEL_icon.png"
+  adaptive_icon_foreground: "public/icon/IconKAMMEL.png"
   adaptive_icon_foreground_inset: 24
   min_sdk_android: 21
 

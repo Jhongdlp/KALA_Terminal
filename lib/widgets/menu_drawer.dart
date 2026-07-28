@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../services/server_controller.dart';
 import '../theme/app_theme.dart';
 import 'swiss.dart';
 
@@ -49,6 +50,33 @@ class MenuDrawer extends StatelessWidget {
               ),
               onTap: () {
                 Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(4); // Switch to Server console
+              },
+            ),
+            Hairline(),
+
+            // Section 1b: Database viewer. Lands in the server picker (same
+            // as SERVIDOR) when no server is connected yet, but opens
+            // straight into the BASE DE DATOS section once connected instead
+            // of the default monitor view.
+            ListTile(
+              leading: Icon(Icons.storage_rounded, color: AppColors.accent),
+              title: Text(
+                'BASE DE DATOS',
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                'Explora tablas y relaciones por SSH',
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                final server = state.server;
+                if (server.phase == ServerPhase.ready) {
+                  server.setSection(ServerSection.database);
+                } else {
+                  server.landingSection = ServerSection.database;
+                }
                 state.setActiveTabIndex(4); // Switch to Server console
               },
             ),

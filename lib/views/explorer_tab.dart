@@ -17,6 +17,7 @@ class ExplorerTab extends StatefulWidget {
 class _ExplorerTabState extends State<ExplorerTab> {
   late final TextEditingController _searchController;
   bool _searchOpen = false;
+  bool _sideDockOpen = false;
   // Last phase this tab rendered, so the "download finished" toast fires once
   // on the transition instead of on every rebuild.
   DownloadPhase _lastDownloadPhase = DownloadPhase.idle;
@@ -85,28 +86,39 @@ class _ExplorerTabState extends State<ExplorerTab> {
 
     return Container(
       color: AppColors.ink,
-      child: Column(
+      child: Stack(
         children: [
-          _buildPathBar(
-            context,
-            currentPath,
-            typeFilter,
-            showHidden,
-            canNavigateBack,
-            visible,
-            selected,
-            clipboardCount,
+          Column(
+            children: [
+              _buildPathBar(
+                context,
+                currentPath,
+                typeFilter,
+                showHidden,
+                canNavigateBack,
+                visible,
+                selected,
+                clipboardCount,
+              ),
+              if (_searchOpen) _buildSearchBar(context, searchQuery),
+              if (downloadPhase != DownloadPhase.idle)
+                _buildDownloadBar(context, downloadPhase)
+              else if (selected.isNotEmpty)
+                _buildSelectionBar(context, selected, visible, isRemote)
+              else if (clipboardCount > 0)
+                _buildPasteBar(context, clipboardCount, clipboardIsMove),
+              Expanded(
+                  child: _buildBody(
+                      context, isLoadingFiles, files, visible, selected)),
+            ],
           ),
-          if (_searchOpen) _buildSearchBar(context, searchQuery),
-          if (downloadPhase != DownloadPhase.idle)
-            _buildDownloadBar(context, downloadPhase)
-          else if (selected.isNotEmpty)
-            _buildSelectionBar(context, selected, visible, isRemote)
-          else if (clipboardCount > 0)
-            _buildPasteBar(context, clipboardCount, clipboardIsMove),
-          Expanded(
-              child:
-                  _buildBody(context, isLoadingFiles, files, visible, selected)),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child:
+                Center(child: _buildSideDock(context, visible, selected, clipboardCount)),
+          ),
         ],
       ),
     );
@@ -183,7 +195,6 @@ class _ExplorerTabState extends State<ExplorerTab> {
               active: showHidden,
               onTap: () => context.read<AppState>().setShowHidden(!showHidden)),
           _buildFilterButton(context, typeFilter),
-          _buildActionsDropdown(context, visible, selected, clipboardCount),
           _barIcon(Icons.refresh,
               tooltip: 'Actualizar',
               onTap: () =>
@@ -230,108 +241,95 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
-  Widget _buildActionsDropdown(
+  /// A narrow tab always pinned to the left edge of the screen. Tapping it
+  /// slides out a small panel with the file actions (upload, select all,
+  /// copy, paste) that used to live in the path bar's dropdown.
+  Widget _buildSideDock(
       BuildContext context,
       List<FileSystemEntityInfo> visible,
       Set<String> selected,
       int clipboardCount) {
     final state = context.read<AppState>();
-    return PopupMenuButton<String>(
-      tooltip: 'Acciones de archivos',
-      color: AppColors.panel,
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: AppColors.hairline, width: 1),
-      ),
-      onSelected: (value) async {
-        if (value == 'upload') {
-          final result = await state.uploadFilesFromPhone();
-          if (result.message.isNotEmpty && context.mounted) {
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(SnackBar(
-                content: Text(result.message,
-                    style: AppText.mono(11, color: AppColors.bone)),
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 4),
-              ));
-          }
-        } else if (value == 'select') {
-          state.selectPaths(visible.map((f) => f.path));
-        } else if (value == 'copy') {
-          state.copySelectionToClipboard(move: false);
-        } else if (value == 'paste') {
-          await state.pasteClipboard();
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem(
-          value: 'upload',
-          height: 38,
-          child: Row(
-            children: [
-              Icon(Icons.mobile_screen_share, size: 16, color: AppColors.accent),
-              const SizedBox(width: 8),
-              Text('Subir desde celular',
-                  style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
-            ],
+
+    Future<void> handleUpload() async {
+      setState(() => _sideDockOpen = false);
+      final result = await state.uploadFilesFromPhone();
+      if (result.message.isNotEmpty && context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+            content: Text(result.message,
+                style: AppText.mono(11, color: AppColors.bone)),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ));
+      }
+    }
+
+    Widget dockButton(IconData icon,
+        {required VoidCallback? onTap, String? tooltip, Color? color}) {
+      return IconButton(
+        icon: Icon(icon, size: 18, color: color ?? AppColors.bone),
+        onPressed: onTap,
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        visualDensity: VisualDensity.compact,
+      );
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: AppColors.panelHi,
+          borderRadius: const BorderRadius.only(
+            topRight: Radius.circular(8),
+            bottomRight: Radius.circular(8),
           ),
+          border: Border.all(color: AppColors.hairline, width: 1),
         ),
-        PopupMenuDivider(height: 1),
-        PopupMenuItem(
-          value: 'select',
-          height: 38,
-          enabled: visible.isNotEmpty,
-          child: Row(
-            children: [
-              Icon(Icons.select_all, size: 16, color: AppColors.muted),
-              const SizedBox(width: 8),
-              Text('Seleccionar todo',
-                  style: AppText.mono(10,
-                      color: visible.isNotEmpty ? AppColors.bone : AppColors.muted,
-                      spacing: 1.0)),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'copy',
-          height: 38,
-          enabled: selected.isNotEmpty,
-          child: Row(
-            children: [
-              Icon(Icons.copy_outlined, size: 16, color: AppColors.muted),
-              const SizedBox(width: 8),
-              Text('Copiar seleccionados',
-                  style: AppText.mono(10,
-                      color: selected.isNotEmpty ? AppColors.bone : AppColors.muted,
-                      spacing: 1.0)),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'paste',
-          height: 38,
-          enabled: clipboardCount > 0,
-          child: Row(
-            children: [
-              Icon(Icons.content_paste, size: 16, color: AppColors.muted),
-              const SizedBox(width: 8),
-              Text('Pegar aquí',
-                  style: AppText.mono(10,
-                      color: clipboardCount > 0 ? AppColors.bone : AppColors.muted,
-                      spacing: 1.0)),
-            ],
-          ),
-        ),
-      ],
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_upload_outlined, size: 16, color: AppColors.bone),
-            Icon(Icons.arrow_drop_down, size: 12, color: AppColors.muted),
+            InkWell(
+              onTap: () => setState(() => _sideDockOpen = !_sideDockOpen),
+              child: SizedBox(
+                width: 26,
+                height: 46,
+                child: Icon(
+                  _sideDockOpen ? Icons.chevron_left : Icons.chevron_right,
+                  size: 16,
+                  color: AppColors.muted,
+                ),
+              ),
+            ),
+            if (_sideDockOpen) ...[
+              Hairline(),
+              dockButton(Icons.mobile_screen_share,
+                  tooltip: 'Subir desde celular',
+                  color: AppColors.accent,
+                  onTap: handleUpload),
+              dockButton(Icons.select_all,
+                  tooltip: 'Seleccionar todo',
+                  onTap: visible.isEmpty
+                      ? null
+                      : () => state.selectPaths(visible.map((f) => f.path))),
+              dockButton(Icons.copy_outlined,
+                  tooltip: 'Copiar seleccionados',
+                  onTap: selected.isEmpty
+                      ? null
+                      : () => state.copySelectionToClipboard(move: false)),
+              dockButton(Icons.content_paste,
+                  tooltip: 'Pegar aquí',
+                  onTap: clipboardCount == 0
+                      ? null
+                      : () => state.pasteClipboard()),
+              const SizedBox(height: 4),
+            ],
           ],
         ),
       ),

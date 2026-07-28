@@ -193,6 +193,12 @@ class ServerController extends ChangeNotifier {
 
   ServerPhase phase = ServerPhase.pickServer;
   ServerSection section = ServerSection.monitor;
+
+  /// Section to land on once the next [connect] succeeds — set before
+  /// switching to this tab (e.g. the drawer's "BASE DE DATOS" entry) so the
+  /// server picker leads straight into that section instead of the default
+  /// monitor view. Reset to monitor after being consumed.
+  ServerSection landingSection = ServerSection.monitor;
   ConnectionProfile? profile;
   SSHClient? _client;
 
@@ -289,6 +295,8 @@ class ServerController extends ChangeNotifier {
       }
 
       phase = ServerPhase.ready;
+      section = landingSection;
+      landingSection = ServerSection.monitor;
       notifyListeners();
       await loadDbProfiles(p.id);
       await refresh();
@@ -1125,13 +1133,23 @@ fi
     notifyListeners();
   }
 
+  /// True when [r] failed because the remote shell couldn't find the CLI
+  /// binary at all (exit 127, or the shell/`env` "not found" message) rather
+  /// than the DB engine rejecting the connection.
+  bool _isMissingBinary(RemoteCmdResult r) {
+    final err = r.stderr.toLowerCase();
+    return r.exitCode == 127 ||
+        err.contains('no such file or directory') ||
+        err.contains('command not found');
+  }
+
   Future<bool> connectToDatabase(DbConnectionProfile dbProfile) async {
     dbLoading = true;
     dbError = null;
     notifyListeners();
     try {
       activeDbProfile = dbProfile;
-      
+
       // Test query
       RemoteCmdResult testResult;
       if (dbProfile.engine == 'postgres') {
@@ -1139,24 +1157,33 @@ fi
       } else {
         testResult = await _executeSqlMysql("SELECT 1;", dbProfile);
       }
-      
+
       if (!testResult.ok) {
-        dbError = testResult.stderr.isNotEmpty ? testResult.stderr.trim() : 'Fallo en la conexión.';
+        if (_isMissingBinary(testResult)) {
+          final bin = dbProfile.engine == 'postgres' ? 'psql' : 'mysql';
+          final pkg = dbProfile.engine == 'postgres'
+              ? 'postgresql-client'
+              : 'mysql-client (o mariadb-client)';
+          dbError = 'El servidor remoto no tiene instalado el cliente "$bin". '
+              'Instálalo con: sudo apt install $pkg (Debian/Ubuntu) '
+              'o el equivalente de tu distribución.';
+        } else {
+          dbError = testResult.stderr.isNotEmpty ? testResult.stderr.trim() : 'Fallo en la conexión.';
+        }
         dbConnected = false;
-        dbLoading = false;
-        notifyListeners();
         return false;
       }
-      
+
       dbConnected = true;
       await fetchTables();
       return true;
     } catch (e) {
       dbError = 'Error conectando a la base de datos: $e';
       dbConnected = false;
+      return false;
+    } finally {
       dbLoading = false;
       notifyListeners();
-      return false;
     }
   }
 
@@ -1242,6 +1269,11 @@ fi
             final List<dynamic> list = json.decode(clean);
             dbRelations = list.cast<Map<String, dynamic>>();
           }
+        } else {
+          dbRelations = [];
+          dbError ??= res.stderr.trim().isNotEmpty
+              ? res.stderr.trim()
+              : 'No se pudieron cargar las relaciones entre tablas.';
         }
       } else {
         // MySQL foreign keys
@@ -1273,11 +1305,19 @@ fi
               });
             }
           }
+        } else {
+          dbRelations = [];
+          dbError ??= res.stderr.trim().isNotEmpty
+              ? res.stderr.trim()
+              : 'No se pudieron cargar las relaciones entre tablas.';
         }
       }
     } catch (e) {
       debugPrint('Error loading db relations: $e');
       dbRelations = [];
+      dbError ??= 'Error cargando relaciones: $e';
+    } finally {
+      notifyListeners();
     }
   }
 
@@ -1529,47 +1569,58 @@ fi
     }
   }
 
+  /// POSIX shell single-quoting: wraps [s] so it reaches the remote command
+  /// as one literal argument, regardless of spaces, quotes, `$()`, backticks,
+  /// etc. Needed because [_run]/[runDocker] hand the whole string to a shell
+  /// on the remote server (via the SSH exec channel), not to the target
+  /// process directly.
+  String _shQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
+
   Future<RemoteCmdResult> _executeSqlPostgres(String sql, DbConnectionProfile dbProfile) async {
-    final escapedSql = sql.replaceAll('"', '\\"');
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i -e PGPASSWORD='${dbProfile.password}' ${dbProfile.dockerContainer} psql -U ${dbProfile.username} -d ${dbProfile.databaseName} -h localhost -p 5432 -A -t -c \"$escapedSql\"");
+          "exec -i -e PGPASSWORD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "psql -U ${_shQuote(dbProfile.username)} -d ${_shQuote(dbProfile.databaseName)} -h localhost -p ${dbProfile.port} -A -t -c ${_shQuote(sql)}");
     } else {
       return _run(
-          "env PGPASSWORD='${dbProfile.password}' psql -h ${dbProfile.host} -p ${dbProfile.port} -U ${dbProfile.username} -d ${dbProfile.databaseName} -A -t -c \"$escapedSql\"");
+          "env PGPASSWORD=${_shQuote(dbProfile.password)} psql -h ${_shQuote(dbProfile.host)} -p ${dbProfile.port} "
+          "-U ${_shQuote(dbProfile.username)} -d ${_shQuote(dbProfile.databaseName)} -A -t -c ${_shQuote(sql)}");
     }
   }
 
   Future<RemoteCmdResult> _executeSqlPostgresRaw(String sql, DbConnectionProfile dbProfile) async {
-    final escapedSql = sql.replaceAll('"', '\\"');
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i -e PGPASSWORD='${dbProfile.password}' ${dbProfile.dockerContainer} psql -U ${dbProfile.username} -d ${dbProfile.databaseName} -h localhost -p 5432 -c \"$escapedSql\"");
+          "exec -i -e PGPASSWORD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "psql -U ${_shQuote(dbProfile.username)} -d ${_shQuote(dbProfile.databaseName)} -h localhost -p ${dbProfile.port} -c ${_shQuote(sql)}");
     } else {
       return _run(
-          "env PGPASSWORD='${dbProfile.password}' psql -h ${dbProfile.host} -p ${dbProfile.port} -U ${dbProfile.username} -d ${dbProfile.databaseName} -c \"$escapedSql\"");
+          "env PGPASSWORD=${_shQuote(dbProfile.password)} psql -h ${_shQuote(dbProfile.host)} -p ${dbProfile.port} "
+          "-U ${_shQuote(dbProfile.username)} -d ${_shQuote(dbProfile.databaseName)} -c ${_shQuote(sql)}");
     }
   }
 
   Future<RemoteCmdResult> _executeSqlMysql(String sql, DbConnectionProfile dbProfile) async {
-    final escapedSql = sql.replaceAll('"', '\\"');
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${dbProfile.dockerContainer} mysql -u${dbProfile.username} -p'${dbProfile.password}' ${dbProfile.databaseName} -h localhost -P 3306 -s -N -e \"$escapedSql\"");
+          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -s -N -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${dbProfile.username} -p'${dbProfile.password}' -h ${dbProfile.host} -P ${dbProfile.port} ${dbProfile.databaseName} -s -N -e \"$escapedSql\"");
+          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -s -N -e ${_shQuote(sql)}");
     }
   }
 
   Future<RemoteCmdResult> _executeSqlMysqlRaw(String sql, DbConnectionProfile dbProfile) async {
-    final escapedSql = sql.replaceAll('"', '\\"');
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${dbProfile.dockerContainer} mysql -u${dbProfile.username} -p'${dbProfile.password}' ${dbProfile.databaseName} -h localhost -P 3306 -t -e \"$escapedSql\"");
+          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -t -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${dbProfile.username} -p'${dbProfile.password}' -h ${dbProfile.host} -P ${dbProfile.port} ${dbProfile.databaseName} -t -e \"$escapedSql\"");
+          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -t -e ${_shQuote(sql)}");
     }
   }
 

@@ -2517,7 +2517,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
       // A cached SFTP client can belong to a connection that has since dropped;
       // ask for a fresh one so a stale handle can't hang the download.
-      final sftp = isRemote ? await _getSftpClient(session, fresh: true) : null;
+      if (isRemote) await _getSftpClient(session, fresh: true);
 
       // ---- Phase 1: plan ----------------------------------------------------
       final plan = <_DownloadItem>[];
@@ -2526,8 +2526,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         _downloadCurrentName = entry.name;
         notifyListeners();
         final dest = _childPath(finalDir, entry.name, Platform.pathSeparator);
-        if (sftp != null) {
-          await _planRemote(sftp, entry.path, dest, plan);
+        if (isRemote) {
+          await _planRemote(session, entry.path, dest, plan);
         } else {
           await _planLocal(entry.path, dest, plan);
         }
@@ -2555,14 +2555,30 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
         _downloadCurrentName = item.name;
         notifyListeners();
+        void onBytes(int n) {
+          _downloadBytesDone = settledBytes + n;
+          _notifyDownloadProgress();
+        }
+
         try {
-          await _downloadFile(sftp, item, onBytes: (n) {
-            _downloadBytesDone = settledBytes + n;
-            _notifyDownloadProgress();
-          });
+          final sftp = isRemote ? await _getSftpClient(session) : null;
+          await _downloadFile(sftp, item, onBytes: onBytes);
           _downloadFilesDone++;
         } catch (e) {
-          _recordDownloadFailure(item.srcPath, e);
+          // A dropped connection mid-batch would otherwise fail every
+          // remaining file the same way; get a fresh SFTP channel and retry
+          // this one file once before giving up on it.
+          if (isRemote && !_downloadCancelled) {
+            try {
+              final fresh = await _getSftpClient(session, fresh: true);
+              await _downloadFile(fresh, item, onBytes: onBytes);
+              _downloadFilesDone++;
+            } catch (e2) {
+              _recordDownloadFailure(item.srcPath, e2);
+            }
+          } else {
+            _recordDownloadFailure(item.srcPath, e);
+          }
         }
         // Whether it landed or failed, this file is settled: charge its full
         // size so the bar keeps advancing monotonically.
@@ -2632,19 +2648,37 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // but a silent server for this long means the connection is gone.
   static const Duration _sftpStallTimeout = Duration(seconds: 45);
 
+  // Run an SFTP operation against the session's cached client; if it throws
+  // (a common symptom of a network blip on mobile — wifi/cellular handover,
+  // the screen locking, a brief server hiccup), grab a fresh SFTP channel and
+  // retry exactly once instead of letting one hiccup fail every remaining
+  // file in the batch.
+  Future<T> _sftpOpRetry<T>(
+      TerminalSession session, Future<T> Function(SftpClient sftp) op) async {
+    final sftp = await _getSftpClient(session);
+    try {
+      return await op(sftp);
+    } catch (e) {
+      if (_downloadCancelled) rethrow;
+      final fresh = await _getSftpClient(session, fresh: true);
+      return await op(fresh);
+    }
+  }
+
   // Walk a remote entry, appending the directories to create and the files to
   // fetch. `stat` (which follows symlinks) decides the type: the `listdir`
   // attributes report a symlinked directory as a plain link, and treating that
   // as a file used to blow up the whole download.
-  Future<void> _planRemote(
-      SftpClient sftp, String srcPath, String destPath, List<_DownloadItem> out,
+  Future<void> _planRemote(TerminalSession session, String srcPath,
+      String destPath, List<_DownloadItem> out,
       {int depth = 0}) async {
     if (_downloadCancelled || depth > 32) return;
     final name = srcPath.split('/').last;
 
     SftpFileAttrs attrs;
     try {
-      attrs = await sftp.stat(srcPath).timeout(_sftpOpTimeout);
+      attrs = await _sftpOpRetry(
+          session, (c) => c.stat(srcPath).timeout(_sftpOpTimeout));
     } catch (e) {
       _recordDownloadFailure(srcPath, e);
       return;
@@ -2655,7 +2689,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           srcPath: srcPath, destPath: destPath, name: name, isDirectory: true));
       final List<SftpName> items;
       try {
-        items = await sftp.listdir(srcPath).timeout(_sftpOpTimeout);
+        items = await _sftpOpRetry(
+            session, (c) => c.listdir(srcPath).timeout(_sftpOpTimeout));
       } catch (e) {
         _recordDownloadFailure(srcPath, e);
         return;
@@ -2663,7 +2698,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       for (final item in items) {
         if (item.filename == '.' || item.filename == '..') continue;
         await _planRemote(
-          sftp,
+          session,
           _childPath(srcPath, item.filename, '/'),
           _childPath(destPath, item.filename, Platform.pathSeparator),
           out,
