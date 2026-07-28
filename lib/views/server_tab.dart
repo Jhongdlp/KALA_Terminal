@@ -359,6 +359,14 @@ class _ServerTabState extends State<ServerTab>
               textAlign: TextAlign.center,
               style: AppText.body(12, color: AppColors.bone),
             ),
+            const SizedBox(height: 10),
+            GhostButton(
+              label: 'Copiar error',
+              icon: Icons.copy_outlined,
+              dense: true,
+              onPressed: () => _copyError(
+                  server.lastError ?? 'Error desconocido.'),
+            ),
             const SizedBox(height: 24),
             if (server.needsSudoPassword) ...[
               InvertedButton(
@@ -679,6 +687,7 @@ class _ServerTabState extends State<ServerTab>
                   children: [
                     _navGroup('SERVIDOR'),
                     item(ServerSection.monitor),
+                    item(ServerSection.database),
                     _navGroup('DOCKER'),
                     item(ServerSection.containers),
                     item(ServerSection.images),
@@ -873,6 +882,14 @@ class _ServerTabState extends State<ServerTab>
             ),
           ),
           GestureDetector(
+            onTap: () => _copyError(server.lastError!),
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(Icons.copy_outlined, size: 14, color: AppColors.muted),
+            ),
+          ),
+          GestureDetector(
             onTap: server.dismissError,
             behavior: HitTestBehavior.opaque,
             child: Icon(Icons.close, size: 14, color: AppColors.muted),
@@ -924,6 +941,14 @@ class _ServerTabState extends State<ServerTab>
               server.dockerNotice ?? 'No se pudo consultar Docker.',
               textAlign: TextAlign.center,
               style: AppText.body(11, color: AppColors.muted),
+            ),
+            const SizedBox(height: 10),
+            GhostButton(
+              label: 'Copiar mensaje',
+              icon: Icons.copy_outlined,
+              dense: true,
+              onPressed: () => _copyError(
+                  server.dockerNotice ?? 'No se pudo consultar Docker.'),
             ),
             if (server.needsSudoPassword) ...[
               const SizedBox(height: 16),
@@ -1500,6 +1525,11 @@ class _ServerTabState extends State<ServerTab>
         ),
       ),
     );
+  }
+
+  void _copyError(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    _toast('Error copiado al portapapeles');
   }
 
   void _toast(String msg) {
