@@ -111,13 +111,16 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  image_path: "public/icon/IconKAMMEL.png"
-  adaptive_icon_background: "#FAE6CD"
-  # The adaptive foreground is the camel glyph alone, already padded to sit
-  # inside the 66% safe zone, so no launcher mask (circle/squircle/teardrop)
-  # can clip it. Using the full card art here is what made the icon look
-  # zoomed in and cut off.
-  adaptive_icon_foreground: "public/icon/IconKAMMEL_foreground.png"
+  # Generated from public/icon/ugu.png, which ships as opaque RGB with black
+  # corners; ugu_icon.png is the same card art with the rounded corners cut to
+  # real transparency so the legacy square icon isn't boxed in black.
+  image_path: "public/icon/ugu_icon.png"
+  adaptive_icon_background: "#EE2A25"
+  # The adaptive foreground is the camel + SSH badge alone, already padded to
+  # sit inside the 66% safe zone, so no launcher mask (circle/squircle/
+  # teardrop) can clip it. Using the full card art here is what made the icon
+  # look zoomed in and cut off.
+  adaptive_icon_foreground: "public/icon/ugu_foreground.png"
   adaptive_icon_foreground_inset: 0
   min_sdk_android: 21
 

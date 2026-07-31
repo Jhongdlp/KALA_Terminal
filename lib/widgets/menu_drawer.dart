@@ -56,7 +56,7 @@ class MenuDrawer extends StatelessWidget {
 
             // Section 2: General settings
             ListTile(
-              leading: Icon(Icons.tune, color: AppColors.bone),
+              leading: Icon(Icons.tune, color: AppColors.accent),
               title: Text(
                 'AJUSTES GENERALES', 
                 style: AppText.mono(11, color: AppColors.bone),
@@ -114,7 +114,7 @@ class MenuDrawer extends StatelessWidget {
 
             // Section 4: About
             ListTile(
-              leading: Icon(Icons.info_outline, color: AppColors.bone),
+              leading: Icon(Icons.info_outline, color: AppColors.accent),
               title: Text(
                 'ACERCA DE LA APP', 
                 style: AppText.mono(11, color: AppColors.bone),

@@ -368,14 +368,14 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
             future: _gitChangesFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
+                return Center(
                   child: Padding(
-                    padding: EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.all(16.0),
                     child: SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
-                          strokeWidth: 1.5, color: Colors.white),
+                          strokeWidth: 1.5, color: AppColors.accent),
                     ),
                   ),
                 );
@@ -632,14 +632,14 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
         ),
         if (_treeExpanded)
           _loadingRoot
-              ? const Center(
+              ? Center(
                   child: Padding(
-                    padding: EdgeInsets.all(24.0),
+                    padding: const EdgeInsets.all(24.0),
                     child: SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 1.5, color: Colors.white),
+                          strokeWidth: 1.5, color: AppColors.accent),
                     ),
                   ),
                 )
@@ -685,12 +685,12 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
                   width: 20,
                   height: 20,
                   child: node.isLoading
-                      ? const Center(
+                      ? Center(
                           child: SizedBox(
                             width: 10,
                             height: 10,
                             child: CircularProgressIndicator(
-                                strokeWidth: 1.0, color: Colors.white),
+                                strokeWidth: 1.0, color: AppColors.accent),
                           ),
                         )
                       : isDir
