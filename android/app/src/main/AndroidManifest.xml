@@ -17,7 +17,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Shared-storage access (targetSdk 28 legacy permissions grant the whole
          /storage/emulated/0): the "adjuntar" file picker reads files from it and
-         the SFTP downloader saves downloads into Download/KALA. -->
+         the SFTP downloader saves downloads into Download/KAMMEL. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 

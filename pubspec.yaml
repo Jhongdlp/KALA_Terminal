@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.4.4+60
+version: 2.4.5+61
 
 environment:
   sdk: ^3.12.2
@@ -113,7 +113,11 @@ flutter_launcher_icons:
   android: true
   image_path: "public/icon/IconKAMMEL.png"
   adaptive_icon_background: "#FAE6CD"
-  adaptive_icon_foreground: "public/icon/IconKAMMEL.png"
+  # The adaptive foreground is the camel glyph alone, already padded to sit
+  # inside the 66% safe zone, so no launcher mask (circle/squircle/teardrop)
+  # can clip it. Using the full card art here is what made the icon look
+  # zoomed in and cut off.
+  adaptive_icon_foreground: "public/icon/IconKAMMEL_foreground.png"
   adaptive_icon_foreground_inset: 0
   min_sdk_android: 21
 

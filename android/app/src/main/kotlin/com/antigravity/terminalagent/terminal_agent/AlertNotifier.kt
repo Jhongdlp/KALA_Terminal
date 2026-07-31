@@ -25,6 +25,47 @@ object AlertNotifier {
     private const val CHANNEL_ID = "kala_alerts"
     const val EXTRA_SESSION_ID = "kala_session_id"
 
+    // Per-kind channels. A channel's importance is fixed when it is created and
+    // cannot be raised afterwards, so a level change is applied by moving to a
+    // channel whose id encodes the level and deleting the previous one. Kind
+    // ids match Dart's AlertKind.name; levels match AlertIntensity.name.
+    private const val CHANNEL_PREFIX = "kala_alert"
+
+    private fun channelId(kind: String, level: String) = "${CHANNEL_PREFIX}_${kind}_$level"
+
+    private fun kindTitle(kind: String): String = when (kind) {
+        "question" -> "El agente pregunta"
+        "done" -> "El agente terminó"
+        "bell" -> "Campana del programa"
+        "disconnect" -> "Sesión caída"
+        else -> "Avisos de agente"
+    }
+
+    private fun kindDescription(kind: String): String = when (kind) {
+        "question" -> "El agente espera una respuesta, un permiso o una selección"
+        "done" -> "El agente dejó de escribir sin pedir nada"
+        "bell" -> "El programa pidió atención explícitamente (campana u OSC 9/777)"
+        "disconnect" -> "Se perdió la conexión SSH de una sesión"
+        else -> "Una sesión de terminal pide tu atención"
+    }
+
+    private fun importanceFor(level: String): Int = when (level) {
+        "high" -> NotificationManager.IMPORTANCE_HIGH
+        "medium" -> NotificationManager.IMPORTANCE_DEFAULT
+        "low" -> NotificationManager.IMPORTANCE_LOW
+        else -> NotificationManager.IMPORTANCE_NONE
+    }
+
+    /** Levels understood by [importanceFor], for pruning stale channels. */
+    private val ALL_LEVELS = listOf("high", "medium", "low", "off")
+
+    /**
+     * The level currently configured for each kind, as last set by
+     * [configureChannels]. Kept so [show] can resolve a kind to its channel
+     * without a round trip to Dart.
+     */
+    private val levels = mutableMapOf<String, String>()
+
     // Alert notification ids live in their own range so they can never collide
     // with TerminalService's NOTIFICATION_ID (1001).
     private const val ID_BASE = 2000
@@ -67,7 +108,34 @@ object AlertNotifier {
         "opencode" -> Color.parseColor("#4B5563")     // Graphite
         "cursor" -> Color.parseColor("#374151")       // Slate
         "qwen" -> Color.parseColor("#6156E6")         // Qwen violet
-        else -> Color.parseColor("#007AFF")           // KALA azure
+        else -> Color.parseColor("#007AFF")           // KAMMEL azure
+    }
+
+    /**
+     * Creates one channel per alert kind at its configured importance, and
+     * removes that kind's channels at every *other* importance so the shade's
+     * channel list doesn't accumulate one entry per level ever chosen.
+     *
+     * [intensities] maps an AlertKind name to an AlertIntensity name.
+     */
+    fun configureChannels(context: Context, intensities: Map<String, String>) {
+        levels.putAll(intensities)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        for ((kind, level) in intensities) {
+            for (stale in ALL_LEVELS) {
+                if (stale != level) manager.deleteNotificationChannel(channelId(kind, stale))
+            }
+            if (level == "off") continue
+            val id = channelId(kind, level)
+            if (manager.getNotificationChannel(id) != null) continue
+            manager.createNotificationChannel(
+                NotificationChannel(id, kindTitle(kind), importanceFor(level)).apply {
+                    description = kindDescription(kind)
+                },
+            )
+        }
     }
 
     fun show(
@@ -76,11 +144,20 @@ object AlertNotifier {
         title: String,
         body: String,
         agent: String?,
+        kind: String?,
         sessionName: String? = null,
     ) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        createChannel(manager)
+        val level = kind?.let { levels[it] }
+        // Fall back to the original single channel when the kind is unknown or
+        // has not been configured yet, so an alert is never silently lost.
+        val activeChannel = if (kind != null && level != null && level != "off") {
+            channelId(kind, level)
+        } else {
+            createChannel(manager)
+            CHANNEL_ID
+        }
 
         val launch = context.packageManager
             .getLaunchIntentForPackage(context.packageName) ?: return
@@ -96,7 +173,7 @@ object AlertNotifier {
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(context, CHANNEL_ID)
+            Notification.Builder(context, activeChannel)
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
@@ -150,7 +227,7 @@ object AlertNotifier {
             Notification.Builder(context).setPriority(Notification.PRIORITY_HIGH)
         }
         val summary = builder
-            .setContentTitle("KALA")
+            .setContentTitle("KAMMEL")
             .setContentText("$alerts sesiones piden tu atención")
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(Color.parseColor("#007AFF"))

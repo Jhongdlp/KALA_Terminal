@@ -389,6 +389,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   /// read. Surfaces the backend's outcome; an empty message means the user
   /// cancelled the picker.
   Future<void> _attach(AppState state) async {
+    if (state.isAttaching) return; // An upload is already in flight.
     final result = await state.attachFile();
     if (!mounted) return;
     if (result.message.isNotEmpty) _toast(result.message);
@@ -825,6 +826,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         top: false,
         child: Column(
           children: [
+            if (state.isAttaching) _buildUploadBanner(state),
             if (state.shortcutLayout == TerminalShortcutLayout.dpadLeft) ...[
               Row(
                 children: [
@@ -883,7 +885,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       final action = shortcut.value.substring(7);
       switch (action) {
         case 'attach':
-          return _key('ADJUNTAR', () => _attach(state), icon: Icons.attach_file, width: 76);
+          return _attachKey(state);
         case 'prompts':
           return _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76);
         case 'commit':
@@ -901,6 +903,98 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         () => _sendTerminalKey(state, shortcut.parsedValue),
       );
     }
+  }
+
+  /// The ADJUNTAR key. While the picked file is uploading over SFTP it turns
+  /// into a live progress ring: the upload happens *before* anything lands in
+  /// the prompt, so on a slow link an inert key just reads as a frozen app.
+  Widget _attachKey(AppState state) {
+    if (!state.isAttaching) {
+      return _key('ADJUNTAR', () => _attach(state),
+          icon: Icons.attach_file, width: 76);
+    }
+    final progress = state.attachProgress;
+    return SizedBox(
+      width: 76,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Container(
+          height: state.shortcutKeyHeight,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.hairline, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 1.6,
+                  color: AppColors.bone,
+                  backgroundColor: AppColors.hairline,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                progress == null ? '···' : '${(progress * 100).round()}%',
+                style: AppText.mono(10.5,
+                    color: AppColors.bone,
+                    weight: FontWeight.w500,
+                    spacing: 0.2),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Thin banner over the shortcut rows while a file is being uploaded to the
+  /// server. Covers the paths that don't go through the ADJUNTAR key either —
+  /// e.g. pasting an image from the keyboard.
+  Widget _buildUploadBanner(AppState state) {
+    final progress = state.attachProgress;
+    final pct = progress == null ? '' : ' ${(progress * 100).round()}%';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.4, color: AppColors.bone),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'SUBIENDO ${state.attachName}$pct',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.mono(10,
+                      color: AppColors.bone,
+                      weight: FontWeight.w500,
+                      spacing: 0.6),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          LinearProgressIndicator(
+            value: progress,
+            minHeight: 2,
+            color: AppColors.bone,
+            backgroundColor: AppColors.hairline,
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _key(

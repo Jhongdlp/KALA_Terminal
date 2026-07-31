@@ -56,17 +56,36 @@ class SettingsTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // ---- Notifications ----------------------------------------------
+          // The settings themselves live in their own screen (drawer →
+          // NOTIFICACIONES); this is just a signpost, so there is exactly one
+          // place where alerts are configured.
           SwissPanel(
             title: 'Notificaciones',
             children: [
-              ToggleRow(
-                label: 'AVISOS DE AGENTE',
-                description:
-                    'Notifica cuando una sesión pide tu atención (campana u '
-                    'OSC 9/777) con la app en segundo plano — p. ej. un agente '
-                    'de IA esperando tu respuesta.',
-                value: agentAlerts,
-                onChanged: state.setAgentAlertsEnabled,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('AVISOS DE AGENTE',
+                        style: AppText.label(9, color: AppColors.muted)),
+                    const SizedBox(height: 5),
+                    Text(
+                      agentAlerts
+                          ? 'Activados. Configura qué avisar, con cuánta fuerza '
+                              'y cuándo en la pantalla de Notificaciones.'
+                          : 'Desactivados. Actívalos en la pantalla de '
+                              'Notificaciones.',
+                      style: AppText.label(8.5,
+                          color: AppColors.faint, spacing: 0.3),
+                    ),
+                    const SizedBox(height: 10),
+                    GhostButton(
+                      label: 'ABRIR NOTIFICACIONES',
+                      onPressed: () => state.setActiveTabIndex(8),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

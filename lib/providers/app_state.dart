@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import 'package:open_filex/open_filex.dart';
 import '../models/connection_profile.dart';
+import '../models/notification_prefs.dart';
 import '../models/prompt_snippet.dart';
 import '../models/terminal_shortcut.dart';
 import '../theme/app_theme.dart';
@@ -84,15 +85,43 @@ class TerminalSession {
   // Last window title the remote program set (OSC 0/2). Many TUI agents put
   // their name here; used to pick the agent badge on alert notifications.
   String? lastTitle;
+  // ---- Sticky agent identity (see [AppState._noteAgentEvidence]) ----
+  // Which agent this session is running, resolved once from the strongest
+  // evidence seen so far and then *kept*. It deliberately does not follow
+  // passing mentions in the output: talking to Claude Code about Qwen used to
+  // re-brand the session as Qwen and change the notification's look mid-task.
+  String? agentId;
+  String? agentLabel;
+  // Strength of the evidence behind [agentId] — see AppState._evidence*
+  // constants. Weaker evidence can never overwrite stronger.
+  int agentEvidence = 0;
+  // Manual override from the notifications screen: wins over all detection.
+  String? agentOverrideId;
+  // Accumulates keystrokes sent to the shell up to the next Enter, so the
+  // command the user actually launched can be used as identity evidence.
+  String inputLine = '';
   // Last time an agent alert fired for this session — debounce window so a
   // burst of BELs collapses into a single notification.
   DateTime? lastAlertAt;
+  // Whether that last alert was a question. A "finished" alert must not
+  // swallow the question that follows it a second later, so the debounce lets
+  // done → question through (see [AppState._onSessionAlert]).
+  bool lastAlertWasQuestion = false;
   // ---- Background agent-watch state (see [_evaluateAgentActivity]) ----
   // Signature (hash) of the normalized visible tail of the terminal the last
   // time it was inspected while backgrounded. Spinner glyphs, counters and
   // whitespace are stripped before hashing so idle redraw loops (Claude Code's
   // "✻ Thinking… (10s · esc to interrupt)") don't count as new output.
   int? watchSignature;
+  // Signature of the same tail *without* stripping anything. It moves on every
+  // spinner frame, so `rawWatchSignature changed && watchSignature unchanged`
+  // means "the agent is animating, i.e. still working" — the distinction the
+  // detector is built on.
+  int? rawWatchSignature;
+  // When the meaningful (noise-stripped) content last actually changed. Used
+  // by the [AppState._agentNoiseCap] safety valve so a TUI that redraws
+  // forever can't postpone the idle alert indefinitely.
+  DateTime? lastMeaningfulChangeAt;
   // True once an autodetect alert fired for the current idle period; reset
   // whenever the (normalized) screen content actually changes again, so a
   // static prompt can never re-notify.
@@ -405,6 +434,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
   static const String _kAgentAlerts = 'settings_agent_alerts';
+  static const String _kNotificationPrefs = 'settings_notification_prefs';
   static const String _kAccentColorHex = 'settings_accent_color_hex';
   static const String _kMonoFontChoice = 'settings_mono_font_choice';
   static const String _kShortcutLayout = 'settings_shortcut_layout';
@@ -451,11 +481,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   bool _syncTerminalPath = true;
   bool get syncTerminalPath => _syncTerminalPath;
 
-  // When true (default), a session that rings the bell or emits an OSC 9/777
-  // notification while the app is backgrounded posts a system notification —
-  // how TUI agents (Claude Code, aider, …) signal that they need input.
-  bool _agentAlertsEnabled = true;
-  bool get agentAlertsEnabled => _agentAlertsEnabled;
+  // Everything about agent notifications: which kinds fire, how loudly, when,
+  // and how sensitive the autodetector is. See [NotificationPrefs].
+  NotificationPrefs _notificationPrefs = const NotificationPrefs();
+  NotificationPrefs get notificationPrefs => _notificationPrefs;
+
+  /// Master switch, kept as a named getter because it gates the hot path in
+  /// the detector.
+  bool get agentAlertsEnabled => _notificationPrefs.enabled;
+
+  /// Rolling diagnostics log of recent alert decisions, newest first. Capped so
+  /// it can't grow unbounded; surfaced in the notifications screen.
+  final List<AlertLogEntry> _alertLog = [];
+  List<AlertLogEntry> get alertLog => List.unmodifiable(_alertLog);
+  static const int _alertLogLimit = 30;
+
+  void _logAlert(AlertLogEntry entry) {
+    _alertLog.insert(0, entry);
+    if (_alertLog.length > _alertLogLimit) _alertLog.removeLast();
+  }
 
   String _accentColorHex = 'auto';
   String get accentColorHex => _accentColorHex;
@@ -480,18 +524,75 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
-  Future<void> setAgentAlertsEnabled(bool value) async {
-    if (_agentAlertsEnabled == value) return;
-    _agentAlertsEnabled = value;
+  Future<void> setAgentAlertsEnabled(bool value) =>
+      updateNotificationPrefs(_notificationPrefs.copyWith(enabled: value));
+
+  /// Persists a whole new notification configuration. Every control in the
+  /// notifications screen funnels through here, so there is one place where
+  /// the prefs are written and the native channels are kept in sync.
+  Future<void> updateNotificationPrefs(NotificationPrefs value) async {
+    _notificationPrefs = value;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kAgentAlerts, value);
+    await prefs.setString(_kNotificationPrefs, value.encode());
+    await NotificationService.configureChannels(
+      intensities: {
+        for (final kind in AlertKind.values)
+          kind.name: value.intensityFor(kind).name,
+      },
+    );
+  }
+
+  /// Mutes or unmutes a single session, so one chatty server doesn't force the
+  /// user to switch everything off.
+  Future<void> setSessionMuted(String sessionId, bool muted) {
+    final ids = Set<String>.from(_notificationPrefs.mutedSessionIds);
+    if (muted) {
+      ids.add(sessionId);
+    } else {
+      ids.remove(sessionId);
+    }
+    return updateNotificationPrefs(
+        _notificationPrefs.copyWith(mutedSessionIds: ids));
+  }
+
+  /// Forces the agent identity of a session (or clears the override with
+  /// null), for when detection picks the wrong one — or an agent we don't know.
+  void setSessionAgentOverride(String sessionId, String? agentId) {
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (session == null) return;
+    session.agentOverrideId = agentId;
+    notifyListeners();
+  }
+
+  /// Posts one alert of each kind so the user can check on the device that
+  /// they arrive, sound the way they expect, and are not being blocked by a
+  /// system-level setting.
+  Future<void> sendTestNotifications() async {
+    final now = DateTime.now();
+    for (final kind in AlertKind.values) {
+      if (_notificationPrefs.intensityFor(kind) == AlertIntensity.off) continue;
+      await NotificationService.showAlert(
+        sessionId: 'test-${kind.name}',
+        title: 'Prueba · ${kind.label}',
+        body: kind.description,
+        kind: kind.name,
+        sessionName: 'Notificación de prueba',
+      );
+      _logAlert(AlertLogEntry(
+        at: now,
+        sessionName: 'Prueba',
+        kind: kind,
+        detail: 'Notificación de prueba enviada.',
+      ));
+    }
+    notifyListeners();
   }
 
   // ---- App lock --------------------------------------------------------
   // When enabled, a biometric/device-credential gate is shown before the app
   // shell on cold start (see LockGate in main.dart). The unlock uses the phone's
-  // biometric with a fallback to its screen-lock credential; no KALA-specific
+  // biometric with a fallback to its screen-lock credential; no KAMMEL-specific
   // secret is stored.
   bool _appLockEnabled = false;
   bool get appLockEnabled => _appLockEnabled;
@@ -580,15 +681,26 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // prompt that was already visible when the user left doesn't fire an
       // alert by itself — only output produced *after* backgrounding counts.
       for (final session in _sessions) {
-        session.watchSignature = _screenSignature(session);
-        session.watchAlertFired = false;
+        _seedWatchState(session);
       }
     }
   }
 
+  /// Points a session's watch state at whatever is on screen right now, so the
+  /// content already there can't trigger an alert on its own — only output
+  /// produced from this moment on counts as new.
+  void _seedWatchState(TerminalSession session) {
+    session.watchSignature = _screenSignature(session);
+    session.rawWatchSignature = _rawScreenSignature(session);
+    session.lastMeaningfulChangeAt = DateTime.now();
+    session.watchAlertFired = false;
+  }
+
   void _onAppResumed() {
     // The user is back: pending idle timers would alert about things they are
-    // already looking at.
+    // already looking at. The detector keeps running in the foreground (it
+    // resolves to an in-app badge there), so the state is reseeded rather than
+    // just torn down.
     for (final t in _sessionAlertTimers.values) {
       t.cancel();
     }
@@ -597,6 +709,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       t.cancel();
     }
     _sessionCheckTimers.clear();
+    for (final session in _sessions) {
+      _seedWatchState(session);
+    }
     // The user is looking at the app again: posted alerts are now noise.
     NotificationService.cancelAlerts();
     // If a notification tap resumed us, jump to that session.
@@ -635,112 +750,359 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// the bell several times in a burst.
   static const Duration _alertDebounce = Duration(seconds: 4);
 
-  /// Known TUI agents, matched (in order) against the terminal title and the
-  /// recent screen content to brand the alert notification. Purely cosmetic:
-  /// everything works the same for an unknown agent (generic badge).
-  static const List<({String marker, String id, String label})> _agentMarkers = [
-    (marker: 'antigravity', id: 'antigravity', label: 'Antigravity'),
-    (marker: 'agy', id: 'antigravity', label: 'Antigravity'),
-    (marker: 'deepmind', id: 'antigravity', label: 'Antigravity'),
-    (marker: 'claude', id: 'claude', label: 'Claude Code'),
-    (marker: 'aider', id: 'aider', label: 'Aider'),
+  // ---- Agent identity ------------------------------------------------------
+  // Which agent a session is running decides the notification's badge and
+  // label. It is resolved from *ranked* evidence and then sticks: a stronger
+  // signal replaces a weaker one, never the other way round. Guessing from
+  // whatever name appeared last on screen (the previous approach) misidentified
+  // the agent constantly, because agents print each other's names all the time.
+
+  /// Screen text only — any name that shows up in the visible buffer. Weakest:
+  /// used exclusively to name a session that has no identity at all yet.
+  static const int _evidenceScreen = 1;
+
+  /// The command the user typed to launch the agent. Strong: it says what was
+  /// actually started, rather than what is being talked about.
+  static const int _evidenceCommand = 2;
+
+  /// The window title the program set for itself (OSC 0/2). Strongest — it is
+  /// the running program declaring its own name.
+  static const int _evidenceTitle = 3;
+
+  /// Known TUI agents. [pattern] matches the window title or a banner on
+  /// screen and is anchored to word boundaries — a bare `contains` made
+  /// "legacy" match the old 'agy' marker and brand the session as Antigravity.
+  /// [command] matches the launcher's program name (already basename'd and
+  /// stripped of `sudo`/`npx`/env prefixes). Everything works the same for an
+  /// unknown agent, just with a generic badge.
+  static final List<({RegExp pattern, RegExp command, String id, String label})>
+      _agentMarkers = [
+    (
+      pattern: RegExp(r'\b(antigravity|deepmind)\b'),
+      command: RegExp(r'^(antigravity|agy)$'),
+      id: 'antigravity',
+      label: 'Antigravity'
+    ),
+    (
+      pattern: RegExp(r'\bclaude(\s+code)?\b'),
+      command: RegExp(r'^claude$'),
+      id: 'claude',
+      label: 'Claude Code'
+    ),
+    (
+      pattern: RegExp(r'\baider\b'),
+      command: RegExp(r'^aider$'),
+      id: 'aider',
+      label: 'Aider'
+    ),
     // Before 'codex'/'gemini': their names could appear in opencode output.
-    (marker: 'opencode', id: 'opencode', label: 'OpenCode'),
-    (marker: 'codex', id: 'codex', label: 'Codex'),
-    (marker: 'gemini', id: 'gemini', label: 'Gemini CLI'),
-    (marker: 'copilot', id: 'copilot', label: 'Copilot CLI'),
+    (
+      pattern: RegExp(r'\bopencode\b'),
+      command: RegExp(r'^opencode$'),
+      id: 'opencode',
+      label: 'OpenCode'
+    ),
+    (
+      pattern: RegExp(r'\bcodex\b'),
+      command: RegExp(r'^codex$'),
+      id: 'codex',
+      label: 'Codex'
+    ),
+    (
+      pattern: RegExp(r'\bgemini\b'),
+      command: RegExp(r'^gemini$'),
+      id: 'gemini',
+      label: 'Gemini CLI'
+    ),
+    (
+      pattern: RegExp(r'\bcopilot\b'),
+      command: RegExp(r'^copilot$'),
+      id: 'copilot',
+      label: 'Copilot CLI'
+    ),
     // 'cursor' alone would match ordinary terminal text ("cursor position"),
     // so only the CLI binary name counts.
-    (marker: 'cursor-agent', id: 'cursor', label: 'Cursor'),
-    (marker: 'qwen', id: 'qwen', label: 'Qwen Code'),
+    (
+      pattern: RegExp(r'\bcursor-agent\b'),
+      command: RegExp(r'^cursor-agent$'),
+      id: 'cursor',
+      label: 'Cursor'
+    ),
+    (
+      pattern: RegExp(r'\bqwen\b'),
+      command: RegExp(r'^qwen$'),
+      id: 'qwen',
+      label: 'Qwen Code'
+    ),
   ];
 
-  /// Best guess at which agent is running in [session]: the window title
-  /// (agents usually put their name there) wins; otherwise the most recent
-  /// mention in the tail of the terminal buffer. Null → unknown/no agent.
-  ({String id, String label})? _detectAgent(TerminalSession session) {
-    final title = session.lastTitle?.toLowerCase() ?? '';
+  /// Wrappers that precede the real program name on a command line, so
+  /// `npx claude` and `sudo -E aider` still identify their agent.
+  static final RegExp _launcherPrefixRegex = RegExp(
+    r'^(sudo(\s+-\w+)*|env|command|nohup|npx|bunx|pnpm\s+dlx|yarn\s+dlx|uvx|'
+    r'time|nice(\s+-n\s*-?\d+)?)\s+',
+  );
+
+  /// Shell assignments (`FOO=bar cmd`) that precede the program name.
+  static final RegExp _envAssignRegex = RegExp(r'^\w+=\S*\s+');
+
+  /// Records agent evidence of the given [strength] for [session], keeping the
+  /// strongest seen. Same-strength evidence is allowed to update the identity
+  /// (running a different agent in the same tab), except for
+  /// [_evidenceScreen], which only ever names a still-unidentified session —
+  /// otherwise a passing mention on screen could flip the badge again.
+  void _noteAgentEvidence(
+      TerminalSession session, String id, String label, int strength) {
+    if (strength == _evidenceScreen && session.agentEvidence != 0) return;
+    if (strength < session.agentEvidence) return;
+    if (session.agentId == id && session.agentEvidence == strength) return;
+    session.agentId = id;
+    session.agentLabel = label;
+    session.agentEvidence = strength;
+  }
+
+  /// Clears a session's agent identity — the agent exited, so the next one to
+  /// run in this tab starts from scratch instead of inheriting the badge.
+  void _clearAgentIdentity(TerminalSession session) {
+    session.agentId = null;
+    session.agentLabel = null;
+    session.agentEvidence = 0;
+  }
+
+  /// Feeds a window title (OSC 0/2) into identity resolution.
+  void _noteTitleEvidence(TerminalSession session, String title) {
+    session.lastTitle = title;
+    final lower = title.toLowerCase();
     for (final m in _agentMarkers) {
-      if (title.contains(m.marker)) return (id: m.id, label: m.label);
-    }
-    final tail = _terminalTail(session, 60).toLowerCase();
-    if (tail.isEmpty) return null;
-    ({String id, String label})? best;
-    var bestIdx = -1;
-    for (final m in _agentMarkers) {
-      final idx = tail.lastIndexOf(m.marker);
-      if (idx > bestIdx) {
-        bestIdx = idx;
-        best = (id: m.id, label: m.label);
+      if (m.pattern.hasMatch(lower)) {
+        _noteAgentEvidence(session, m.id, m.label, _evidenceTitle);
+        return;
       }
     }
-    return best;
+  }
+
+  /// Feeds the user's keystrokes into identity resolution: buffers them until
+  /// Enter, then reads the completed line as a command. Typing `qwen` is the
+  /// single most reliable signal that this tab now runs Qwen — far better than
+  /// anything that can be inferred from the output.
+  void _noteInputEvidence(TerminalSession session, String data) {
+    for (final rune in data.runes) {
+      if (rune == 0x0D || rune == 0x0A) {
+        // Enter: the line has been submitted.
+        _classifyCommandLine(session, session.inputLine);
+        session.inputLine = '';
+      } else if (rune == 0x03 || rune == 0x1B || rune == 0x15) {
+        // Ctrl+C / ESC / Ctrl+U abandon the line being typed.
+        session.inputLine = '';
+      } else if (rune == 0x7F || rune == 0x08) {
+        // Backspace / DEL.
+        if (session.inputLine.isNotEmpty) {
+          session.inputLine =
+              session.inputLine.substring(0, session.inputLine.length - 1);
+        }
+      } else if (rune >= 0x20 && session.inputLine.length < 256) {
+        session.inputLine += String.fromCharCode(rune);
+      }
+    }
+  }
+
+  /// Resolves a submitted command line to an agent (or to "the agent exited").
+  void _classifyCommandLine(TerminalSession session, String rawLine) {
+    var line = rawLine.trim().toLowerCase();
+    if (line.isEmpty) return;
+    // Only the first command of a pipeline/chain names the session.
+    line = line.split(RegExp(r'[|;&]')).first.trim();
+    while (true) {
+      final stripped = line
+          .replaceFirst(_envAssignRegex, '')
+          .replaceFirst(_launcherPrefixRegex, '');
+      if (stripped == line) break;
+      line = stripped.trim();
+    }
+    if (line.isEmpty) return;
+    var program = line.split(RegExp(r'\s+')).first;
+    // Basename: /usr/local/bin/claude → claude.
+    final slash = program.lastIndexOf('/');
+    if (slash >= 0) program = program.substring(slash + 1);
+    if (program == 'exit' || program == 'logout') {
+      _clearAgentIdentity(session);
+      return;
+    }
+    for (final m in _agentMarkers) {
+      if (m.command.hasMatch(program)) {
+        _noteAgentEvidence(session, m.id, m.label, _evidenceCommand);
+        return;
+      }
+    }
+  }
+
+  /// Which agent is running in [session]. Returns the sticky identity resolved
+  /// from title/command evidence; only when nothing is known does it fall back
+  /// to scanning the screen, and that scan is deterministic (first marker in
+  /// declaration order, not "whichever name appears lowest"), so repeated
+  /// alerts for one session always look the same. Null → unknown/no agent.
+  ({String id, String label})? _detectAgent(TerminalSession session) {
+    final override = session.agentOverrideId;
+    if (override != null) {
+      if (override == 'none') return null;
+      for (final m in _agentMarkers) {
+        if (m.id == override) return (id: m.id, label: m.label);
+      }
+    }
+    if (session.agentId == null) {
+      final tail = _terminalTail(session, 60).toLowerCase();
+      if (tail.isNotEmpty) {
+        for (final m in _agentMarkers) {
+          if (m.pattern.hasMatch(tail)) {
+            _noteAgentEvidence(session, m.id, m.label, _evidenceScreen);
+            break;
+          }
+        }
+      }
+    }
+    final id = session.agentId;
+    if (id == null) return null;
+    return (id: id, label: session.agentLabel ?? id);
   }
 
   /// Shared endpoint for every agent-attention signal (BEL, OSC 9, OSC 777 and
-  /// the idle autodetector), wired per-session in [createNewSession]. Policy:
+  /// the idle autodetector), wired per-session in [createNewSession]. Policy,
+  /// all of it overridable from the notifications screen:
   ///  - app in background → system notification (tap reopens the session);
   ///  - app visible but the session isn't the active one → in-app badge;
   ///  - app visible and session active → nothing beyond the bell's haptic.
-  void _onSessionAlert(TerminalSession session, {String? title, String? body}) {
-    if (!_agentAlertsEnabled) return;
+  ///
+  /// Every decision — sent or dropped — is recorded in [alertLog] with its
+  /// reason, so a misfire can be diagnosed from the app instead of guessed at.
+  void _onSessionAlert(TerminalSession session,
+      {String? title, String? body, bool isQuestion = false, AlertKind? kind}) {
+    final prefs = _notificationPrefs;
     final now = DateTime.now();
+    final alertKind =
+        kind ?? (isQuestion ? AlertKind.question : AlertKind.done);
+    final agent = _detectAgent(session);
+
+    void drop(String reason) {
+      _logAlert(AlertLogEntry(
+        at: now,
+        sessionName: session.name,
+        kind: alertKind,
+        agentLabel: agent?.label,
+        suppressedReason: reason,
+        detail: body ?? title ?? '',
+      ));
+    }
+
+    if (!prefs.enabled) return drop('Avisos de agente desactivados');
+    if (prefs.isMuted(session.id)) return drop('Sesión silenciada');
+    if (prefs.intensityFor(alertKind) == AlertIntensity.off) {
+      return drop('"${alertKind.label}" está en NO AVISAR');
+    }
+    if (prefs.isQuiet(now)) return drop('Horario silencioso');
+    if (_appInForeground && prefs.when == AlertWhen.backgroundOnly) {
+      return drop('Configurado para avisar sólo en segundo plano');
+    }
+    if (_appInForeground &&
+        prefs.skipActiveSession &&
+        identical(session, activeSession)) {
+      return drop('Es la sesión que estás viendo');
+    }
+
     final last = session.lastAlertAt;
-    if (last != null && now.difference(last) < _alertDebounce) return;
+    if (last != null && now.difference(last) < _alertDebounce) {
+      // Within the debounce window, only an *upgrade* gets through: the agent
+      // finishing and then immediately asking something is the common case,
+      // and a flat debounce used to drop the question — the alert that
+      // actually needed the user — while keeping the "finished" one.
+      if (!(isQuestion && !session.lastAlertWasQuestion)) {
+        return drop('Repetido dentro de la ventana antirrebote');
+      }
+    }
     session.lastAlertAt = now;
+    session.lastAlertWasQuestion = isQuestion;
+
+    String finalTitle;
+    if (title != null && title.isNotEmpty && title != session.name) {
+      // Explicit OSC 777 title — the program knows best what to announce.
+      finalTitle = agent != null ? '${agent.label} · $title' : title;
+    } else {
+      finalTitle = agent?.label ?? session.name;
+    }
+    String finalBody = body ?? '';
+    if (finalBody.isEmpty) {
+      finalBody = agent != null
+          ? 'Espera tu respuesta'
+          : 'El terminal pide tu atención';
+    }
 
     if (!_appInForeground) {
-      final agent = _detectAgent(session);
-
       // An explicit signal (BEL/OSC) covers the current idle period too: mark
-      // it consumed so the autodetector can't post a duplicate 3s later.
+      // it consumed so the autodetector can't post a duplicate seconds later.
       session.watchAlertFired = true;
       session.watchSignature = _screenSignature(session);
+      session.rawWatchSignature = _rawScreenSignature(session);
       _sessionAlertTimers.remove(session.id)?.cancel();
-
-      String finalTitle;
-      if (title != null && title.isNotEmpty && title != session.name) {
-        // Explicit OSC 777 title — the program knows best what to announce.
-        finalTitle = agent != null ? '${agent.label} · $title' : title;
-      } else {
-        finalTitle = agent?.label ?? session.name;
-      }
-      String finalBody = body ?? '';
-      if (finalBody.isEmpty) {
-        finalBody = agent != null
-            ? 'Espera tu respuesta'
-            : 'El terminal pide tu atención';
-      }
 
       NotificationService.showAlert(
         sessionId: session.id,
         title: finalTitle,
         body: finalBody,
         agent: agent?.id,
+        kind: alertKind.name,
         sessionName: session.name,
       );
-    } else if (!identical(session, activeSession)) {
-      session.hasPendingAlert = true;
-      notifyListeners();
     }
+    // The badge is set either way: coming back to a marked tab is how the user
+    // finds the session that needed them, whether or not a push was posted.
+    if (!identical(session, activeSession)) {
+      session.hasPendingAlert = true;
+    }
+    _logAlert(AlertLogEntry(
+      at: now,
+      sessionName: session.name,
+      kind: alertKind,
+      agentLabel: agent?.label,
+      detail: finalBody,
+    ));
+    notifyListeners();
   }
 
-  // ---- Background autodetector -------------------------------------------
+  // ---- Agent activity autodetector ----------------------------------------
   // Detects, without any cooperation from the program, the two moments worth
-  // a notification while the app is backgrounded:
+  // a notification:
   //  - the agent stopped writing and is waiting for an answer (question/menu);
   //  - the agent stopped writing because it finished the task.
   //
-  // It works on transitions, not on content alone: output must first *change*
-  // (beyond spinner/counter redraw noise) and then stay still for
-  // [_agentIdleDelay]. One alert per idle period ([watchAlertFired]), so a
-  // static prompt on screen can never re-notify no matter how many redraws or
-  // heartbeats the program emits.
+  // It is a BUSY→IDLE state machine over two signatures of the visible tail:
+  //
+  //  - the *raw* signature changes whenever any pixel of text does — including
+  //    a spinner frame or an elapsed-seconds counter;
+  //  - the *semantic* signature has that redraw noise stripped, so it only
+  //    changes when the agent actually said something new.
+  //
+  // Any output at all — noise included — means the program is alive and
+  // working, so it pushes the idle deadline back. Only a change of the
+  // semantic signature opens a *new* idle period (one alert per period, via
+  // [TerminalSession.watchAlertFired]), so a static prompt can never re-notify
+  // however many times it is redrawn.
+  //
+  // The previous version stripped the noise and then *ignored* unchanged
+  // signatures without re-arming the timer, so a spinning agent looked exactly
+  // like a silent one and got announced as "finished" mid-thought. Treating
+  // noise as "busy" instead of "nothing happened" is the fix.
 
-  /// How long the normalized screen must stay unchanged before the agent
-  /// counts as "stopped writing". LLM streams pause between tokens; 3s avoids
-  /// firing inside those gaps.
-  static const Duration _agentIdleDelay = Duration(seconds: 3);
+  /// How long the terminal must produce *no output whatsoever* before the
+  /// agent counts as having stopped. LLM streams and tool calls pause for
+  /// several seconds at a time, so the default is deliberately well above the
+  /// old 3s; the notifications screen exposes it as a slider.
+  Duration get _agentIdleDelay =>
+      Duration(seconds: _notificationPrefs.idleDelaySeconds);
+
+  /// Safety valve for TUIs that redraw forever (a clock in the status bar, a
+  /// progress animation that never ends): once the *meaningful* content has
+  /// been unchanged this long, stop treating incoming noise as work in
+  /// progress. An explicit busy marker on screen still overrides this.
+  static const Duration _agentNoiseCap = Duration(seconds: 90);
 
   /// Inspection cadence while output is flowing: at most one buffer read per
   /// session per throttle window, regardless of how many chunks arrive.
@@ -757,13 +1119,32 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     r"[\s\d⠀-⣿✻✳✶✽✢·∙•●○◌◍◐◓◑◒◴◵◶◷⏳⌛|/\\*+~↑↓█▉▊▋▌▍▎▏░▒▓-]",
   );
 
-  /// Status-line hints that mean the program is *still working* (streaming or
-  /// running a tool), even though the visible text hasn't changed for a while
-  /// — e.g. Claude Code's "(esc to interrupt)". Suppresses the idle alert; a
-  /// real state change re-arms it.
-  static final RegExp _busyMarkerRegex = RegExp(
+  /// Unambiguous "work is running right now" affordances: an agent only offers
+  /// a way to interrupt while there is something to interrupt. Matched anywhere
+  /// in the visible tail. Covers the agents in [_agentMarkers], not just Claude
+  /// Code's phrasing, since each one words its status line differently.
+  static final RegExp _busyStrongRegex = RegExp(
     r'esc to interrupt|esc para interrumpir|esc to cancel|esc para cancelar|'
-    r'ctrl\+c to|ctrl-c to|ctrl\+c para|press esc|thinking…|pensando…',
+    r'esc to stop|esc twice|ctrl\+c to (?:stop|cancel|interrupt)|'
+    r'ctrl-c to (?:stop|cancel|interrupt)|ctrl\+c para (?:parar|cancelar)|'
+    r'press esc to',
+  );
+
+  /// Progress verbs. On their own these are worthless — an agent's *answer*
+  /// says "running the tests" all the time — so they only count as busy on a
+  /// line that also carries an animation tell ([_animatedLineRegex]), i.e. a
+  /// live status line rather than prose.
+  static final RegExp _busyProgressRegex = RegExp(
+    r'\b(thinking|pensando|working|trabajando|generating|generando|'
+    r'processing|procesando|ejecutando|executing|streaming|esperando|'
+    r'loading|cargando|analizando|analyzing|searching|buscando|'
+    r'compiling|compilando|installing|instalando|waiting)\b',
+  );
+
+  /// Tells that a line is a live, animating status line: a spinner glyph, a
+  /// trailing ellipsis, or an elapsed-time/token counter like "(12s" or "↑1.2k".
+  static final RegExp _animatedLineRegex = RegExp(
+    r'[⠀-⣿✻✳✶✽✢◐◓◑◒◴◵◶◷⏳⌛]|…|\.\.\.|\(\s*\d+\s*[sm]\b|[↑↓]\s*\d',
   );
 
   /// UI chrome lines of known agents that would pollute classification and
@@ -797,9 +1178,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       .replaceAll(_watchNoiseRegex, '')
       .hashCode;
 
+  /// Hash of the visible tail *as-is*. Differs from [_screenSignature] exactly
+  /// when the only thing that moved was redraw noise — which is how a spinning
+  /// agent is told apart from a silent one.
+  int _rawScreenSignature(TerminalSession session) =>
+      _terminalTail(session, _watchTailLines).hashCode;
+
   /// Entry point wired to every remote-output batch (see [_TerminalWriter]).
   void _onTerminalOutput(TerminalSession session) {
-    if (!_agentAlertsEnabled || _appInForeground) return;
+    if (!agentAlertsEnabled) return;
     if (_sessionCheckTimers.containsKey(session.id)) return;
     _sessionCheckTimers[session.id] = Timer(_agentCheckThrottle, () {
       _sessionCheckTimers.remove(session.id);
@@ -807,16 +1194,50 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Called shortly after output lands. Classifies what moved and (re)arms the
+  /// idle deadline accordingly.
   void _evaluateAgentActivity(TerminalSession session) {
-    if (!_agentAlertsEnabled || _appInForeground) return;
+    if (!agentAlertsEnabled) return;
     final sig = _screenSignature(session);
-    if (sig == session.watchSignature) {
-      // Pure redraw (spinner frame, counter tick): not activity — whatever
-      // idle timer is already running keeps counting.
+    session.rawWatchSignature = _rawScreenSignature(session);
+
+    if (sig != session.watchSignature) {
+      // Genuinely new content: a new idle period starts, so this session is
+      // allowed to alert again once it goes quiet.
+      if (session.watchAlertFired) {
+        // The session went back to work, so whatever the posted notification
+        // said ("terminó", "espera tu respuesta") is now stale — retract it
+        // rather than leaving it lying in the shade.
+        NotificationService.cancelAlert(session.id);
+      }
+      session.watchSignature = sig;
+      session.watchAlertFired = false;
+      session.lastMeaningfulChangeAt = DateTime.now();
+      _armIdleTimer(session);
       return;
     }
-    session.watchSignature = sig;
-    session.watchAlertFired = false;
+
+    // Only redraw noise moved (a spinner frame, a counter tick) or nothing
+    // visible did. That is still a sign of life, so it pushes the deadline
+    // back — unless the meaningful content has been frozen for so long
+    // ([_agentNoiseCap]) that this is a TUI animating forever rather than an
+    // agent working, in which case the pending deadline is left to expire.
+    if (!_noiseCapExceeded(session)) {
+      _armIdleTimer(session);
+    } else if (!_sessionAlertTimers.containsKey(session.id)) {
+      _armIdleTimer(session);
+    }
+  }
+
+  /// Whether the meaningful screen content has been frozen past
+  /// [_agentNoiseCap], i.e. incoming output should stop counting as progress.
+  bool _noiseCapExceeded(TerminalSession session) {
+    final last = session.lastMeaningfulChangeAt;
+    if (last == null) return false;
+    return DateTime.now().difference(last) > _agentNoiseCap;
+  }
+
+  void _armIdleTimer(TerminalSession session) {
     _sessionAlertTimers[session.id]?.cancel();
     _sessionAlertTimers[session.id] = Timer(_agentIdleDelay, () {
       _sessionAlertTimers.remove(session.id);
@@ -825,11 +1246,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _maybeFireIdleAlert(TerminalSession session) {
-    if (!_agentAlertsEnabled || _appInForeground) return;
+    if (!agentAlertsEnabled) return;
     if (session.watchAlertFired) return;
     // Output can land inside the throttle window after the last evaluation:
     // if the screen moved again, this wasn't real silence — restart the cycle.
-    if (_screenSignature(session) != session.watchSignature) {
+    if (_rawScreenSignature(session) != session.rawWatchSignature) {
       _evaluateAgentActivity(session);
       return;
     }
@@ -843,22 +1264,44 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
     final recent =
         lines.length > 14 ? lines.sublist(lines.length - 14) : lines;
-    if (_busyMarkerRegex.hasMatch(recent.join('\n').toLowerCase())) {
-      // Still streaming/running a tool with a static screen (long silent
-      // step). Don't consume the idle period: when the busy hint disappears
-      // the signature changes and the cycle restarts.
+
+    if (_notificationPrefs.suppressWhileBusy && _looksBusy(recent)) {
+      // A long silent step (a tool call, a slow model) with the status line
+      // still saying so. Don't consume the idle period: keep watching, and
+      // when the busy hint disappears the cycle completes normally.
+      _armIdleTimer(session);
       return;
     }
 
     session.watchAlertFired = true;
     final isQuestion = _looksLikeQuestion(recent);
-    final snippet = _alertSnippet(recent);
+    final snippet =
+        _notificationPrefs.includeSnippet ? _alertSnippet(recent) : '';
     final headline =
         isQuestion ? 'Espera tu respuesta' : 'Terminó de escribir';
     _onSessionAlert(
       session,
       body: snippet.isEmpty ? headline : '$headline\n$snippet',
+      isQuestion: isQuestion,
     );
+  }
+
+  /// Whether the screen says work is still running. Strong "esc to interrupt"
+  /// affordances always count; bare progress verbs only count on an animating
+  /// status line, so an agent's prose ("running the tests, then…") can't
+  /// silence a real alert. Capped by [_agentNoiseCap] so a TUI that animates
+  /// forever eventually stops blocking notifications.
+  bool _looksBusy(List<String> recent) {
+    final blob = recent.join('\n').toLowerCase();
+    if (_busyStrongRegex.hasMatch(blob)) return true;
+    for (final line in recent) {
+      final lower = line.toLowerCase();
+      if (_busyProgressRegex.hasMatch(lower) &&
+          _animatedLineRegex.hasMatch(line)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Whether the tail of the screen looks like an interactive prompt (the
@@ -978,7 +1421,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
 
-    _agentAlertsEnabled = prefs.getBool(_kAgentAlerts) ?? true;
+    // Notification config: the JSON blob wins; on first run after the update
+    // there is none, so the legacy on/off boolean is carried over.
+    final rawNotifPrefs = prefs.getString(_kNotificationPrefs);
+    _notificationPrefs = rawNotifPrefs != null
+        ? NotificationPrefs.decode(rawNotifPrefs)
+        : NotificationPrefs.fromLegacy(prefs.getBool(_kAgentAlerts) ?? true);
+    // Channels must exist before the first alert is posted, and their
+    // importance can only be set at creation time.
+    NotificationService.configureChannels(
+      intensities: {
+        for (final kind in AlertKind.values)
+          kind.name: _notificationPrefs.intensityFor(kind).name,
+      },
+    );
 
     _accentColorHex = prefs.getString(_kAccentColorHex) ?? 'auto';
     final shortcutLayoutIdx = prefs.getInt(_kShortcutLayout);
@@ -1241,7 +1697,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // alert: it's how most TUI agents signal they finished or need input.
       onBell: () {
         HapticFeedback.mediumImpact();
-        _onSessionAlert(session);
+        _onSessionAlert(session, kind: AlertKind.bell);
       },
       // Explicit notification escapes, agent-agnostic:
       //   OSC 9   — `ESC ] 9 ; message BEL` (iTerm2/WezTerm style);
@@ -1256,16 +1712,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           return;
         }
         if (ps == '9' && pt.isNotEmpty) {
-          _onSessionAlert(session, body: pt.join(';'));
+          _onSessionAlert(session, body: pt.join(';'), kind: AlertKind.bell);
         } else if (ps == '777' && pt.isNotEmpty && pt.first == 'notify') {
           _onSessionAlert(
             session,
             title: pt.length > 1 ? pt[1] : null,
             body: pt.length > 2 ? pt.sublist(2).join(';') : null,
+            kind: AlertKind.bell,
           );
         }
       },
-      onTitleChange: (title) => session.lastTitle = title,
+      onTitleChange: (title) => _noteTitleEvidence(session, title),
     );
 
     session = TerminalSession(
@@ -1573,7 +2030,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         session.sshSession = await session.sshClient!.execute(
           'command -v tmux >/dev/null 2>&1 '
           "&& exec tmux new-session -A -s '${profile.tmuxSessionName}' "
-          '|| { echo "[KALA] tmux no está instalado en el servidor; abriendo shell normal."; '
+          '|| { echo "[KAMMEL] tmux no está instalado en el servidor; abriendo shell normal."; '
               'exec "\${SHELL:-sh}" -l; }',
           pty: pty,
         );
@@ -1617,6 +2074,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
       session.terminal.onOutput = (data) {
         final out = _applyModifiers(data);
+        _noteInputEvidence(session, out);
         session.sshSession!.write(utf8.encode(out));
       };
 
@@ -1625,12 +2083,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           session.terminal.write('\r\nConexión cerrada por el servidor.\r\n');
+          _onSessionAlert(session,
+              body: 'Se cerró la conexión con ${session.name}.',
+              kind: AlertKind.disconnect);
           notifyListeners();
         }
       }).catchError((e) {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           session.terminal.write('\r\nError de conexión: $e\r\n');
+          _onSessionAlert(session,
+              body: 'Se perdió la conexión con ${session.name}.',
+              kind: AlertKind.disconnect);
           notifyListeners();
         }
       });
@@ -1718,8 +2182,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void switchSession(int index) {
     if (index < 0 || index >= _sessions.length) return;
     _activeSessionIndex = index;
-    // Looking at the session acknowledges its pending agent alert.
+    // Looking at the session acknowledges its pending agent alert — in the app
+    // and in the notification shade.
     _sessions[index].hasPendingAlert = false;
+    NotificationService.cancelAlert(_sessions[index].id);
     // The explorer's selection/search belong to the previous session's listing.
     _selectedPaths = const {};
     _fileSearchQuery = '';
@@ -1860,6 +2326,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final session = activeSession;
     if (session == null) return;
     final out = _applyModifiers(text);
+    _noteInputEvidence(session, out);
     if (session.connectionStatus == ConnectionStatus.remote && session.sshSession != null) {
       session.sshSession!.write(utf8.encode(out));
     }
@@ -1890,6 +2357,61 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   String _formatPathForInput(String path) {
     if (RegExp(r'^[A-Za-z0-9@%+=:,./_-]+$').hasMatch(path)) return path;
     return "'${path.replaceAll("'", "'\\''")}'";
+  }
+
+  // ---- Attach upload progress ----------------------------------------------
+  // The picked file is uploaded over SFTP *before* its path reaches the prompt,
+  // and on a slow link that takes seconds with nothing on screen. These fields
+  // let the ADJUNTAR key (and the paste-image path) show live progress instead
+  // of looking frozen.
+  bool _isAttaching = false;
+  bool get isAttaching => _isAttaching;
+
+  int _attachBytesDone = 0;
+  int _attachBytesTotal = 0;
+
+  String _attachName = '';
+  String get attachName => _attachName;
+
+  /// Upload progress in 0..1, or `null` while the size isn't known yet (the
+  /// caller should render an indeterminate indicator then).
+  double? get attachProgress {
+    if (_attachBytesTotal <= 0) return null;
+    return (_attachBytesDone / _attachBytesTotal).clamp(0.0, 1.0);
+  }
+
+  void _beginAttach(String name) {
+    _isAttaching = true;
+    _attachName = name;
+    _attachBytesDone = 0;
+    _attachBytesTotal = 0;
+    notifyListeners();
+  }
+
+  void _endAttach() {
+    if (!_isAttaching) return;
+    _isAttaching = false;
+    _attachName = '';
+    _attachBytesDone = 0;
+    _attachBytesTotal = 0;
+    notifyListeners();
+  }
+
+  /// Emits [bytes] in chunks, updating the attach counters as each one is handed
+  /// to the SFTP writer. A single `Stream.value(bytes)` uploads the same data
+  /// but reports nothing until it's already over.
+  Stream<Uint8List> _attachChunks(Uint8List bytes) async* {
+    const chunkSize = 32 * 1024;
+    _attachBytesTotal = bytes.length;
+    _attachBytesDone = 0;
+    notifyListeners();
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end =
+          offset + chunkSize > bytes.length ? bytes.length : offset + chunkSize;
+      yield Uint8List.sublistView(bytes, offset, end);
+      _attachBytesDone = end;
+      notifyListeners();
+    }
   }
 
   /// Attach a file for a TUI agent: let the user pick any document/image or PDF,
@@ -1923,6 +2445,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       return (ok: false, message: 'Adjuntar requiere una sesión SSH activa');
     }
     final String shellPath;
+    _beginAttach(name);
     try {
       final sftp = await session.sshClient!.sftp();
       try {
@@ -1936,10 +2459,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           mode: SftpFileOpenMode.write |
               SftpFileOpenMode.create |
               SftpFileOpenMode.truncate);
-      await f.write(Stream.value(bytes));
+      await f.write(_attachChunks(bytes));
       await f.close();
     } catch (e) {
       return (ok: false, message: 'No se pudo adjuntar: $e');
+    } finally {
+      _endAttach();
     }
 
     // Leading + trailing space keep the path separate from whatever the user
@@ -2352,6 +2877,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final fileName = 'pasted_image_$timestamp.$ext';
 
     session.isLoadingFiles = true;
+    _beginAttach(fileName);
     notifyListeners();
 
     try {
@@ -2362,7 +2888,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           remoteFilePath,
           mode: SftpFileOpenMode.write | SftpFileOpenMode.create | SftpFileOpenMode.truncate,
         ).timeout(const Duration(seconds: 10));
-        await fileStream.write(Stream.value(imageBytes)).timeout(const Duration(seconds: 30));
+        await fileStream.write(_attachChunks(imageBytes)).timeout(const Duration(seconds: 30));
         await fileStream.close();
       } else {
         final localFilePath = '${session.currentPath}/$fileName'.replaceAll('//', '/');
@@ -2376,6 +2902,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.sftpClient = null;
     } finally {
       session.isLoadingFiles = false;
+      _endAttach();
       notifyListeners();
       await _loadFiles();
     }
@@ -2489,15 +3016,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       if (Platform.isAndroid) await _ensureStoragePermission();
 
       // Destination: the folder the user picked, or — as a fallback — the
-      // public Downloads/KALA on Android, ~/Downloads/KALA elsewhere.
+      // public Downloads/KAMMEL on Android, ~/Downloads/KAMMEL elsewhere.
       final String finalDir;
       if (destDir != null && destDir.isNotEmpty) {
         finalDir = destDir;
       } else if (Platform.isAndroid) {
-        finalDir = '/storage/emulated/0/Download/KALA';
+        finalDir = '/storage/emulated/0/Download/KAMMEL';
       } else {
         final base = await getApplicationDocumentsDirectory();
-        finalDir = '${base.path}/Downloads/KALA';
+        finalDir = '${base.path}/Downloads/KAMMEL';
       }
       _downloadDestDir = finalDir;
 

@@ -14,7 +14,7 @@ import android.os.PowerManager
 
 /**
  * Foreground service that keeps the app process (and therefore every running
- * PTY/SSH shell) alive while KALA is in the background, mirroring the way
+ * PTY/SSH shell) alive while KAMMEL is in the background, mirroring the way
  * Termux stays alive. It shows a persistent notification with two actions:
  *
  *  - "Adquirir/Liberar wakelock": toggles a partial wakelock so long-running
@@ -31,7 +31,7 @@ class TerminalService : Service() {
 
         private const val CHANNEL_ID = "kala_background"
         private const val NOTIFICATION_ID = 1001
-        private const val WAKELOCK_TAG = "KALA::BackgroundWakeLock"
+        private const val WAKELOCK_TAG = "KAMMEL::BackgroundWakeLock"
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -117,7 +117,7 @@ class TerminalService : Service() {
         }
 
         return builder
-            .setContentTitle("KALA activo")
+            .setContentTitle("KAMMEL activo")
             .setContentText(
                 if (held) "Wakelock activo · las tareas siguen con la pantalla apagada"
                 else "Las sesiones siguen ejecutándose en segundo plano",

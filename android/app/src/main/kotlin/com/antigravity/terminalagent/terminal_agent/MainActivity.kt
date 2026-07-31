@@ -3,9 +3,12 @@ package com.antigravity.terminalagent.terminal_agent
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -76,19 +79,51 @@ class MainActivity : FlutterFragmentActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notificationsChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "configureChannels" -> {
+                        val intensities =
+                            call.argument<Map<String, String>>("intensities").orEmpty()
+                        AlertNotifier.configureChannels(this, intensities)
+                        result.success(true)
+                    }
                     "showAlert" -> {
                         AlertNotifier.show(
                             this,
                             call.argument<String>("sessionId") ?: "",
-                            call.argument<String>("title") ?: "KALA",
+                            call.argument<String>("title") ?: "KAMMEL",
                             call.argument<String>("body") ?: "",
                             call.argument<String>("agent"),
+                            call.argument<String>("kind"),
                             call.argument<String>("sessionName"),
                         )
                         result.success(true)
                     }
                     "cancelAlerts" -> {
                         AlertNotifier.cancelAll(this)
+                        result.success(true)
+                    }
+                    "cancelAlert" -> {
+                        AlertNotifier.cancelFor(
+                            this,
+                            call.argument<String>("sessionId") ?: "",
+                        )
+                        result.success(true)
+                    }
+                    "areNotificationsEnabled" -> {
+                        result.success(
+                            NotificationManagerCompat.from(this).areNotificationsEnabled(),
+                        )
+                    }
+                    "openNotificationSettings" -> {
+                        val intent = Intent().apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                action = Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                            } else {
+                                action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                                data = Uri.fromParts("package", packageName, null)
+                            }
+                        }
+                        startActivity(intent)
                         result.success(true)
                     }
                     "consumePendingSession" -> {

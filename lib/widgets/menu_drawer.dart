@@ -72,7 +72,29 @@ class MenuDrawer extends StatelessWidget {
             ),
             Hairline(),
 
-            // Section 3: Personalization
+            // Section 3: Notifications. Its own screen rather than a panel
+            // inside general settings: agent alerts have enough knobs
+            // (per-kind intensity, schedule, detector sensitivity, per-session
+            // muting, diagnostics) to warrant one.
+            ListTile(
+              leading: Icon(Icons.notifications_active_outlined,
+                  color: AppColors.accent),
+              title: Text(
+                'NOTIFICACIONES',
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                'Avisos de agente, intensidad y diagnóstico',
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(8); // Switch to Notifications Tab
+              },
+            ),
+            Hairline(),
+
+            // Section 4: Personalization
             ListTile(
               leading: Icon(Icons.palette_outlined, color: AppColors.accent),
               title: Text(

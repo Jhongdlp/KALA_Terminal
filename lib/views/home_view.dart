@@ -13,6 +13,7 @@ import 'server_tab.dart';
 import 'settings_tab.dart';
 import 'personalization_tab.dart';
 import 'about_tab.dart';
+import 'notifications_tab.dart';
 import 'update_dialog.dart';
 
 class HomeView extends StatefulWidget {
@@ -102,6 +103,7 @@ class _HomeViewState extends State<HomeView> {
       SettingsTab(),
       PersonalizationTab(),
       AboutTab(),
+      NotificationsTab(),
     ];
 
     return PopScope(

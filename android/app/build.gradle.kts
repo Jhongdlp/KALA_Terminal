@@ -43,7 +43,7 @@ android {
         // Pinned to 28 on purpose. With targetSdk 28 the legacy
         // READ/WRITE_EXTERNAL_STORAGE permissions still grant full access to
         // /storage/emulated/0 (pre-scoped-storage), which the "adjuntar" picker
-        // and the SFTP → Download/KALA downloader rely on. At API 29+ scoped
+        // and the SFTP → Download/KAMMEL downloader rely on. At API 29+ scoped
         // storage would break those without MANAGE_EXTERNAL_STORAGE. Play Store
         // upload needs >=34, but this app is sideloaded via `flutter run`/`build apk`.
         targetSdk = 28

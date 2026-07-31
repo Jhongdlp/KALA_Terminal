@@ -5,7 +5,7 @@ import 'package:local_auth_android/local_auth_android.dart';
 /// Wraps [LocalAuthentication] for the optional app lock. The lock uses the
 /// device biometric (fingerprint/face) as the primary factor and falls back to
 /// the phone's own screen-lock credential (PIN/pattern/password) — there is no
-/// KALA-specific PIN, so nothing secret is stored by this layer.
+/// KAMMEL-specific PIN, so nothing secret is stored by this layer.
 class AppLock {
   AppLock._();
   static final AppLock instance = AppLock._();
