@@ -24,7 +24,12 @@ class MenuDrawer extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
               child: Row(
                 children: [
-                  Icon(Icons.terminal_outlined, color: AppColors.accent, size: 20),
+                  Image.asset(
+                    'assets/images/kammel_logo.png',
+                    width: 24,
+                    color: AppColors.accent,
+                    filterQuality: FilterQuality.medium,
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     tr('KAMMEL SSH - MENÚ'),

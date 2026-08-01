@@ -146,6 +146,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  assets:
+    # Camel silhouette (white on transparent) — tinted at draw time.
+    - assets/images/kammel_logo.png
+
   fonts:
     - family: CascadiaCode
       fonts:

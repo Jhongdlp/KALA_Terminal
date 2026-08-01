@@ -41,10 +41,11 @@ class AboutTab extends StatelessWidget {
                       ],
                     ),
                     child: Center(
-                      child: Icon(
-                        Icons.terminal_outlined,
-                        size: 44,
+                      child: Image.asset(
+                        'assets/images/kammel_logo.png',
+                        width: 56,
                         color: AppColors.accent,
+                        filterQuality: FilterQuality.medium,
                       ),
                     ),
                   ),
