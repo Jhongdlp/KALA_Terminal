@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/color_picker_dialog.dart';
 import '../widgets/swiss.dart';
 import 'shortcut_manager_sheet.dart';
 
@@ -22,6 +23,12 @@ class PersonalizationTab extends StatelessWidget {
         context.select<AppState, String>((s) => s.terminalScheme);
     final accentColorHex =
         context.select<AppState, String>((s) => s.accentColorHex);
+    // Selected as a joined string: `customAccentColors` hands back a fresh list
+    // every call, so a List selector would never compare equal.
+    final customAccentJoined = context
+        .select<AppState, String>((s) => s.customAccentColors.join(','));
+    final customAccentColors =
+        customAccentJoined.isEmpty ? <String>[] : customAccentJoined.split(',');
     final monoFontChoice =
         context.select<AppState, String>((s) => s.monoFontChoice);
     final state = context.read<AppState>();
@@ -72,7 +79,10 @@ class PersonalizationTab extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 child: _AccentColorSelector(
                   value: accentColorHex,
+                  customColors: customAccentColors,
                   onChanged: state.setAccentColorHex,
+                  onCustomAdded: state.addCustomAccentColor,
+                  onCustomRemoved: state.removeCustomAccentColor,
                 ),
               ),
             ],
@@ -408,52 +418,178 @@ class _StepButton extends StatelessWidget {
 
 class _AccentColorSelector extends StatelessWidget {
   final String value;
+  final List<String> customColors;
   final ValueChanged<String> onChanged;
+  final ValueChanged<String> onCustomAdded;
+  final ValueChanged<String> onCustomRemoved;
 
-  const _AccentColorSelector({required this.value, required this.onChanged});
+  const _AccentColorSelector({
+    required this.value,
+    required this.customColors,
+    required this.onChanged,
+    required this.onCustomAdded,
+    required this.onCustomRemoved,
+  });
+
+  Future<void> _pickColor(BuildContext context) async {
+    final hex = await ColorPickerDialog.show(
+      context,
+      initialColor: AppColors.parseHex(value) ?? AppColors.accent,
+    );
+    if (hex != null) onCustomAdded(hex);
+  }
+
+  Future<void> _confirmRemove(BuildContext context, String hex) async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: AppColors.hairline),
+          borderRadius: BorderRadius.zero,
+        ),
+        title: Text('ELIMINAR COLOR',
+            style: AppText.label(10, color: AppColors.bone)),
+        content: Text('¿Quitar $hex de tus colores guardados?',
+            style: AppText.mono(12, color: AppColors.muted)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('CANCELAR',
+                style: AppText.label(9, color: AppColors.muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('ELIMINAR',
+                style: AppText.label(9, color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (remove == true) onCustomRemoved(hex);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final full = customColors.length >= AppState.maxCustomAccentColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final preset in AppColors.accentPresets)
-            GestureDetector(
-              onTap: () => onChanged(preset.$1),
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final preset in AppColors.accentPresets)
+                _Dot(
                   color: preset.$1 == 'auto'
-                      ? (Theme.of(context).brightness == Brightness.light
+                      ? (isLight
                           ? const Color(0xFF1A1916)
                           : const Color(0xFFECE7DD))
                       : preset.$3,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: value == preset.$1
-                        ? AppColors.bone
-                        : AppColors.hairline,
-                    width: value == preset.$1 ? 3 : 1,
-                  ),
-                ),
-                child: preset.$1 == 'auto'
-                    ? Center(
-                        child: Icon(
+                  selected: value == preset.$1,
+                  onTap: () => onChanged(preset.$1),
+                  child: preset.$1 == 'auto'
+                      ? Icon(
                           Icons.circle_outlined,
                           size: 14,
-                          color: Theme.of(context).brightness == Brightness.light
+                          color: isLight
                               ? const Color(0xFFECE7DD)
                               : const Color(0xFF1A1916),
-                        ),
-                      )
-                    : null,
+                        )
+                      : null,
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'MIS COLORES (${customColors.length}/${AppState.maxCustomAccentColors})',
+            style: AppText.label(8.5, color: AppColors.faint, spacing: 0.8),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final hex in customColors)
+                _Dot(
+                  color: AppColors.parseHex(hex) ?? AppColors.bone,
+                  selected: value == hex,
+                  onTap: () => onChanged(hex),
+                  onLongPress: () => _confirmRemove(context, hex),
+                ),
+              // "+" slot: opens the picker. Disabled once the palette is full.
+              GestureDetector(
+                onTap: full ? null : () => _pickColor(context),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: full ? AppColors.faint : AppColors.muted,
+                      width: 1,
+                    ),
+                  ),
+                  child: Icon(Icons.add,
+                      size: 16,
+                      color: full ? AppColors.faint : AppColors.bone),
+                ),
               ),
-            ),
+            ],
+          ),
+          if (customColors.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('Mantén pulsado un color para eliminarlo.',
+                style: AppText.label(8, color: AppColors.faint, spacing: 0.3)),
+          ],
+          if (full) ...[
+            const SizedBox(height: 8),
+            Text(
+                'Límite alcanzado: elimina uno para guardar otro.',
+                style: AppText.label(8, color: AppColors.faint, spacing: 0.3)),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _Dot extends StatelessWidget {
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final Widget? child;
+
+  const _Dot({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+    this.onLongPress,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? AppColors.bone : AppColors.hairline,
+            width: selected ? 3 : 1,
+          ),
+        ),
+        child: child == null ? null : Center(child: child),
       ),
     );
   }

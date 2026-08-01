@@ -436,11 +436,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kAgentAlerts = 'settings_agent_alerts';
   static const String _kNotificationPrefs = 'settings_notification_prefs';
   static const String _kAccentColorHex = 'settings_accent_color_hex';
+  static const String _kCustomAccentColors = 'settings_custom_accent_colors';
   static const String _kMonoFontChoice = 'settings_mono_font_choice';
   static const String _kShortcutLayout = 'settings_shortcut_layout';
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
   static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
+
+  /// Accent used out of the box (and for installs that never picked one).
+  static const String defaultAccentColorHex = 'red';
+
+  /// How many colors the user can keep in the custom accent palette.
+  static const int maxCustomAccentColors = 8;
 
   static const double minTerminalFontSize = 7;
   static const double maxTerminalFontSize = 26;
@@ -501,8 +508,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (_alertLog.length > _alertLogLimit) _alertLog.removeLast();
   }
 
-  String _accentColorHex = 'auto';
+  String _accentColorHex = defaultAccentColorHex;
   String get accentColorHex => _accentColorHex;
+
+  /// User-defined accent colors saved from the color picker, stored as
+  /// `#RRGGBB` strings. Oldest first; capped at [maxCustomAccentColors].
+  List<String> _customAccentColors = [];
+  List<String> get customAccentColors => List.unmodifiable(_customAccentColors);
 
   String _monoFontChoice = 'cascadia';
   String get monoFontChoice => _monoFontChoice;
@@ -1436,7 +1448,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    _accentColorHex = prefs.getString(_kAccentColorHex) ?? 'auto';
+    // Installs that never touched the setting adopt the current default (red);
+    // an explicit choice — including 'auto' — is always respected.
+    _accentColorHex =
+        prefs.getString(_kAccentColorHex) ?? defaultAccentColorHex;
+    _customAccentColors =
+        prefs.getStringList(_kCustomAccentColors) ?? <String>[];
     final shortcutLayoutIdx = prefs.getInt(_kShortcutLayout);
     if (shortcutLayoutIdx != null &&
         shortcutLayoutIdx >= 0 &&
@@ -1514,6 +1531,36 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kAccentColorHex, value);
+  }
+
+  /// Saves [hex] (`#RRGGBB`) into the custom palette and selects it. When the
+  /// palette is full the oldest entry is dropped, and re-saving an existing
+  /// color just re-selects it.
+  Future<void> addCustomAccentColor(String hex) async {
+    final normalized = hex.trim().toUpperCase();
+    if (!_customAccentColors.contains(normalized)) {
+      _customAccentColors.add(normalized);
+      if (_customAccentColors.length > maxCustomAccentColors) {
+        _customAccentColors.removeAt(0);
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_kCustomAccentColors, _customAccentColors);
+    }
+    await setAccentColorHex(normalized);
+    notifyListeners();
+  }
+
+  /// Removes [hex] from the custom palette, falling back to the default accent
+  /// if the deleted color was the active one.
+  Future<void> removeCustomAccentColor(String hex) async {
+    final normalized = hex.trim().toUpperCase();
+    if (!_customAccentColors.remove(normalized)) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kCustomAccentColors, _customAccentColors);
+    if (_accentColorHex == normalized) {
+      await setAccentColorHex(defaultAccentColorHex);
+    }
+    notifyListeners();
   }
 
   Future<void> setMonoFontChoice(String value) async {

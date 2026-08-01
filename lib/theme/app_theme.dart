@@ -162,16 +162,37 @@ class AppColors {
         (e) => e.$1 == accentColorHex,
         orElse: () => ('', '', const Color(0xFFECE7DD)),
       );
-      if (preset.$1.isNotEmpty) {
-        accent = preset.$3;
-      } else {
-        try {
-          accent = Color(int.parse(accentColorHex));
-        } catch (_) {
-          accent = p.bone;
-        }
-      }
+      accent = preset.$1.isNotEmpty
+          ? preset.$3
+          : (parseHex(accentColorHex) ?? p.bone);
     }
+  }
+
+  /// Parses a user/persisted color string into a [Color]. Accepts `#RRGGBB`,
+  /// `RRGGBB`, `#AARRGGBB`, `0xFFRRGGBB` and plain decimal ints (the legacy
+  /// format written by older builds). Returns null when unparseable.
+  static Color? parseHex(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return null;
+    if (s.startsWith('#')) s = s.substring(1);
+    if (s.startsWith('0x') || s.startsWith('0X')) s = s.substring(2);
+    if (s.length == 3) {
+      // #RGB shorthand
+      s = s.split('').map((c) => '$c$c').join();
+    }
+    if (s.length == 6) s = 'FF$s';
+    if (s.length == 8) {
+      final v = int.tryParse(s, radix: 16);
+      if (v != null) return Color(v);
+    }
+    final decimal = int.tryParse(raw.trim());
+    return decimal != null ? Color(decimal) : null;
+  }
+
+  /// Canonical persisted form for a custom color: `#RRGGBB` uppercase.
+  static String toHex(Color c) {
+    final v = c.toARGB32() & 0xFFFFFF;
+    return '#${v.toRadixString(16).padLeft(6, '0').toUpperCase()}';
   }
 }
 
