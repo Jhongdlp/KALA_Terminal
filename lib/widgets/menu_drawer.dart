@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import 'swiss.dart';
+import '../l10n/l10n.dart';
 
 class MenuDrawer extends StatelessWidget {
   const MenuDrawer({super.key});
@@ -26,7 +27,7 @@ class MenuDrawer extends StatelessWidget {
                   Icon(Icons.terminal_outlined, color: AppColors.accent, size: 20),
                   const SizedBox(width: 10),
                   Text(
-                    'KAMMEL SSH - MENÚ',
+                    tr('KAMMEL SSH - MENÚ'),
                     style: AppText.label(12, color: AppColors.bone, spacing: 1.5),
                   ),
                 ],
@@ -40,11 +41,11 @@ class MenuDrawer extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.dns_outlined, color: AppColors.accent),
               title: Text(
-                'SERVIDOR',
+                tr('SERVIDOR'),
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Monitor, Docker y auditoría por SSH',
+                tr('Monitor, Docker y auditoría por SSH'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -59,11 +60,11 @@ class MenuDrawer extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.swap_horiz, color: AppColors.accent),
               title: Text(
-                'TÚNELES',
+                tr('TÚNELES'),
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Port forwarding activo y su tráfico',
+                tr('Port forwarding activo y su tráfico'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -77,11 +78,11 @@ class MenuDrawer extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.tune, color: AppColors.accent),
               title: Text(
-                'AJUSTES GENERALES', 
+                tr('AJUSTES GENERALES'), 
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Seguridad, explorador y llaves',
+                tr('Seguridad, explorador y llaves'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -99,11 +100,11 @@ class MenuDrawer extends StatelessWidget {
               leading: Icon(Icons.notifications_active_outlined,
                   color: AppColors.accent),
               title: Text(
-                'NOTIFICACIONES',
+                tr('NOTIFICACIONES'),
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Avisos de agente, intensidad y diagnóstico',
+                tr('Avisos de agente, intensidad y diagnóstico'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -117,11 +118,11 @@ class MenuDrawer extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.palette_outlined, color: AppColors.accent),
               title: Text(
-                'PERSONALIZACIÓN', 
+                tr('PERSONALIZACIÓN'), 
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Temas, colores y fuentes',
+                tr('Temas, colores y fuentes'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -135,11 +136,11 @@ class MenuDrawer extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.info_outline, color: AppColors.accent),
               title: Text(
-                'ACERCA DE LA APP', 
+                tr('ACERCA DE LA APP'), 
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               subtitle: Text(
-                'Información, versión y actualizaciones',
+                tr('Información, versión y actualizaciones'),
                 style: AppText.body(9, color: AppColors.muted),
               ),
               onTap: () {
@@ -170,7 +171,7 @@ class MenuDrawer extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Desarrollado para entornos móviles y Linux',
+                    tr('Desarrollado para entornos móviles y Linux'),
                     style: AppText.body(8, color: AppColors.muted),
                   ),
                 ],

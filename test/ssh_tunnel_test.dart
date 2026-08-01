@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:terminal_agent/models/connection_profile.dart';
 import 'package:terminal_agent/models/ssh_tunnel.dart';
+import 'package:terminal_agent/services/known_hosts.dart';
 
 void main() {
   group('SshTunnel.parseSpec', () {
@@ -216,6 +218,39 @@ void main() {
       final parsed =
           ConnectionProfile.parseCommand('ssh -i /home/j/.ssh/id jhon@host')!;
       expect(parsed.host, 'host');
+    });
+  });
+
+  group('idle timeout', () {
+    test('persists and defaults to disabled', () {
+      final off = SshTunnel(kind: TunnelKind.local, listenPort: 8080);
+      expect(off.idleTimeoutMinutes, 0);
+
+      final on = SshTunnel(
+          kind: TunnelKind.local, listenPort: 8080, idleTimeoutMinutes: 15);
+      expect(SshTunnel.fromMap(on.toMap()).idleTimeoutMinutes, 15);
+      expect(on.copyWith(idleTimeoutMinutes: 30).idleTimeoutMinutes, 30);
+    });
+
+    test('old JSON without the field loads as disabled', () {
+      final legacy = SshTunnel(kind: TunnelKind.local, listenPort: 8080).toMap()
+        ..remove('idleTimeoutMinutes');
+      expect(SshTunnel.fromMap(legacy).idleTimeoutMinutes, 0);
+    });
+  });
+
+  group('KnownHosts.fingerprintOf', () {
+    test('matches the OpenSSH SHA256 format', () {
+      final fp = KnownHosts.fingerprintOf(Uint8List.fromList([1, 2, 3, 4]));
+      expect(fp, startsWith('SHA256:'));
+      expect(fp, isNot(contains('=')));   // sin padding, como ssh-keygen -l
+      expect(fp.length, 'SHA256:'.length + 43);
+    });
+
+    test('a different key gives a different fingerprint', () {
+      final a = KnownHosts.fingerprintOf(Uint8List.fromList([1, 2, 3]));
+      final b = KnownHosts.fingerprintOf(Uint8List.fromList([1, 2, 4]));
+      expect(a, isNot(b));
     });
   });
 }

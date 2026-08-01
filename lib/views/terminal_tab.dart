@@ -14,6 +14,7 @@ import 'tunnels_tab.dart';
 import '../models/connection_profile.dart';
 import '../models/terminal_shortcut.dart';
 import '../services/tunnel_manager.dart';
+import '../l10n/l10n.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -118,21 +119,21 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             children: [
               Icon(Icons.dns_outlined, size: 40, color: AppColors.muted),
               const SizedBox(height: 16),
-              Text('SIN SESIÓN ACTIVA',
+              Text(tr('SIN SESIÓN ACTIVA'),
                   style:
                       AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
               const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: Text(
-                  'Conéctate a un servidor SSH desde la pestaña Conexiones para abrir una terminal.',
+                  tr('Conéctate a un servidor SSH desde la pestaña Conexiones para abrir una terminal.'),
                   textAlign: TextAlign.center,
                   style: AppText.body(13, color: AppColors.muted),
                 ),
               ),
               const SizedBox(height: 20),
               InvertedButton(
-                label: 'Ir a Conexiones',
+                label: tr('Ir a Conexiones'),
                 icon: Icons.dns_outlined,
                 dense: true,
                 onPressed: () => state.setActiveTabIndex(0),
@@ -284,7 +285,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           Icon(Icons.link_off, size: 14, color: AppColors.muted),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('CONEXIÓN PERDIDA',
+            child: Text(tr('CONEXIÓN PERDIDA'),
                 style: AppText.label(9, color: AppColors.muted, spacing: 1.2)),
           ),
           session.reconnecting
@@ -295,7 +296,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                       strokeWidth: 1.5, color: AppColors.muted),
                 )
               : GhostButton(
-                  label: 'Reconectar',
+                  label: tr('Reconectar'),
                   icon: Icons.refresh,
                   dense: true,
                   onPressed: () => state.reconnectSession(session),
@@ -319,17 +320,17 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         children: [
           Expanded(child: _sessionSelector(context, state)),
           Container(width: 1, height: 46, color: AppColors.hairline),
-          _toolbarIcon(Icons.text_decrease, 'Reducir letra',
+          _toolbarIcon(Icons.text_decrease, tr('Reducir letra'),
               () => state.bumpTerminalFontSize(-1)),
-          _toolbarIcon(Icons.text_increase, 'Aumentar letra',
+          _toolbarIcon(Icons.text_increase, tr('Aumentar letra'),
               () => state.bumpTerminalFontSize(1)),
           _toolbarIcon(
             _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
-            'Teclas rápidas',
+            tr('Teclas rápidas'),
             () => setState(() => _showKeys = !_showKeys),
           ),
           _tunnelsButton(context, state),
-          _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
+          _toolbarIcon(Icons.open_in_full, tr('Expandir terminal'),
               () => state.setTerminalFullscreen(true)),
           const SizedBox(width: 4),
         ],
@@ -350,7 +351,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Cerrar',
+      barrierLabel: tr('Cerrar'),
       barrierColor: Colors.black.withValues(alpha: 0.5),
       transitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (dialogCtx, _, _) {
@@ -418,7 +419,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       if (seen.add(url)) urls.add(url);
     }
     if (urls.isEmpty) {
-      _toast('No hay enlaces en el terminal');
+      _toast(tr('No hay enlaces en el terminal'));
       return;
     }
     final recentFirst = urls.reversed.take(20).toList();
@@ -433,7 +434,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text('ENLACES',
+              child: Text(tr('ENLACES'),
                   style:
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
@@ -503,7 +504,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     return Stack(
       alignment: Alignment.center,
       children: [
-        _toolbarIcon(Icons.swap_horiz, 'Túneles',
+        _toolbarIcon(Icons.swap_horiz, tr('Túneles'),
             () => _showTunnelsSheet(context, state, session.id)),
         if (total > 0)
           Positioned(
@@ -542,7 +543,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                  child: Text('TÚNELES DE ESTA SESIÓN',
+                  child: Text(tr('TÚNELES DE ESTA SESIÓN'),
                       style: AppText.label(11,
                           color: AppColors.bone, spacing: 1.4)),
                 ),
@@ -551,9 +552,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
-                      'Esta sesión no tiene túneles. Añade uno para abrir un '
-                      'servicio del servidor en este teléfono, usar el servidor '
-                      'como proxy o publicar algo tuyo en él.',
+                      tr('Esta sesión no tiene túneles. Añade uno para abrir un servicio del servidor en este teléfono, usar el servidor como proxy o publicar algo tuyo en él.'),
                       style: AppText.body(12, color: AppColors.muted),
                     ),
                   ),
@@ -570,7 +569,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: GhostButton(
-                    label: 'Añadir túnel',
+                    label: tr('Añadir túnel'),
                     icon: Icons.add,
                     dense: true,
                     onPressed: () => _addTunnel(sheetCtx, state, sessionId),
@@ -595,7 +594,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       if (p.id == profileId) profile = p;
     }
     if (profile == null) {
-      _toast('Esta sesión no tiene un perfil guardado donde guardar el túnel.');
+      _toast(tr('Esta sesión no tiene un perfil guardado donde guardar el túnel.'));
       return;
     }
     final created = await showTunnelEditor(sheetCtx);
@@ -639,9 +638,9 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       case ConnectionStatus.remote:
         return 'SSH · ${s.activeProfile?.name ?? ''}';
       case ConnectionStatus.connecting:
-        return 'CONECTANDO…';
+        return tr('CONECTANDO…');
       case ConnectionStatus.disconnected:
-        return 'DESCONECTADO';
+        return tr('DESCONECTADO');
     }
   }
 
@@ -663,7 +662,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             const SizedBox(width: 10),
             Flexible(
               child: Text(
-                active?.name ?? 'Sesión',
+                active?.name ?? tr('Sesión'),
                 style: AppText.mono(13,
                     color: AppColors.bone, weight: FontWeight.w700),
                 overflow: TextOverflow.ellipsis,
@@ -710,7 +709,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Row(
                   children: [
-                    Text('SESIONES',
+                    Text(tr('SESIONES'),
                         style: AppText.label(11,
                             color: AppColors.bone, spacing: 1.4)),
                     const Spacer(),
@@ -729,7 +728,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 ),
               ),
               Hairline(),
-              _menuTile(sheetCtx, Icons.dns_outlined, 'CONECTAR POR SSH…',
+              _menuTile(sheetCtx, Icons.dns_outlined, tr('CONECTAR POR SSH…'),
                   () => s.setActiveTabIndex(0)),
             ],
           ),
@@ -826,23 +825,23 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: Text('RENOMBRAR SESIÓN',
+        title: Text(tr('RENOMBRAR SESIÓN'),
             style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
         content: TextField(
           controller: controller,
           autofocus: true,
           enableIMEPersonalizedLearning: true,
-          decoration: const InputDecoration(labelText: 'NOMBRE DE LA SESIÓN'),
+          decoration: InputDecoration(labelText: tr('NOMBRE DE LA SESIÓN')),
           style: AppText.body(13),
         ),
         actions: [
           GhostButton(
-            label: 'Cancelar',
+            label: tr('Cancelar'),
             dense: true,
             onPressed: () => Navigator.of(context).pop(),
           ),
           InvertedButton(
-            label: 'Guardar',
+            label: tr('Guardar'),
             dense: true,
             onPressed: () {
               state.renameSession(index, controller.text);
@@ -1007,11 +1006,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         case 'attach':
           return _attachKey(state);
         case 'prompts':
-          return _key('PROMPTS', () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76);
+          return _key(tr('PROMPTS'), () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76);
         case 'commit':
-          return _key('COMMIT', () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76);
+          return _key(tr('COMMIT'), () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76);
         case 'links':
-          return _key('ENLACES', () => _showLinksSheet(state), icon: Icons.link, width: 76);
+          return _key(tr('ENLACES'), () => _showLinksSheet(state), icon: Icons.link, width: 76);
         case 'settings':
           return _key('', () => ShortcutManagerSheet.show(context, state), icon: Icons.settings, width: 34);
         default:
@@ -1019,7 +1018,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       }
     } else {
       return _key(
-        shortcut.label,
+        tr(shortcut.label),
         () => _sendTerminalKey(state, shortcut.parsedValue),
       );
     }
@@ -1030,7 +1029,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   /// the prompt, so on a slow link an inert key just reads as a frozen app.
   Widget _attachKey(AppState state) {
     if (!state.isAttaching) {
-      return _key('ADJUNTAR', () => _attach(state),
+      return _key(tr('ADJUNTAR'), () => _attach(state),
           icon: Icons.attach_file, width: 76);
     }
     final progress = state.attachProgress;
@@ -1094,7 +1093,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'SUBIENDO ${state.attachName}$pct',
+                  tr('SUBIENDO {0}{1}', [state.attachName, pct]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppText.mono(10,

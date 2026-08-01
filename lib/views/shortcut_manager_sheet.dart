@@ -3,6 +3,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/terminal_shortcut.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 class ShortcutManagerSheet {
   static void show(BuildContext context, AppState state) {
@@ -23,7 +24,7 @@ class ShortcutManagerSheet {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('PERSONALIZAR ATAJOS',
+                      Text(tr('PERSONALIZAR ATAJOS'),
                           style: AppText.mono(12,
                               color: AppColors.bone, weight: FontWeight.w700)),
                       IconButton(
@@ -39,7 +40,7 @@ class ShortcutManagerSheet {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Text('ALTO TECLAS',
+                      Text(tr('ALTO TECLAS'),
                           style: AppText.mono(9, color: AppColors.muted)),
                       const SizedBox(width: 8),
                       Expanded(
@@ -64,7 +65,7 @@ class ShortcutManagerSheet {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Text('ANCHO TECLAS',
+                      Text(tr('ANCHO TECLAS'),
                           style: AppText.mono(9, color: AppColors.muted)),
                       const SizedBox(width: 8),
                       Expanded(
@@ -95,7 +96,7 @@ class ShortcutManagerSheet {
                         ? Padding(
                             padding: const EdgeInsets.symmetric(vertical: 24),
                             child: Center(
-                              child: Text('No hay atajos personalizados',
+                              child: Text(tr('No hay atajos personalizados'),
                                   style: AppText.body(13,
                                       color: AppColors.muted)),
                             ),
@@ -131,13 +132,13 @@ class ShortcutManagerSheet {
                                     setSheetState(() {});
                                   },
                                 ),
-                                title: Text(shortcut.label,
+                                title: Text(tr(shortcut.label),
                                     style: AppText.mono(12,
                                         color: AppColors.bone,
                                         weight: FontWeight.w600)),
                                 subtitle: Text(
                                   isSystem
-                                      ? 'Acción del sistema'
+                                      ? tr('Acción del sistema')
                                       : shortcut.value,
                                   style:
                                       AppText.mono(10, color: AppColors.muted),
@@ -182,7 +183,7 @@ class ShortcutManagerSheet {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       GhostButton(
-                        label: 'Restablecer',
+                        label: tr('Restablecer'),
                         dense: true,
                         onPressed: () {
                           state.setCustomShortcuts(state.getDefaultShortcuts());
@@ -191,7 +192,7 @@ class ShortcutManagerSheet {
                       ),
                       const SizedBox(width: 10),
                       InvertedButton(
-                        label: 'Cerrar',
+                        label: tr('Cerrar'),
                         dense: true,
                         onPressed: () => Navigator.of(sheetCtx).pop(),
                       ),
@@ -221,7 +222,7 @@ class ShortcutManagerSheet {
           backgroundColor: AppColors.panel,
           shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.all(Radius.circular(4))),
-          title: Text(existing == null ? 'AGREGAR ATAJO' : 'EDITAR ATAJO',
+          title: Text(existing == null ? tr('AGREGAR ATAJO') : tr('EDITAR ATAJO'),
               style: AppText.mono(11,
                   color: AppColors.bone, weight: FontWeight.w700)),
           content: SingleChildScrollView(
@@ -234,7 +235,7 @@ class ShortcutManagerSheet {
                   autofocus: true,
                   enableIMEPersonalizedLearning: true,
                   decoration: InputDecoration(
-                    labelText: 'ETIQUETA (ej: ls, ^C, ~)',
+                    labelText: tr('ETIQUETA (ej: ls, ^C, ~)'),
                     labelStyle: TextStyle(color: AppColors.muted),
                   ),
                   style: AppText.body(13),
@@ -244,13 +245,13 @@ class ShortcutManagerSheet {
                   controller: valueController,
                   enableIMEPersonalizedLearning: true,
                   decoration: InputDecoration(
-                    labelText: 'VALOR A ENVIAR (ej: ls\\n, \\x03, ~)',
+                    labelText: tr('VALOR A ENVIAR (ej: ls\\n, \\x03, ~)'),
                     labelStyle: TextStyle(color: AppColors.muted),
                   ),
                   style: AppText.body(13),
                 ),
                 const SizedBox(height: 16),
-                Text('Atajos rápidos de control:',
+                Text(tr('Atajos rápidos de control:'),
                     style: AppText.mono(8.5, color: AppColors.muted)),
                 const SizedBox(height: 6),
                 Wrap(
@@ -280,13 +281,13 @@ class ShortcutManagerSheet {
                     _dialogHelperButton(
                         dialogCtx, 'F5', r'\x1b[15~', valueController),
                     _dialogHelperButton(
-                        dialogCtx, 'Re Pág', r'\x1b[5~', valueController),
+                        dialogCtx, tr('Re Pág'), r'\x1b[5~', valueController),
                     _dialogHelperButton(
-                        dialogCtx, 'Av Pág', r'\x1b[6~', valueController),
+                        dialogCtx, tr('Av Pág'), r'\x1b[6~', valueController),
                     _dialogHelperButton(
-                        dialogCtx, 'Inicio', r'\x1b[H', valueController),
+                        dialogCtx, tr('Inicio'), r'\x1b[H', valueController),
                     _dialogHelperButton(
-                        dialogCtx, 'Fin', r'\x1b[F', valueController),
+                        dialogCtx, tr('Fin'), r'\x1b[F', valueController),
                   ],
                 ),
               ],
@@ -294,12 +295,12 @@ class ShortcutManagerSheet {
           ),
           actions: [
             GhostButton(
-              label: 'Cancelar',
+              label: tr('Cancelar'),
               dense: true,
               onPressed: () => Navigator.of(dialogCtx).pop(),
             ),
             InvertedButton(
-              label: 'Guardar',
+              label: tr('Guardar'),
               dense: true,
               onPressed: () {
                 if (labelController.text.isNotEmpty &&

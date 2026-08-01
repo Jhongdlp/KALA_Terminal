@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/ssh_tunnel.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 /// Bottom sheet to create or edit a single [SshTunnel].
 ///
@@ -42,6 +43,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
   late TunnelKind _kind;
   late bool _autoStart;
   late bool _exposeToLan;
+  late int _idleTimeout;
   String? _error;
 
   @override
@@ -51,6 +53,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
     _kind = t?.kind ?? TunnelKind.local;
     _autoStart = t?.autoStart ?? true;
     _exposeToLan = t?.exposeToLan ?? false;
+    _idleTimeout = t?.idleTimeoutMinutes ?? 0;
     _label = TextEditingController(text: t?.label ?? '');
     _listenPort = TextEditingController(
         text: t == null ? '' : t.listenPort.toString());
@@ -81,14 +84,15 @@ class _TunnelEditorState extends State<_TunnelEditor> {
             _kind.hasDestination ? int.tryParse(_destPort.text.trim()) ?? 0 : 0,
         autoStart: _autoStart,
         exposeToLan: _exposeToLan && _kind.listensOnDevice,
+        idleTimeoutMinutes:
+            _kind == TunnelKind.dynamicSocks ? 0 : _idleTimeout,
       );
 
   void _applySpec() {
     final parsed = SshTunnel.parseSpec(_spec.text);
     if (parsed == null) {
       setState(() => _error =
-          'No se pudo leer el túnel. Ejemplos: -L 8080:localhost:80, -D 1080, '
-          '-R 8080:localhost:3000');
+          tr('No se pudo leer el túnel. Ejemplos: -L 8080:localhost:80, -D 1080, -R 8080:localhost:3000'));
       return;
     }
     setState(() {
@@ -109,22 +113,20 @@ class _TunnelEditorState extends State<_TunnelEditor> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: Text('PROXY ABIERTO',
+        title: Text(tr('PROXY ABIERTO'),
             style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
         content: Text(
-          'Un proxy SOCKS expuesto a la red local deja que cualquier '
-          'dispositivo del wifi navegue a través de tu servidor, sin '
-          'contraseña. Úsalo sólo en redes de confianza.',
+          tr('Un proxy SOCKS expuesto a la red local deja que cualquier dispositivo del wifi navegue a través de tu servidor, sin contraseña. Úsalo sólo en redes de confianza.'),
           style: AppText.body(12, color: AppColors.muted),
         ),
         actions: [
           GhostButton(
-            label: 'Cancelar',
+            label: tr('Cancelar'),
             dense: true,
             onPressed: () => Navigator.of(ctx).pop(false),
           ),
           GhostButton(
-            label: 'Entiendo el riesgo',
+            label: tr('Entiendo el riesgo'),
             dense: true,
             danger: true,
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -165,14 +167,14 @@ class _TunnelEditorState extends State<_TunnelEditor> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(widget.initial == null ? 'NUEVO TÚNEL' : 'EDITAR TÚNEL',
+            Text(widget.initial == null ? tr('NUEVO TÚNEL') : tr('EDITAR TÚNEL'),
                 style: AppText.label(10, color: AppColors.bone, spacing: 1.6)),
             const SizedBox(height: 4),
             Hairline(),
             const SizedBox(height: 16),
 
             // ---- Kind picker ---------------------------------------------
-            Text('TIPO', style: _sectionStyle),
+            Text(tr('TIPO'), style: _sectionStyle),
             const SizedBox(height: 8),
             for (final kind in TunnelKind.values) ...[
               _KindOption(
@@ -189,7 +191,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
             const SizedBox(height: 10),
 
             // ---- Ports ----------------------------------------------------
-            Text(_kind == TunnelKind.remote ? 'PUERTO EN EL SERVIDOR' : 'PUERTO EN ESTE TELÉFONO',
+            Text(_kind == TunnelKind.remote ? tr('PUERTO EN EL SERVIDOR') : tr('PUERTO EN ESTE TELÉFONO'),
                 style: _sectionStyle),
             const SizedBox(height: 6),
             _field(_listenPort, _kind == TunnelKind.dynamicSocks ? '1080' : '8080',
@@ -198,8 +200,8 @@ class _TunnelEditorState extends State<_TunnelEditor> {
               const SizedBox(height: 12),
               Text(
                   _kind == TunnelKind.local
-                      ? 'DESTINO (VISTO DESDE EL SERVIDOR)'
-                      : 'DESTINO (EN ESTE TELÉFONO)',
+                      ? tr('DESTINO (VISTO DESDE EL SERVIDOR)')
+                      : tr('DESTINO (EN ESTE TELÉFONO)'),
                   style: _sectionStyle),
               const SizedBox(height: 6),
               Row(
@@ -211,39 +213,40 @@ class _TunnelEditorState extends State<_TunnelEditor> {
                   const SizedBox(width: 12),
                   Expanded(
                     flex: 1,
-                    child: _field(_destPort, 'PUERTO', number: true),
+                    child: _field(_destPort, tr('PUERTO'), number: true),
                   ),
                 ],
               ),
             ],
             const SizedBox(height: 12),
-            _field(_label, 'NOMBRE (OPCIONAL)', mono: false),
+            _field(_label, tr('NOMBRE (OPCIONAL)'), mono: false),
             const SizedBox(height: 8),
 
             // ---- Options ---------------------------------------------------
             ToggleRow(
-              label: 'ARRANCAR AL CONECTAR',
+              label: tr('ARRANCAR AL CONECTAR'),
               description:
-                  'El túnel se abre solo cada vez que esta conexión se establece.',
+                  tr('El túnel se abre solo cada vez que esta conexión se establece.'),
               value: _autoStart,
               onChanged: (v) => setState(() => _autoStart = v),
             ),
             if (_kind.listensOnDevice)
               ToggleRow(
-                label: 'EXPONER A LA RED LOCAL',
+                label: tr('EXPONER A LA RED LOCAL'),
                 description:
-                    'Por defecto el túnel sólo es accesible desde este teléfono. '
-                    'Al activarlo, cualquier dispositivo del wifi podrá usarlo.',
+                    tr('Por defecto el túnel sólo es accesible desde este teléfono. Al activarlo, cualquier dispositivo del wifi podrá usarlo.'),
                 value: _exposeToLan,
                 onChanged: (v) => setState(() => _exposeToLan = v),
               ),
+            // Inactivity shutdown. Not offered for SOCKS: dartssh2 owns that
+            // server and doesn't report its connections, so the timer couldn't
+            // tell "idle" from "in use".
+            if (_kind != TunnelKind.dynamicSocks) _idleRow(),
             if (_kind == TunnelKind.remote)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'Abre un puerto en el servidor. Para que sea accesible desde '
-                  'fuera, su sshd necesita «GatewayPorts yes» y el firewall '
-                  'abierto.',
+                  tr('Abre un puerto en el servidor. Para que sea accesible desde fuera, su sshd necesita «GatewayPorts yes» y el firewall abierto.'),
                   style: AppText.body(11, color: AppColors.muted),
                 ),
               ),
@@ -258,7 +261,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
               ),
               child: Row(
                 children: [
-                  MonoTag('equivale a'),
+                  MonoTag(tr('equivale a')),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text('ssh ${preview.toSpec()} …',
@@ -276,7 +279,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
             const SizedBox(height: 16),
 
             // ---- Paste a spec ---------------------------------------------
-            Text('O PEGA UN ARGUMENTO SSH', style: _sectionStyle),
+            Text(tr('O PEGA UN ARGUMENTO SSH'), style: _sectionStyle),
             const SizedBox(height: 6),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -286,7 +289,7 @@ class _TunnelEditorState extends State<_TunnelEditor> {
                 ),
                 const SizedBox(width: 8),
                 GhostButton(
-                  label: 'Usar',
+                  label: tr('Usar'),
                   icon: Icons.auto_fix_high,
                   dense: true,
                   onPressed: _applySpec,
@@ -296,13 +299,71 @@ class _TunnelEditorState extends State<_TunnelEditor> {
             const SizedBox(height: 20),
 
             InvertedButton(
-              label: widget.initial == null ? 'Añadir túnel' : 'Guardar túnel',
+              label: widget.initial == null ? tr('Añadir túnel') : tr('Guardar túnel'),
               expand: true,
               onPressed: _save,
             ),
             const SizedBox(height: 18),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Preset picker for the inactivity timeout. Presets rather than a free
+  /// number field: the useful values are few and typing minutes on a phone is
+  /// friction for a security option we want people to actually turn on.
+  Widget _idleRow() {
+    final presets = <int, String>{
+      0: tr('NUNCA'),
+      5: '5 MIN',
+      15: '15 MIN',
+      30: '30 MIN',
+      60: '1 H',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('CERRAR POR INACTIVIDAD'), style: _sectionStyle),
+          const SizedBox(height: 6),
+          Text(
+            tr('Cierra el túnel tras ese tiempo sin ninguna conexión abierta. Nunca corta algo en uso: la cuenta atrás se reinicia con cada conexión. Reduce el rato en que otra app del teléfono podría colarse por el puerto local.'),
+            style: AppText.body(11, color: AppColors.muted),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final entry in presets.entries)
+                InkWell(
+                  onTap: () => setState(() => _idleTimeout = entry.key),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _idleTimeout == entry.key
+                          ? AppColors.bone
+                          : AppColors.ink,
+                      border: Border.all(
+                          color: _idleTimeout == entry.key
+                              ? AppColors.bone
+                              : AppColors.hairline),
+                    ),
+                    child: Text(
+                      entry.value,
+                      style: AppText.mono(10,
+                          color: _idleTimeout == entry.key
+                              ? AppColors.ink
+                              : AppColors.muted),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

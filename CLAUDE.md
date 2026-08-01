@@ -49,7 +49,12 @@ Tunnels are configured per profile (`ConnectionProfile.tunnels`, a list of `SshT
 - `saveProfile` calls `syncConfig` on live sessions, so adding/editing a tunnel applies without reconnecting.
 - Legacy `PortForward`/`forwards` JSON is migrated into `tunnels` on load, and `toMap` still mirrors local tunnels into `forwards` so a downgrade doesn't lose them.
 - Listening sockets bind to loopback unless `SshTunnel.exposeToLan` is set; ports below 1024 are rejected up front (Android can't bind them).
+- `SshTunnel.idleTimeoutMinutes` closes a tunnel after N minutes with **zero open connections** — it narrows the window in which another app on the phone can reach the local port, and never cuts a session in use (the countdown is armed/cancelled from `_onConnectionCountChanged`). Not offered for SOCKS, whose connections dartssh2 doesn't report.
 - UI: `lib/views/tunnels_tab.dart` (tab index 9, reachable from the drawer), a badge + sheet in the terminal toolbar, and the shared editor `lib/views/tunnel_editor_sheet.dart` used by both the profile form and the console.
+
+### Host key verification
+
+`openClient` passes `onVerifyHostkeyBlob` (a handler added by the vendored dartssh2 patch — upstream only exposes an MD5 digest, too weak to pin on). `AppState._verifyHostKey` implements trust-on-first-use against `KnownHosts` (`lib/services/known_hosts.dart`, persisted under the `known_hosts` prefs key): a matching key connects silently, an unknown one is confirmed once and pinned, and a *changed* one blocks by default. The dialog lives in `lib/views/host_key_dialog.dart` and is reached from `AppState` through the `hostKeyConfirm` hook wired in `main.dart` via `navigatorKey` — when no UI is available the key is refused, never silently trusted. Pinned entries can be audited/forgotten from Ajustes → "Servidores conocidos". Fingerprints are OpenSSH-format `SHA256:<base64>`, verified to match `ssh-keygen -lf`.
 
 ### File explorer & editor — SFTP integration
 
@@ -70,6 +75,18 @@ All file listing, navigation, and editing are performed remotely over SFTP:
 
 Switching to the editor or files tab happens programmatically via `AppState.setActiveTabIndex`/`_activeTabIndex` mutations (e.g., opening a file jumps to tab 3).
 
+### Localization (ES/EN)
+
+Spanish is the source language and the lookup key: every user-facing string is written in Spanish inside `tr('…')` (`lib/l10n/l10n.dart`), and `lib/l10n/strings_en.dart` maps that exact Spanish text to English. A key with no entry falls back to the Spanish text, so a partial translation is always safe.
+
+- `tr()` reads a global (`L10n.notifier`), not an `InheritedWidget`, because it is called from `AppState` and from `services/` where there is no `BuildContext`. Consequently a language change has nothing to notify: `main.dart` rebuilds `MaterialApp` under a `ValueKey(lang)`, remounting the tree so every `tr()` call re-runs. Sessions live in `AppState`, so nothing is lost.
+- `tr()` is not a `const` expression — a widget holding one cannot be `const`.
+- Interpolation must go through positional placeholders, never `$x`, or the value gets baked into the key: `tr('Túnel activo: {0}', [spec])`.
+- The language is persisted under the `app_language` prefs key and picked in Ajustes → Idioma. `L10n.load()` runs before `runApp` so the first frame is already correct.
+- Persisted text (terminal shortcut labels) is stored in Spanish and translated at draw time via `tr(shortcut.label)`; a user-renamed label just falls through untranslated.
+- `python3 scripts/i18n_check.py` lists `tr()` keys with no English entry (`--stubs` prints pasteable lines). `test/l10n_test.dart` checks fallback, placeholder substitution, and that no translation drops a placeholder.
+- Out of scope so far: messages the app writes *into* the terminal (`\r\n`-terminated), shell commands, and JSON/prefs keys — all deliberately left untranslated.
+
 ### Styling conventions
 
-The UI uses a hand-rolled dark "flat IDE" theme: hardcoded hex colors (`Color(0xFF0D0D0D)` background, `Color(0xFF1E1E1E)` surface, `Color(0xFF333333)` borders, `Color(0xFF9CA3AF)` muted text, primary azure `Color(0xFF007AFF)`), small uppercase letter-spaced labels, and 4px border radii. Match these constants rather than using default Material styling when adding UI. UI copy/strings are in Spanish.
+The UI uses a hand-rolled dark "flat IDE" theme: hardcoded hex colors (`Color(0xFF0D0D0D)` background, `Color(0xFF1E1E1E)` surface, `Color(0xFF333333)` borders, `Color(0xFF9CA3AF)` muted text, primary azure `Color(0xFF007AFF)`), small uppercase letter-spaced labels, and 4px border radii. Match these constants rather than using default Material styling when adding UI. UI copy is authored in Spanish and wrapped in `tr()` — see Localization above.

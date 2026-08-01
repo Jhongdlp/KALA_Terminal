@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../l10n/l10n.dart';
 
 /// How loudly a class of alert is delivered. Maps onto a distinct Android
 /// notification channel, because importance can only be set when a channel is
@@ -19,17 +20,17 @@ enum AlertIntensity {
 
 extension AlertIntensityLabel on AlertIntensity {
   String get label => switch (this) {
-        AlertIntensity.high => 'ALTA',
-        AlertIntensity.medium => 'MEDIA',
-        AlertIntensity.low => 'BAJA',
-        AlertIntensity.off => 'NO AVISAR',
+        AlertIntensity.high => tr('ALTA'),
+        AlertIntensity.medium => tr('MEDIA'),
+        AlertIntensity.low => tr('BAJA'),
+        AlertIntensity.off => tr('NO AVISAR'),
       };
 
   String get description => switch (this) {
-        AlertIntensity.high => 'Banner emergente, sonido y vibración.',
-        AlertIntensity.medium => 'Suena, pero sin banner emergente.',
-        AlertIntensity.low => 'Silenciosa: sólo aparece en la bandeja.',
-        AlertIntensity.off => 'Este tipo de aviso no se envía.',
+        AlertIntensity.high => tr('Banner emergente, sonido y vibración.'),
+        AlertIntensity.medium => tr('Suena, pero sin banner emergente.'),
+        AlertIntensity.low => tr('Silenciosa: sólo aparece en la bandeja.'),
+        AlertIntensity.off => tr('Este tipo de aviso no se envía.'),
       };
 }
 
@@ -54,22 +55,21 @@ extension AlertKindLabel on AlertKind {
   String get key => name;
 
   String get label => switch (this) {
-        AlertKind.question => 'EL AGENTE PREGUNTA',
-        AlertKind.done => 'EL AGENTE TERMINÓ',
-        AlertKind.bell => 'CAMPANA DEL PROGRAMA',
-        AlertKind.disconnect => 'SESIÓN CAÍDA',
+        AlertKind.question => tr('EL AGENTE PREGUNTA'),
+        AlertKind.done => tr('EL AGENTE TERMINÓ'),
+        AlertKind.bell => tr('CAMPANA DEL PROGRAMA'),
+        AlertKind.disconnect => tr('SESIÓN CAÍDA'),
       };
 
   String get description => switch (this) {
         AlertKind.question =>
-          'Espera tu respuesta: una pregunta, un permiso o un menú de selección.',
+          tr('Espera tu respuesta: una pregunta, un permiso o un menú de selección.'),
         AlertKind.done =>
-          'Dejó de escribir sin pedirte nada, normalmente porque acabó la tarea.',
+          tr('Dejó de escribir sin pedirte nada, normalmente porque acabó la tarea.'),
         AlertKind.bell =>
-          'El programa pidió tu atención explícitamente (campana u OSC 9/777). '
-              'Es la señal más fiable.',
+          tr('El programa pidió tu atención explícitamente (campana u OSC 9/777). Es la señal más fiable.'),
         AlertKind.disconnect =>
-          'Se perdió la conexión SSH de una sesión que estaba viva.',
+          tr('Se perdió la conexión SSH de una sesión que estaba viva.'),
       };
 }
 

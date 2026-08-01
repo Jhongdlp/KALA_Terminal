@@ -13,6 +13,7 @@ import '../widgets/docker_logo.dart';
 import '../widgets/swiss.dart';
 import '../widgets/swiss_gauge_chart.dart';
 import 'server_db_tab.dart';
+import '../l10n/l10n.dart';
 
 /// Quick state filter for the containers list.
 enum _ContainerFilter { all, running, stopped }
@@ -138,11 +139,11 @@ class _ServerTabState extends State<ServerTab>
           children: [
             Icon(Icons.dns_outlined, size: 48, color: AppColors.muted),
             const SizedBox(height: 16),
-            Text('SIN PERFILES GUARDADOS',
+            Text(tr('SIN PERFILES GUARDADOS'),
                 style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
             const SizedBox(height: 8),
             Text(
-              'Crea una conexión SSH en la pestaña de Conexiones\npara auditar y administrar ese servidor.',
+              tr('Crea una conexión SSH en la pestaña de Conexiones\npara auditar y administrar ese servidor.'),
               textAlign: TextAlign.center,
               style: AppText.body(11, color: AppColors.muted),
             ),
@@ -154,8 +155,8 @@ class _ServerTabState extends State<ServerTab>
     return ListView(
       children: [
         ScreenHeader(
-          'SERVIDOR',
-          eyebrow: 'CONSOLA DE ADMINISTRACIÓN Y AUDITORÍA',
+          tr('SERVIDOR'),
+          eyebrow: tr('CONSOLA DE ADMINISTRACIÓN Y AUDITORÍA'),
           leading: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -190,12 +191,12 @@ class _ServerTabState extends State<ServerTab>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'MODO AUDITORÍA Y ANALÍTICAS',
+                      tr('MODO AUDITORÍA Y ANALÍTICAS'),
                       style: AppText.mono(9, color: AppColors.accent, weight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Selecciona un servidor para monitorizar el rendimiento (CPU/RAM/disco), ver estadísticas y administrar contenedores Docker.',
+                      tr('Selecciona un servidor para monitorizar el rendimiento (CPU/RAM/disco), ver estadísticas y administrar contenedores Docker.'),
                       style: AppText.body(9.5, color: AppColors.muted),
                     ),
                   ],
@@ -207,15 +208,15 @@ class _ServerTabState extends State<ServerTab>
         const SizedBox(height: 12),
         if (active != null && !active.isLocal) ...[
           SwissPanel(
-            title: 'CONEXIÓN ACTIVA',
+            title: tr('CONEXIÓN ACTIVA'),
             children: [
-              _profileRow(active, server, meta: 'USAR ESTE SERVIDOR'),
+              _profileRow(active, server, meta: tr('USAR ESTE SERVIDOR')),
             ],
           ),
           const SizedBox(height: 14),
         ],
         SwissPanel(
-          title: 'SELECCIONA UN SERVIDOR',
+          title: tr('SELECCIONA UN SERVIDOR'),
           children: [
             for (int i = 0; i < remoteProfiles.length; i++) ...[
               if (i > 0) Hairline(),
@@ -255,7 +256,7 @@ class _ServerTabState extends State<ServerTab>
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text('CAMBIAR DE SERVIDOR',
+              child: Text(tr('CAMBIAR DE SERVIDOR'),
                   style:
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
@@ -297,7 +298,7 @@ class _ServerTabState extends State<ServerTab>
                     Icon(Icons.power_settings_new,
                         size: 16, color: AppColors.muted),
                     const SizedBox(width: 12),
-                    Text('DESCONECTAR',
+                    Text(tr('DESCONECTAR'),
                         style: AppText.label(10,
                             color: AppColors.muted, spacing: 1.0)),
                   ],
@@ -326,12 +327,12 @@ class _ServerTabState extends State<ServerTab>
           ),
           const SizedBox(height: 20),
           Text(
-            'CONECTANDO A ${(server.profile?.name ?? '').toUpperCase()}…',
+            tr('CONECTANDO A {0}…', [(server.profile?.name ?? '').toUpperCase()]),
             style: AppText.label(11, color: AppColors.bone, spacing: 1.5),
           ),
           const SizedBox(height: 20),
           GhostButton(
-            label: 'Cancelar',
+            label: tr('Cancelar'),
             dense: true,
             onPressed: () => server.disconnect(),
           ),
@@ -350,27 +351,27 @@ class _ServerTabState extends State<ServerTab>
             Icon(Icons.error_outline, size: 40, color: AppColors.danger),
             const SizedBox(height: 16),
             Text(
-              (server.profile?.name ?? 'SERVIDOR').toUpperCase(),
+              (server.profile?.name ?? tr('SERVIDOR')).toUpperCase(),
               style: AppText.label(11, color: AppColors.muted, spacing: 1.5),
             ),
             const SizedBox(height: 10),
             Text(
-              server.lastError ?? 'Error desconocido.',
+              server.lastError ?? tr('Error desconocido.'),
               textAlign: TextAlign.center,
               style: AppText.body(12, color: AppColors.bone),
             ),
             const SizedBox(height: 10),
             GhostButton(
-              label: 'Copiar error',
+              label: tr('Copiar error'),
               icon: Icons.copy_outlined,
               dense: true,
               onPressed: () => _copyError(
-                  server.lastError ?? 'Error desconocido.'),
+                  server.lastError ?? tr('Error desconocido.')),
             ),
             const SizedBox(height: 24),
             if (server.needsSudoPassword) ...[
               InvertedButton(
-                label: 'Introducir contraseña sudo',
+                label: tr('Introducir contraseña sudo'),
                 icon: Icons.key_outlined,
                 dense: true,
                 onPressed: () => _askSudoPassword(context, server),
@@ -381,14 +382,14 @@ class _ServerTabState extends State<ServerTab>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 InvertedButton(
-                  label: 'Reconectar',
+                  label: tr('Reconectar'),
                   icon: Icons.refresh,
                   dense: true,
                   onPressed: () => server.reconnect(),
                 ),
                 const SizedBox(width: 10),
                 GhostButton(
-                  label: 'Cambiar servidor',
+                  label: tr('Cambiar servidor'),
                   dense: true,
                   onPressed: () => server.disconnect(),
                 ),
@@ -587,15 +588,15 @@ class _ServerTabState extends State<ServerTab>
   }
 
   // A null icon renders the Docker whale ([DockerLogo]) instead.
-  static const List<(ServerSection, String, IconData?)> _sections = [
-    (ServerSection.monitor, 'MONITOR', Icons.monitor_heart_outlined),
-    (ServerSection.containers, 'CONTENEDORES', null),
-    (ServerSection.images, 'IMÁGENES', Icons.layers_outlined),
-    (ServerSection.volumes, 'VOLÚMENES', Icons.storage_outlined),
-    (ServerSection.networks, 'REDES', Icons.lan_outlined),
+  static List<(ServerSection, String, IconData?)> _sections = [
+    (ServerSection.monitor, tr('MONITOR'), Icons.monitor_heart_outlined),
+    (ServerSection.containers, tr('CONTENEDORES'), null),
+    (ServerSection.images, tr('IMÁGENES'), Icons.layers_outlined),
+    (ServerSection.volumes, tr('VOLÚMENES'), Icons.storage_outlined),
+    (ServerSection.networks, tr('REDES'), Icons.lan_outlined),
     (ServerSection.compose, 'COMPOSE', Icons.account_tree_outlined),
-    (ServerSection.system, 'SISTEMA', Icons.data_usage_outlined),
-    (ServerSection.database, 'BASE DE DATOS', Icons.storage_rounded),
+    (ServerSection.system, tr('SISTEMA'), Icons.data_usage_outlined),
+    (ServerSection.database, tr('BASE DE DATOS'), Icons.storage_rounded),
   ];
 
   /// Slide-in navigation rail: server identity on top, every section listed
@@ -667,7 +668,7 @@ class _ServerTabState extends State<ServerTab>
                               [
                                 if (server.serverVersion != null)
                                   'docker v${server.serverVersion}',
-                                'cambiar servidor',
+                                tr('cambiar servidor'),
                               ].join(' · '),
                               style: AppText.mono(8.5, color: AppColors.muted),
                               overflow: TextOverflow.ellipsis,
@@ -685,7 +686,7 @@ class _ServerTabState extends State<ServerTab>
                 child: ListView(
                   padding: const EdgeInsets.only(bottom: 12),
                   children: [
-                    _navGroup('SERVIDOR'),
+                    _navGroup(tr('SERVIDOR')),
                     item(ServerSection.monitor),
                     item(ServerSection.database),
                     _navGroup('DOCKER'),
@@ -712,7 +713,7 @@ class _ServerTabState extends State<ServerTab>
                       Icon(Icons.power_settings_new,
                           size: 15, color: AppColors.muted),
                       const SizedBox(width: 12),
-                      Text('DESCONECTAR',
+                      Text(tr('DESCONECTAR'),
                           style: AppText.label(9,
                               color: AppColors.muted, spacing: 1.2)),
                     ],
@@ -748,12 +749,12 @@ class _ServerTabState extends State<ServerTab>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'SUDO REQUIERE CONTRASEÑA',
+              tr('SUDO REQUIERE CONTRASEÑA'),
               style: AppText.mono(9, color: AppColors.bone, spacing: 1.0),
             ),
           ),
           GhostButton(
-            label: 'Introducir',
+            label: tr('Introducir'),
             dense: true,
             onPressed: () => _askSudoPassword(context, server),
           ),
@@ -795,16 +796,14 @@ class _ServerTabState extends State<ServerTab>
 
           return AlertDialog(
             backgroundColor: AppColors.panel,
-            title: Text('CONTRASEÑA SUDO',
+            title: Text(tr('CONTRASEÑA SUDO'),
                 style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'El usuario "${server.profile?.username ?? ''}" no está en el '
-                  'grupo docker. Introduce su contraseña sudo para ejecutar '
-                  'Docker con permisos elevados en esta sesión.',
+                  tr('El usuario "{0}" no está en el grupo docker. Introduce su contraseña sudo para ejecutar Docker con permisos elevados en esta sesión.', [server.profile?.username ?? '']),
                   style: AppText.body(12, color: AppColors.muted),
                 ),
                 const SizedBox(height: 14),
@@ -822,7 +821,7 @@ class _ServerTabState extends State<ServerTab>
                     style: AppText.mono(12, color: AppColors.bone),
                     onSubmitted: (_) => submit(),
                     decoration: InputDecoration(
-                      hintText: 'contraseña',
+                      hintText: tr('contraseña'),
                       hintStyle: AppText.mono(11, color: AppColors.faint),
                       border: InputBorder.none,
                       isDense: true,
@@ -840,7 +839,7 @@ class _ServerTabState extends State<ServerTab>
             actions: [
               TextButton(
                 onPressed: validating ? null : () => Navigator.pop(ctx),
-                child: Text('CANCELAR',
+                child: Text(tr('CANCELAR'),
                     style: AppText.mono(10,
                         color: AppColors.muted, spacing: 1.0)),
               ),
@@ -852,7 +851,7 @@ class _ServerTabState extends State<ServerTab>
                         height: 12,
                         child: CircularProgressIndicator(strokeWidth: 1.5),
                       )
-                    : Text('CONFIRMAR',
+                    : Text(tr('CONFIRMAR'),
                         style: AppText.mono(10,
                             color: AppColors.bone, spacing: 1.0)),
               ),
@@ -934,26 +933,26 @@ class _ServerTabState extends State<ServerTab>
           children: [
             DockerLogo(size: 40, color: AppColors.muted),
             const SizedBox(height: 14),
-            Text('DOCKER NO DISPONIBLE',
+            Text(tr('DOCKER NO DISPONIBLE'),
                 style: AppText.label(11, color: AppColors.bone, spacing: 1.5)),
             const SizedBox(height: 8),
             Text(
-              server.dockerNotice ?? 'No se pudo consultar Docker.',
+              server.dockerNotice ?? tr('No se pudo consultar Docker.'),
               textAlign: TextAlign.center,
               style: AppText.body(11, color: AppColors.muted),
             ),
             const SizedBox(height: 10),
             GhostButton(
-              label: 'Copiar mensaje',
+              label: tr('Copiar mensaje'),
               icon: Icons.copy_outlined,
               dense: true,
               onPressed: () => _copyError(
-                  server.dockerNotice ?? 'No se pudo consultar Docker.'),
+                  server.dockerNotice ?? tr('No se pudo consultar Docker.')),
             ),
             if (server.needsSudoPassword) ...[
               const SizedBox(height: 16),
               InvertedButton(
-                label: 'Introducir contraseña sudo',
+                label: tr('Introducir contraseña sudo'),
                 icon: Icons.key_outlined,
                 dense: true,
                 onPressed: () => _askSudoPassword(context, server),
@@ -1051,21 +1050,21 @@ class _ServerTabState extends State<ServerTab>
         children: [
           SwissGaugeChart(
             value: m.cpuLoad / 4.0,
-            label: 'CARGA CPU',
+            label: tr('CARGA CPU'),
             valueText: m.loaded ? m.cpuLoad.toStringAsFixed(2) : '…',
-            detailsText: m.loaded ? 'PROMEDIO' : '…',
+            detailsText: m.loaded ? tr('PROMEDIO') : '…',
             color: m.cpuLoad > 3.0 ? AppColors.danger : AppColors.accent,
           ),
           SwissGaugeChart(
             value: m.ramPercent,
-            label: 'MEMORIA RAM',
+            label: tr('MEMORIA RAM'),
             valueText: m.loaded ? '${(m.ramPercent * 100).toStringAsFixed(0)}%' : '…',
             detailsText: m.loaded ? m.ramText.replaceAll('MB', 'M') : '…',
             color: m.ramPercent > 0.85 ? AppColors.danger : AppColors.accent,
           ),
           SwissGaugeChart(
             value: m.diskPercent,
-            label: 'DISCO',
+            label: tr('DISCO'),
             valueText: m.loaded ? '${(m.diskPercent * 100).toStringAsFixed(0)}%' : '…',
             detailsText: m.loaded ? m.diskText : '…',
             color: m.diskPercent > 0.9 ? AppColors.danger : AppColors.accent,
@@ -1074,7 +1073,7 @@ class _ServerTabState extends State<ServerTab>
       ),
       const SizedBox(height: 14),
       SwissPanel(
-        title: 'SERVICIOS DEL SISTEMA',
+        title: tr('SERVICIOS DEL SISTEMA'),
         margin: EdgeInsets.zero,
         children: [
           for (int i = 0; i < m.services.length; i++) ...[
@@ -1111,7 +1110,7 @@ class _ServerTabState extends State<ServerTab>
             ),
           ),
           GhostButton(
-            label: s.active ? 'Detener' : 'Iniciar',
+            label: s.active ? tr('Detener') : tr('Iniciar'),
             dense: true,
             danger: s.active,
             onPressed: server.busy
@@ -1121,7 +1120,7 @@ class _ServerTabState extends State<ServerTab>
           ),
           const SizedBox(width: 8),
           GhostButton(
-            label: 'Reiniciar',
+            label: tr('Reiniciar'),
             dense: true,
             onPressed: server.busy || !s.active
                 ? null
@@ -1164,16 +1163,16 @@ class _ServerTabState extends State<ServerTab>
       const SizedBox(height: 8),
       Row(
         children: [
-          _filterChip('TODOS · ${all.length}', _ContainerFilter.all),
+          _filterChip(tr('TODOS · {0}', [all.length]), _ContainerFilter.all),
           const SizedBox(width: 6),
-          _filterChip('ACTIVOS · ${running + paused}', _ContainerFilter.running),
+          _filterChip(tr('ACTIVOS · {0}', [running + paused]), _ContainerFilter.running),
           const SizedBox(width: 6),
-          _filterChip('DETENIDOS · $stopped', _ContainerFilter.stopped),
+          _filterChip(tr('DETENIDOS · {0}', [stopped]), _ContainerFilter.stopped),
         ],
       ),
       const SizedBox(height: 12),
       SwissPanel(
-        title: 'CONTENEDORES · ${filtered.length}/${all.length}',
+        title: tr('CONTENEDORES · {0}/{1}', [filtered.length, all.length]),
         margin: EdgeInsets.zero,
         trailing: server.statsLoading
             ? const SizedBox(
@@ -1186,15 +1185,15 @@ class _ServerTabState extends State<ServerTab>
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                  child: Text('STATS',
+                  child: Text(tr('STATS'),
                       style: AppText.mono(9,
                           color: AppColors.bone, spacing: 1.2)),
                 ),
               ),
         children: [
-          if (all.isEmpty) _emptyNote('SIN CONTENEDORES'),
+          if (all.isEmpty) _emptyNote(tr('SIN CONTENEDORES')),
           if (all.isNotEmpty && filtered.isEmpty)
-            _emptyNote('SIN RESULTADOS PARA EL FILTRO'),
+            _emptyNote(tr('SIN RESULTADOS PARA EL FILTRO')),
           for (int i = 0; i < filtered.length; i++) ...[
             if (i > 0) Hairline(),
             _containerRow(context, state, server, filtered[i]),
@@ -1209,9 +1208,9 @@ class _ServerTabState extends State<ServerTab>
       ServerController server, int running, int stopped, int paused) {
     final summary = [
       if (server.serverVersion != null) 'v${server.serverVersion}',
-      '$running activos',
-      '$stopped detenidos',
-      if (paused > 0) '$paused pausados',
+      tr('{0} activos', [running]),
+      tr('{0} detenidos', [stopped]),
+      if (paused > 0) tr('{0} pausados', [paused]),
     ].join(' · ');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1232,7 +1231,7 @@ class _ServerTabState extends State<ServerTab>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('DOCKER ENGINE',
+                Text(tr('DOCKER ENGINE'),
                     style: AppText.mono(11,
                         color: AppColors.bone,
                         weight: FontWeight.bold,
@@ -1279,7 +1278,7 @@ class _ServerTabState extends State<ServerTab>
               style: AppText.mono(11, color: AppColors.bone),
               onChanged: (v) => setState(() => _containerQuery = v),
               decoration: InputDecoration(
-                hintText: 'buscar por nombre o imagen',
+                hintText: tr('buscar por nombre o imagen'),
                 hintStyle: AppText.mono(11, color: AppColors.faint),
                 border: InputBorder.none,
                 isDense: true,
@@ -1452,35 +1451,35 @@ class _ServerTabState extends State<ServerTab>
                 ),
                 Hairline(),
                 if (!c.running && !c.paused)
-                  _sheetTile(sheetCtx, Icons.play_arrow_outlined, 'INICIAR',
+                  _sheetTile(sheetCtx, Icons.play_arrow_outlined, tr('INICIAR'),
                       () => _runAction(
                           () => server.containerAction(c.id, 'start'))),
                 if (c.paused)
-                  _sheetTile(sheetCtx, Icons.play_arrow_outlined, 'REANUDAR',
+                  _sheetTile(sheetCtx, Icons.play_arrow_outlined, tr('REANUDAR'),
                       () => _runAction(
                           () => server.containerAction(c.id, 'unpause'))),
                 if (c.running) ...[
-                  _sheetTile(sheetCtx, Icons.stop_outlined, 'DETENER',
+                  _sheetTile(sheetCtx, Icons.stop_outlined, tr('DETENER'),
                       () => _runAction(
                           () => server.containerAction(c.id, 'stop'))),
                   Hairline(),
-                  _sheetTile(sheetCtx, Icons.pause_outlined, 'PAUSAR',
+                  _sheetTile(sheetCtx, Icons.pause_outlined, tr('PAUSAR'),
                       () => _runAction(
                           () => server.containerAction(c.id, 'pause'))),
                 ],
                 Hairline(),
-                _sheetTile(sheetCtx, Icons.refresh, 'REINICIAR',
+                _sheetTile(sheetCtx, Icons.refresh, tr('REINICIAR'),
                     () => _runAction(
                         () => server.containerAction(c.id, 'restart'))),
                 Hairline(),
-                _sheetTile(sheetCtx, Icons.subject_outlined, 'VER LOGS',
+                _sheetTile(sheetCtx, Icons.subject_outlined, tr('VER LOGS'),
                     () => _showLogsSheet(context, server, c)),
                 Hairline(),
-                _sheetTile(sheetCtx, Icons.info_outline, 'DETALLES (INSPECT)',
+                _sheetTile(sheetCtx, Icons.info_outline, tr('DETALLES (INSPECT)'),
                     () => _showDetailsSheet(context, server, c)),
                 if (c.running) ...[
                   Hairline(),
-                  _sheetTile(sheetCtx, Icons.terminal_outlined, 'ABRIR SHELL',
+                  _sheetTile(sheetCtx, Icons.terminal_outlined, tr('ABRIR SHELL'),
                       () {
                     state.connectToSSH(
                       server.profile!,
@@ -1493,7 +1492,7 @@ class _ServerTabState extends State<ServerTab>
                   Hairline(),
                   for (final p in ports)
                     _sheetTile(sheetCtx, Icons.open_in_browser_outlined,
-                        'ABRIR PUERTO :${p.hostPort} EN NAVEGADOR', () {
+                        tr('ABRIR PUERTO :{0} EN NAVEGADOR', [p.hostPort]), () {
                       final host = server.profile?.host;
                       if (host == null) return;
                       launchUrl(Uri.parse('http://$host:${p.hostPort}'),
@@ -1501,19 +1500,19 @@ class _ServerTabState extends State<ServerTab>
                     }),
                 ],
                 Hairline(),
-                _sheetTile(sheetCtx, Icons.copy_outlined, 'COPIAR ID', () {
+                _sheetTile(sheetCtx, Icons.copy_outlined, tr('COPIAR ID'), () {
                   Clipboard.setData(ClipboardData(text: c.id));
-                  _toast('ID copiado: ${c.id}');
+                  _toast(tr('ID copiado: {0}', [c.id]));
                 }),
                 Hairline(),
-                _sheetTile(sheetCtx, Icons.delete_outline, 'ELIMINAR',
+                _sheetTile(sheetCtx, Icons.delete_outline, tr('ELIMINAR'),
                     () async {
                   final ok = await _confirm(
                     context,
-                    'ELIMINAR CONTENEDOR',
+                    tr('ELIMINAR CONTENEDOR'),
                     c.running
-                        ? '"${c.name}" está en ejecución: se detendrá y eliminará. Esta acción no se puede deshacer.'
-                        : '¿Eliminar el contenedor "${c.name}"? Esta acción no se puede deshacer.',
+                        ? tr('"{0}" está en ejecución: se detendrá y eliminará. Esta acción no se puede deshacer.', [c.name])
+                        : tr('¿Eliminar el contenedor "{0}"? Esta acción no se puede deshacer.', [c.name]),
                   );
                   if (!ok) return;
                   await _runAction(() =>
@@ -1529,7 +1528,7 @@ class _ServerTabState extends State<ServerTab>
 
   void _copyError(String text) {
     Clipboard.setData(ClipboardData(text: text));
-    _toast('Error copiado al portapapeles');
+    _toast(tr('Error copiado al portapapeles'));
   }
 
   void _toast(String msg) {
@@ -1581,7 +1580,7 @@ class _ServerTabState extends State<ServerTab>
                 controller: _pullController,
                 style: AppText.mono(11, color: AppColors.bone),
                 decoration: InputDecoration(
-                  hintText: 'imagen:tag',
+                  hintText: tr('imagen:tag'),
                   hintStyle: AppText.mono(11, color: AppColors.faint),
                   border: InputBorder.none,
                   isDense: true,
@@ -1609,10 +1608,10 @@ class _ServerTabState extends State<ServerTab>
       ),
       const SizedBox(height: 12),
       SwissPanel(
-        title: 'IMÁGENES · ${server.images.length}',
+        title: tr('IMÁGENES · {0}', [server.images.length]),
         margin: EdgeInsets.zero,
         children: [
-          if (server.images.isEmpty) _emptyNote('SIN IMÁGENES'),
+          if (server.images.isEmpty) _emptyNote(tr('SIN IMÁGENES')),
           for (int i = 0; i < server.images.length; i++) ...[
             if (i > 0) Hairline(),
             _imageRow(context, server, server.images[i]),
@@ -1651,21 +1650,20 @@ class _ServerTabState extends State<ServerTab>
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
             Hairline(),
-            _sheetTile(sheetCtx, Icons.delete_outline, 'ELIMINAR', () async {
-              if (!await _confirm(context, 'ELIMINAR IMAGEN',
-                  '¿Eliminar la imagen "${img.ref}"?')) {
+            _sheetTile(sheetCtx, Icons.delete_outline, tr('ELIMINAR'), () async {
+              if (!await _confirm(context, tr('ELIMINAR IMAGEN'),
+                  tr('¿Eliminar la imagen "{0}"?', [img.ref]))) {
                 return;
               }
               await _runAction(() => server.removeImage(img.id));
             }, danger: true),
             Hairline(),
             _sheetTile(sheetCtx, Icons.delete_forever_outlined,
-                'FORZAR ELIMINACIÓN', () async {
+                tr('FORZAR ELIMINACIÓN'), () async {
               if (!await _confirm(
                   context,
-                  'FORZAR ELIMINACIÓN',
-                  'Se eliminará "${img.ref}" aunque tenga contenedores '
-                      'detenidos que la usen.')) {
+                  tr('FORZAR ELIMINACIÓN'),
+                  tr('Se eliminará "{0}" aunque tenga contenedores detenidos que la usen.', [img.ref]))) {
                 return;
               }
               await _runAction(() => server.removeImage(img.id, force: true));
@@ -1683,10 +1681,10 @@ class _ServerTabState extends State<ServerTab>
   Widget _buildVolumes(BuildContext context, ServerController server) {
     return _sectionList([
       SwissPanel(
-        title: 'VOLÚMENES · ${server.volumes.length}',
+        title: tr('VOLÚMENES · {0}', [server.volumes.length]),
         margin: EdgeInsets.zero,
         children: [
-          if (server.volumes.isEmpty) _emptyNote('SIN VOLÚMENES'),
+          if (server.volumes.isEmpty) _emptyNote(tr('SIN VOLÚMENES')),
           for (int i = 0; i < server.volumes.length; i++) ...[
             if (i > 0) Hairline(),
             LayerRow(
@@ -1698,9 +1696,8 @@ class _ServerTabState extends State<ServerTab>
                 final v = server.volumes[i];
                 if (!await _confirm(
                     context,
-                    'ELIMINAR VOLUMEN',
-                    '¿Eliminar el volumen "${v.name}"? Sus datos se perderán '
-                        'de forma permanente.')) {
+                    tr('ELIMINAR VOLUMEN'),
+                    tr('¿Eliminar el volumen "{0}"? Sus datos se perderán de forma permanente.', [v.name]))) {
                   return;
                 }
                 await _runAction(() => server.removeVolume(v.name));
@@ -1715,10 +1712,10 @@ class _ServerTabState extends State<ServerTab>
   Widget _buildNetworks(BuildContext context, ServerController server) {
     return _sectionList([
       SwissPanel(
-        title: 'REDES · ${server.networks.length}',
+        title: tr('REDES · {0}', [server.networks.length]),
         margin: EdgeInsets.zero,
         children: [
-          if (server.networks.isEmpty) _emptyNote('SIN REDES'),
+          if (server.networks.isEmpty) _emptyNote(tr('SIN REDES')),
           for (int i = 0; i < server.networks.length; i++) ...[
             if (i > 0) Hairline(),
             LayerRow(
@@ -1733,8 +1730,8 @@ class _ServerTabState extends State<ServerTab>
                   ? null
                   : () async {
                       final n = server.networks[i];
-                      if (!await _confirm(context, 'ELIMINAR RED',
-                          '¿Eliminar la red "${n.name}"?')) {
+                      if (!await _confirm(context, tr('ELIMINAR RED'),
+                          tr('¿Eliminar la red "{0}"?', [n.name]))) {
                         return;
                       }
                       await _runAction(() => server.removeNetwork(n.id));
@@ -1753,16 +1750,16 @@ class _ServerTabState extends State<ServerTab>
   Widget _buildCompose(BuildContext context, ServerController server) {
     if (!server.composeAvailable) {
       return _sectionList([
-        _emptyNote('DOCKER COMPOSE V2 NO DISPONIBLE EN ESTE SERVIDOR'),
+        _emptyNote(tr('DOCKER COMPOSE V2 NO DISPONIBLE EN ESTE SERVIDOR')),
       ]);
     }
     return _sectionList([
       SwissPanel(
-        title: 'PROYECTOS COMPOSE · ${server.composeProjects.length}',
+        title: tr('PROYECTOS COMPOSE · {0}', [server.composeProjects.length]),
         margin: EdgeInsets.zero,
         children: [
           if (server.composeProjects.isEmpty)
-            _emptyNote('SIN PROYECTOS COMPOSE'),
+            _emptyNote(tr('SIN PROYECTOS COMPOSE')),
           for (int i = 0; i < server.composeProjects.length; i++) ...[
             if (i > 0) Hairline(),
             _composeRow(context, server, server.composeProjects[i]),
@@ -1802,19 +1799,18 @@ class _ServerTabState extends State<ServerTab>
                       AppText.label(11, color: AppColors.bone, spacing: 1.4)),
             ),
             Hairline(),
-            _sheetTile(sheetCtx, Icons.play_arrow_outlined, 'LEVANTAR (UP -D)',
+            _sheetTile(sheetCtx, Icons.play_arrow_outlined, tr('LEVANTAR (UP -D)'),
                 () => _runAction(() => server.composeAction(p, 'up -d'))),
             Hairline(),
-            _sheetTile(sheetCtx, Icons.refresh, 'REINICIAR',
+            _sheetTile(sheetCtx, Icons.refresh, tr('REINICIAR'),
                 () => _runAction(() => server.composeAction(p, 'restart'))),
             Hairline(),
-            _sheetTile(sheetCtx, Icons.stop_outlined, 'DETENER (DOWN)',
+            _sheetTile(sheetCtx, Icons.stop_outlined, tr('DETENER (DOWN)'),
                 () async {
               if (!await _confirm(
                   context,
-                  'DETENER PROYECTO',
-                  '"${p.name}": down detiene y elimina sus contenedores y '
-                      'redes (los volúmenes se conservan).')) {
+                  tr('DETENER PROYECTO'),
+                  tr('"{0}": down detiene y elimina sus contenedores y redes (los volúmenes se conservan).', [p.name]))) {
                 return;
               }
               await _runAction(() => server.composeAction(p, 'down'));
@@ -1832,14 +1828,14 @@ class _ServerTabState extends State<ServerTab>
   Widget _buildSystem(BuildContext context, ServerController server) {
     return _sectionList([
       SwissPanel(
-        title: 'USO DE DISCO',
+        title: tr('USO DE DISCO'),
         margin: EdgeInsets.zero,
         children: [
-          if (server.dfRows.isEmpty) _emptyNote('SIN DATOS'),
+          if (server.dfRows.isEmpty) _emptyNote(tr('SIN DATOS')),
           if (server.dfRows.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-              child: _dfRow('TIPO', 'TOTAL', 'ACTIVOS', 'TAMAÑO', 'LIBERABLE',
+              child: _dfRow(tr('TIPO'), 'TOTAL', tr('ACTIVOS'), tr('TAMAÑO'), tr('LIBERABLE'),
                   header: true),
             ),
           for (final row in server.dfRows)
@@ -1852,23 +1848,23 @@ class _ServerTabState extends State<ServerTab>
       ),
       const SizedBox(height: 14),
       SwissPanel(
-        title: 'LIMPIEZA',
+        title: tr('LIMPIEZA'),
         margin: EdgeInsets.zero,
         children: [
-          _pruneRow(context, server, 'CONTENEDORES DETENIDOS', 'container',
-              'Se eliminarán todos los contenedores detenidos.'),
+          _pruneRow(context, server, tr('CONTENEDORES DETENIDOS'), 'container',
+              tr('Se eliminarán todos los contenedores detenidos.')),
           Hairline(),
-          _pruneRow(context, server, 'IMÁGENES SIN USO', 'image',
-              'Se eliminarán las imágenes colgantes (sin etiqueta ni uso).'),
+          _pruneRow(context, server, tr('IMÁGENES SIN USO'), 'image',
+              tr('Se eliminarán las imágenes colgantes (sin etiqueta ni uso).')),
           Hairline(),
-          _pruneRow(context, server, 'VOLÚMENES SIN USO', 'volume',
-              'Se eliminarán los volúmenes anónimos que ningún contenedor usa. Sus datos se perderán.'),
+          _pruneRow(context, server, tr('VOLÚMENES SIN USO'), 'volume',
+              tr('Se eliminarán los volúmenes anónimos que ningún contenedor usa. Sus datos se perderán.')),
           Hairline(),
-          _pruneRow(context, server, 'REDES SIN USO', 'network',
-              'Se eliminarán las redes que ningún contenedor usa.'),
+          _pruneRow(context, server, tr('REDES SIN USO'), 'network',
+              tr('Se eliminarán las redes que ningún contenedor usa.')),
           Hairline(),
-          _pruneRow(context, server, 'LIMPIEZA COMPLETA', 'system',
-              'docker system prune: contenedores detenidos, redes sin uso, imágenes colgantes y caché de build.'),
+          _pruneRow(context, server, tr('LIMPIEZA COMPLETA'), 'system',
+              tr('docker system prune: contenedores detenidos, redes sin uso, imágenes colgantes y caché de build.')),
         ],
       ),
     ]);
@@ -1902,7 +1898,7 @@ class _ServerTabState extends State<ServerTab>
                 style: AppText.label(9, color: AppColors.bone, spacing: 1.0)),
           ),
           GhostButton(
-            label: 'Purgar',
+            label: tr('Purgar'),
             dense: true,
             danger: true,
             onPressed: server.busy
@@ -1966,12 +1962,12 @@ class _ServerTabState extends State<ServerTab>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('CANCELAR',
+            child: Text(tr('CANCELAR'),
                 style: AppText.mono(10, color: AppColors.muted, spacing: 1.0)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('CONFIRMAR',
+            child: Text(tr('CONFIRMAR'),
                 style:
                     AppText.mono(10, color: AppColors.danger, spacing: 1.0)),
           ),
@@ -2120,7 +2116,7 @@ class _LogsSheetState extends State<_LogsSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    'LOGS · ${widget.container.name.toUpperCase()}',
+                    tr('LOGS · {0}', [widget.container.name.toUpperCase()]),
                     style:
                         AppText.label(10, color: AppColors.bone, spacing: 1.2),
                     overflow: TextOverflow.ellipsis,
@@ -2152,7 +2148,7 @@ class _LogsSheetState extends State<_LogsSheet> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                     color: _follow ? AppColors.accent : Colors.transparent,
-                    child: Text('SEGUIR',
+                    child: Text(tr('SEGUIR'),
                         style: AppText.mono(9,
                             color: _follow ? AppColors.ink : AppColors.muted,
                             spacing: 0.8)),
@@ -2161,7 +2157,7 @@ class _LogsSheetState extends State<_LogsSheet> {
                 IconButton(
                   icon: const Icon(Icons.copy_outlined, size: 15),
                   color: AppColors.bone,
-                  tooltip: 'Copiar logs',
+                  tooltip: tr('Copiar logs'),
                   onPressed: _logs.isEmpty
                       ? null
                       : () {
@@ -2169,7 +2165,7 @@ class _LogsSheetState extends State<_LogsSheet> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               backgroundColor: AppColors.panelHi,
-                              content: Text('Logs copiados al portapapeles',
+                              content: Text(tr('Logs copiados al portapapeles'),
                                   style: AppText.mono(10,
                                       color: AppColors.bone)),
                             ),
@@ -2199,7 +2195,7 @@ class _LogsSheetState extends State<_LogsSheet> {
                   : SingleChildScrollView(
                       controller: _scroll,
                       child: SelectableText(
-                        _logs.isEmpty ? '(sin salida)' : _logs,
+                        _logs.isEmpty ? tr('(sin salida)') : _logs,
                         style: AppText.mono(10, color: AppColors.bone),
                       ),
                     ),
@@ -2305,7 +2301,7 @@ class _DetailsSheetState extends State<_DetailsSheet> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'DETALLES · ${widget.container.name.toUpperCase()}',
+                    tr('DETALLES · {0}', [widget.container.name.toUpperCase()]),
                     style:
                         AppText.label(10, color: AppColors.bone, spacing: 1.2),
                     overflow: TextOverflow.ellipsis,
@@ -2335,7 +2331,7 @@ class _DetailsSheetState extends State<_DetailsSheet> {
                           child: Padding(
                             padding: const EdgeInsets.all(24),
                             child: Text(
-                              _error ?? 'No se pudieron obtener los detalles.',
+                              _error ?? tr('No se pudieron obtener los detalles.'),
                               textAlign: TextAlign.center,
                               style: AppText.mono(10, color: AppColors.danger),
                             ),
@@ -2344,24 +2340,24 @@ class _DetailsSheetState extends State<_DetailsSheet> {
                       : ListView(
                           padding: const EdgeInsets.only(bottom: 24),
                           children: [
-                            _sectionTitle('GENERAL'),
+                            _sectionTitle(tr('GENERAL')),
                             _kv('ID', d.id),
-                            _kv('IMAGEN', d.image),
-                            _kv('ESTADO', d.state),
-                            _kv('CREADO', d.created),
-                            _kv('INICIADO', d.startedAt),
+                            _kv(tr('IMAGEN'), d.image),
+                            _kv(tr('ESTADO'), d.state),
+                            _kv(tr('CREADO'), d.created),
+                            _kv(tr('INICIADO'), d.startedAt),
                             if (!widget.container.running)
                               _kv('EXIT CODE', '${d.exitCode}'),
-                            _kv('REINICIOS', '${d.restartCount}'),
-                            _kv('POLÍTICA', d.restartPolicy),
-                            if (d.cmd.isNotEmpty) _kv('COMANDO', d.cmd),
-                            _sectionTitle('RED'),
+                            _kv(tr('REINICIOS'), '${d.restartCount}'),
+                            _kv(tr('POLÍTICA'), d.restartPolicy),
+                            if (d.cmd.isNotEmpty) _kv(tr('COMANDO'), d.cmd),
+                            _sectionTitle(tr('RED')),
                             _lines(d.networks),
-                            _sectionTitle('PUERTOS'),
+                            _sectionTitle(tr('PUERTOS')),
                             _lines(d.ports),
-                            _sectionTitle('MONTAJES'),
+                            _sectionTitle(tr('MONTAJES')),
                             _lines(d.mounts),
-                            _sectionTitle('ENTORNO · ${d.env.length}'),
+                            _sectionTitle(tr('ENTORNO · {0}', [d.env.length])),
                             _lines(d.env),
                           ],
                         ),

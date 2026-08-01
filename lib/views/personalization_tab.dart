@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../widgets/color_picker_dialog.dart';
 import '../widgets/swiss.dart';
 import 'shortcut_manager_sheet.dart';
+import '../l10n/l10n.dart';
 
 /// Screen dedicated to personalizing the application aesthetics, terminal styling,
 /// and keyboard shortcuts layout.
@@ -38,15 +39,15 @@ class PersonalizationTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),
         children: [
-          ScreenHeader('Personalizar', eyebrow: 'Apariencia y Terminal'),
+          ScreenHeader(tr('Personalizar'), eyebrow: tr('Apariencia y Terminal')),
 
           // ---- Appearance ------------------------------------------------
           SwissPanel(
-            title: 'Apariencia',
+            title: tr('Apariencia'),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('TEMA DE LA APLICACIÓN',
+                child: Text(tr('TEMA DE LA APLICACIÓN'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -59,7 +60,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('TAMAÑO DE ICONOS',
+                child: Text(tr('TAMAÑO DE ICONOS'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -72,7 +73,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('COLOR DE ACENTO (MONOCHROME-PLUS)',
+                child: Text(tr('COLOR DE ACENTO (MONOCHROME-PLUS)'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -91,14 +92,14 @@ class PersonalizationTab extends StatelessWidget {
 
           // ---- Terminal --------------------------------------------------
           SwissPanel(
-            title: 'Terminal',
+            title: tr('Terminal'),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text('TAMAÑO DE FUENTE',
+                      child: Text(tr('TAMAÑO DE FUENTE'),
                           style: AppText.label(9, color: AppColors.muted)),
                     ),
                     Text('${terminalFontSize.toStringAsFixed(0)} PT',
@@ -141,7 +142,7 @@ class PersonalizationTab extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                 child: Text(
-                  r'user@kala:~$ echo "Hola"',
+                  tr(r'user@kala:~$ echo "Hola"'),
                   style: AppText.mono(terminalFontSize,
                       color: AppColors.bone),
                 ),
@@ -149,7 +150,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('ESQUEMA DE COLOR',
+                child: Text(tr('ESQUEMA DE COLOR'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -162,7 +163,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('TIPOGRAFÍA MONOESPACIADA',
+                child: Text(tr('TIPOGRAFÍA MONOESPACIADA'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -175,7 +176,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text('DISTRIBUCIÓN DE ATAJOS',
+                child: Text(tr('DISTRIBUCIÓN DE ATAJOS'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -189,12 +190,12 @@ class PersonalizationTab extends StatelessWidget {
               ListTile(
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                title: Text('PERSONALIZAR BOTONES DE TECLADO',
+                title: Text(tr('PERSONALIZAR BOTONES DE TECLADO'),
                     style: AppText.label(9, color: AppColors.muted)),
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
-                      'Arrastra para reordenar y activa/desactiva los atajos y botones del teclado inteligente.',
+                      tr('Arrastra para reordenar y activa/desactiva los atajos y botones del teclado inteligente.'),
                       style: AppText.label(8.5,
                           color: AppColors.faint, spacing: 0.3)),
                 ),
@@ -295,10 +296,10 @@ class _IconScaleSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const options = <(AppIconScale, String, IconData)>[
-      (AppIconScale.small, 'PEQUEÑO', Icons.text_decrease),
-      (AppIconScale.medium, 'MEDIO', Icons.format_size),
-      (AppIconScale.large, 'GRANDE', Icons.text_increase),
+    final options = <(AppIconScale, String, IconData)>[
+      (AppIconScale.small, tr('PEQUEÑO'), Icons.text_decrease),
+      (AppIconScale.medium, tr('MEDIO'), Icons.format_size),
+      (AppIconScale.large, tr('GRANDE'), Icons.text_increase),
     ];
 
     return Container(
@@ -332,10 +333,10 @@ class _ThemeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const options = <(AppThemeChoice, String, IconData)>[
-      (AppThemeChoice.system, 'SISTEMA', Icons.brightness_auto_outlined),
-      (AppThemeChoice.light, 'CLARO', Icons.light_mode_outlined),
-      (AppThemeChoice.dark, 'OSCURO', Icons.dark_mode_outlined),
+    final options = <(AppThemeChoice, String, IconData)>[
+      (AppThemeChoice.system, tr('SISTEMA'), Icons.brightness_auto_outlined),
+      (AppThemeChoice.light, tr('CLARO'), Icons.light_mode_outlined),
+      (AppThemeChoice.dark, tr('OSCURO'), Icons.dark_mode_outlined),
       (AppThemeChoice.oled, 'OLED', Icons.contrast_outlined),
     ];
 
@@ -448,19 +449,19 @@ class _AccentColorSelector extends StatelessWidget {
           side: BorderSide(color: AppColors.hairline),
           borderRadius: BorderRadius.zero,
         ),
-        title: Text('ELIMINAR COLOR',
+        title: Text(tr('ELIMINAR COLOR'),
             style: AppText.label(10, color: AppColors.bone)),
-        content: Text('¿Quitar $hex de tus colores guardados?',
+        content: Text(tr('¿Quitar {0} de tus colores guardados?', [hex]),
             style: AppText.mono(12, color: AppColors.muted)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('CANCELAR',
+            child: Text(tr('CANCELAR'),
                 style: AppText.label(9, color: AppColors.muted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('ELIMINAR',
+            child: Text(tr('ELIMINAR'),
                 style: AppText.label(9, color: AppColors.danger)),
           ),
         ],
@@ -506,7 +507,7 @@ class _AccentColorSelector extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            'MIS COLORES (${customColors.length}/${AppState.maxCustomAccentColors})',
+            tr('MIS COLORES ({0}/{1})', [customColors.length, AppState.maxCustomAccentColors]),
             style: AppText.label(8.5, color: AppColors.faint, spacing: 0.8),
           ),
           const SizedBox(height: 10),
@@ -543,13 +544,13 @@ class _AccentColorSelector extends StatelessWidget {
           ),
           if (customColors.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text('Mantén pulsado un color para eliminarlo.',
+            Text(tr('Mantén pulsado un color para eliminarlo.'),
                 style: AppText.label(8, color: AppColors.faint, spacing: 0.3)),
           ],
           if (full) ...[
             const SizedBox(height: 8),
             Text(
-                'Límite alcanzado: elimina uno para guardar otro.',
+                tr('Límite alcanzado: elimina uno para guardar otro.'),
                 style: AppText.label(8, color: AppColors.faint, spacing: 0.3)),
           ],
         ],
@@ -684,18 +685,18 @@ class _ShortcutLayoutSelector extends StatelessWidget {
           iconEnabledColor: AppColors.bone,
           isExpanded: true,
           style: AppText.mono(11, color: AppColors.bone),
-          items: const [
+          items: [
             DropdownMenuItem(
               value: TerminalShortcutLayout.classic,
-              child: Text('CLÁSICO (DOBLE FILA)'),
+              child: Text(tr('CLÁSICO (DOBLE FILA)')),
             ),
             DropdownMenuItem(
               value: TerminalShortcutLayout.dpadLeft,
-              child: Text('D-PAD A LA IZQUIERDA'),
+              child: Text(tr('D-PAD A LA IZQUIERDA')),
             ),
             DropdownMenuItem(
               value: TerminalShortcutLayout.dpadRight,
-              child: Text('D-PAD A LA DERECHA'),
+              child: Text(tr('D-PAD A LA DERECHA')),
             ),
           ],
           onChanged: (v) {

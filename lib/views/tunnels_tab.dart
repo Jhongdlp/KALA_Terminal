@@ -10,6 +10,7 @@ import '../services/tunnel_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import 'tunnel_editor_sheet.dart';
+import '../l10n/l10n.dart';
 
 /// Live view of every port forward in the app: state, traffic, errors and
 /// start/stop control, grouped by session.
@@ -29,10 +30,10 @@ class TunnelsTab extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 32),
         children: [
           ScreenHeader(
-            'TÚNELES',
+            tr('TÚNELES'),
             eyebrow: groups.isEmpty
-                ? 'PORT FORWARDING'
-                : '${manager.activeCount()} ACTIVOS',
+                ? tr('PORT FORWARDING')
+                : tr('{0} ACTIVOS', [manager.activeCount()]),
           ),
           if (manager.hasLanExposure) const _LanWarningBanner(),
           if (groups.isEmpty)
@@ -148,7 +149,7 @@ class TunnelRow extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GhostButton(
-                    label: 'Reintentar',
+                    label: tr('Reintentar'),
                     icon: Icons.refresh,
                     dense: true,
                     onPressed: () => manager.restart(sessionId, tunnel.id),
@@ -170,20 +171,27 @@ class TunnelRow extends StatelessWidget {
         // The SOCKS server is owned by dartssh2, which doesn't report per
         // connection stats — so don't show numbers we can't measure.
         if (tunnel.kind != TunnelKind.dynamicSocks) {
-          parts.add('${runtime.liveConnections} conex.');
+          parts.add(tr('{0} conex.', [runtime.liveConnections]));
           parts.add('↑${_bytes(runtime.bytesUp)} ↓${_bytes(runtime.bytesDown)}');
         } else {
           parts.add('activo');
         }
+        // Only meaningful while nothing is connected — with traffic flowing the
+        // countdown isn't running at all.
+        final deadline = runtime.idleDeadline;
+        if (deadline != null && runtime.liveConnections == 0) {
+          final left = deadline.difference(DateTime.now()).inMinutes;
+          parts.add(tr('cierre en {0} min', [left < 1 ? '<1' : left]));
+        }
       case TunnelState.starting:
-        parts.add('abriendo…');
+        parts.add(tr('abriendo…'));
       case TunnelState.failed:
         parts.add('error');
       case TunnelState.stopped:
-        parts.add('parado');
+        parts.add(runtime.stoppedForIdle ? tr('cerrado por inactividad') : 'parado');
     }
     if (tunnel.exposeToLan && tunnel.kind.listensOnDevice) {
-      parts.add('RED LOCAL');
+      parts.add(tr('RED LOCAL'));
     }
     return parts.join('  ·  ');
   }
@@ -222,7 +230,7 @@ class TunnelRow extends StatelessWidget {
             ),
             Hairline(),
             if (runtime.isUp && tunnel.looksLikeHttp && address != null)
-              _tile(sheetCtx, Icons.open_in_browser, 'ABRIR EN EL NAVEGADOR',
+              _tile(sheetCtx, Icons.open_in_browser, tr('ABRIR EN EL NAVEGADOR'),
                   () async {
                 final port = runtime.boundPort ?? tunnel.listenPort;
                 final uri = Uri.parse(
@@ -234,23 +242,23 @@ class TunnelRow extends StatelessWidget {
                 sheetCtx,
                 Icons.copy,
                 tunnel.kind == TunnelKind.dynamicSocks
-                    ? 'COPIAR PROXY SOCKS5'
-                    : 'COPIAR DIRECCIÓN',
+                    ? tr('COPIAR PROXY SOCKS5')
+                    : tr('COPIAR DIRECCIÓN'),
                 () async {
                   await Clipboard.setData(ClipboardData(text: address));
                 },
               ),
-            _tile(sheetCtx, Icons.refresh, 'REINICIAR',
+            _tile(sheetCtx, Icons.refresh, tr('REINICIAR'),
                 () => manager.restart(sessionId, tunnel.id)),
             if (runtime.isUp || runtime.isBusy)
-              _tile(sheetCtx, Icons.stop, 'PARAR',
+              _tile(sheetCtx, Icons.stop, tr('PARAR'),
                   () => manager.stop(sessionId, tunnel.id))
             else
-              _tile(sheetCtx, Icons.play_arrow, 'ARRANCAR',
+              _tile(sheetCtx, Icons.play_arrow, tr('ARRANCAR'),
                   () => manager.start(sessionId, tunnel.id)),
             Hairline(),
-            _tile(sheetCtx, Icons.edit, 'EDITAR', () => _edit(context)),
-            _tile(sheetCtx, Icons.delete_outline, 'ELIMINAR DEL PERFIL',
+            _tile(sheetCtx, Icons.edit, tr('EDITAR'), () => _edit(context)),
+            _tile(sheetCtx, Icons.delete_outline, tr('ELIMINAR DEL PERFIL'),
                 () => _delete(context),
                 danger: true),
             if (runtime.errorDetail != null) ...[
@@ -345,8 +353,7 @@ class _LanWarningBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Hay un túnel abierto a tu red local. Cualquier dispositivo del '
-              'wifi puede usarlo mientras siga activo.',
+              tr('Hay un túnel abierto a tu red local. Cualquier dispositivo del wifi puede usarlo mientras siga activo.'),
               style: AppText.body(11, color: AppColors.danger),
             ),
           ),
@@ -369,14 +376,13 @@ class _EmptyState extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SwissPanel(
-            title: 'QUÉ ES UN TÚNEL',
+            title: tr('QUÉ ES UN TÚNEL'),
             margin: EdgeInsets.zero,
             children: [
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Text(
-                  'Tu conexión SSH ya es un canal cifrado. Un túnel aprovecha '
-                  'ese canal para llevar el tráfico de otras aplicaciones.',
+                  tr('Tu conexión SSH ya es un canal cifrado. Un túnel aprovecha ese canal para llevar el tráfico de otras aplicaciones.'),
                   style: AppText.body(12, color: AppColors.muted),
                 ),
               ),
@@ -407,13 +413,12 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            'Los túneles se configuran dentro de cada perfil de conexión y se '
-            'abren al conectar.',
+            tr('Los túneles se configuran dentro de cada perfil de conexión y se abren al conectar.'),
             style: AppText.body(11, color: AppColors.faint),
           ),
           const SizedBox(height: 12),
           InvertedButton(
-            label: 'Ir a conexiones',
+            label: tr('Ir a conexiones'),
             icon: Icons.dns_outlined,
             expand: true,
             onPressed: () =>

@@ -6,6 +6,7 @@ import '../models/db_connection_profile.dart';
 import '../services/server_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 /// Database management tab. Integrates Supabase-style table row grid,
 /// a custom entity-relationship schema visualizer, and a SQL editor.
@@ -83,14 +84,14 @@ class _ServerDbTabState extends State<ServerDbTab> {
       ),
       child: Row(
         children: [
-          _subTabButton(0, 'TABLAS', Icons.table_chart_outlined),
-          _subTabButton(1, 'RELACIONES', Icons.account_tree_outlined),
-          _subTabButton(2, 'CONSOLA SQL', Icons.code),
+          _subTabButton(0, tr('TABLAS'), Icons.table_chart_outlined),
+          _subTabButton(1, tr('RELACIONES'), Icons.account_tree_outlined),
+          _subTabButton(2, tr('CONSOLA SQL'), Icons.code),
           const Spacer(),
           IconButton(
             icon: const Icon(Icons.power_settings_new, size: 16),
             color: AppColors.muted,
-            tooltip: 'Desconectar',
+            tooltip: tr('Desconectar'),
             onPressed: () {
               widget.server.disconnectFromDatabase();
             },
@@ -152,7 +153,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
     final server = widget.server;
     if (server.dbTables.isEmpty) {
       return Center(
-        child: Text('Sin tablas públicas detectadas.',
+        child: Text(tr('Sin tablas públicas detectadas.'),
             style: AppText.body(11, color: AppColors.muted)),
       );
     }
@@ -203,7 +204,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
       child: server.activeDbTable == null
           ? Center(
               child: Text(
-                'Selecciona una tabla de la lista',
+                tr('Selecciona una tabla de la lista'),
                 style: AppText.body(12, color: AppColors.muted),
               ),
             )
@@ -214,7 +215,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                 Expanded(
                   child: server.dbRows.isEmpty
                       ? Center(
-                          child: Text('Tabla vacía o sin registros.',
+                          child: Text(tr('Tabla vacía o sin registros.'),
                               style: AppText.body(11, color: AppColors.muted)),
                         )
                       : SingleChildScrollView(
@@ -312,13 +313,13 @@ class _ServerDbTabState extends State<ServerDbTab> {
               Icon(Icons.table_rows, size: 14, color: AppColors.accent),
               const SizedBox(width: 8),
               Text(
-                'TABLA: ${server.activeDbTable}',
+                tr('TABLA: {0}', [server.activeDbTable]),
                 style: AppText.mono(10, color: AppColors.bone, weight: FontWeight.bold),
               ),
               const Spacer(),
               TextButton(
                 onPressed: () => setState(() => server.activeDbTable = null),
-                child: Text('VER LISTADO', style: AppText.mono(9, color: AppColors.accent)),
+                child: Text(tr('VER LISTADO'), style: AppText.mono(9, color: AppColors.accent)),
               ),
             ],
           ),
@@ -345,19 +346,19 @@ class _ServerDbTabState extends State<ServerDbTab> {
           ),
           const SizedBox(width: 6),
           Text(
-            '(${server.dbRows.length} filas)',
+            tr('({0} filas)', [server.dbRows.length]),
             style: AppText.body(9.5, color: AppColors.muted),
           ),
           const Spacer(),
           GhostButton(
-            label: 'Refrescar',
+            label: tr('Refrescar'),
             icon: Icons.refresh,
             dense: true,
             onPressed: () => server.fetchTableData(server.activeDbTable!),
           ),
           const SizedBox(width: 8),
           InvertedButton(
-            label: 'Insertar Fila',
+            label: tr('Insertar Fila'),
             icon: Icons.add,
             dense: true,
             onPressed: _showInsertRowDialog,
@@ -395,7 +396,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
             children: [
               Row(
                 children: [
-                  Text('DETALLES DEL REGISTRO',
+                  Text(tr('DETALLES DEL REGISTRO'),
                       style: AppText.label(11, color: AppColors.bone, spacing: 1.5)),
                   const Spacer(),
                   IconButton(
@@ -405,7 +406,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                       final ok = await server.deleteRow(server.activeDbTable!, deleteKeys);
                       if (ok && mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Registro eliminado correctamente')),
+                          SnackBar(content: Text(tr('Registro eliminado correctamente'))),
                         );
                       } else if (server.dbError != null && mounted) {
                         _showErrorDialog(server.dbError!);
@@ -465,7 +466,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
               ),
               const SizedBox(height: 16),
               InvertedButton(
-                label: 'Cerrar',
+                label: tr('Cerrar'),
                 dense: true,
                 onPressed: () => Navigator.pop(sheetCtx),
               ),
@@ -503,7 +504,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('INSERTAR NUEVA FILA',
+              Text(tr('INSERTAR NUEVA FILA'),
                   style: AppText.label(11, color: AppColors.bone, spacing: 1.5)),
               const SizedBox(height: 4),
               Hairline(),
@@ -519,9 +520,9 @@ class _ServerDbTabState extends State<ServerDbTab> {
                         controller: inputControllers[colName],
                         decoration: InputDecoration(
                           labelText: colName.toUpperCase() +
-                              (isPk ? ' (PRIMARY KEY)' : '') +
+                              (isPk ? tr(' (PRIMARY KEY)') : '') +
                               ' [${col['data_type']}]',
-                          hintText: 'Dejar en blanco para NULL',
+                          hintText: tr('Dejar en blanco para NULL'),
                           labelStyle: AppText.mono(9, color: AppColors.muted),
                         ),
                         style: AppText.mono(10),
@@ -535,7 +536,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                 children: [
                   Expanded(
                     child: GhostButton(
-                      label: 'Cancelar',
+                      label: tr('Cancelar'),
                       dense: true,
                       onPressed: () {
                         inputControllers.forEach((_, c) => c.dispose());
@@ -546,7 +547,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: InvertedButton(
-                      label: 'Guardar',
+                      label: tr('Guardar'),
                       dense: true,
                       onPressed: () async {
                         inputControllers.forEach((key, controller) {
@@ -560,7 +561,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                         final ok = await server.insertRow(server.activeDbTable!, rowData);
                         if (ok && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Registro insertado correctamente')),
+                            SnackBar(content: Text(tr('Registro insertado correctamente'))),
                           );
                         } else if (server.dbError != null && mounted) {
                           _showErrorDialog(server.dbError!);
@@ -586,7 +587,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
     final server = widget.server;
     if (server.dbTables.isEmpty) {
       return Center(
-        child: Text('Sin datos para modelar relaciones.',
+        child: Text(tr('Sin datos para modelar relaciones.'),
             style: AppText.body(11, color: AppColors.muted)),
       );
     }
@@ -680,11 +681,11 @@ class _ServerDbTabState extends State<ServerDbTab> {
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
                               Text(
-                                'Relaciones: $relatedCount',
+                                tr('Relaciones: {0}', [relatedCount]),
                                 style: AppText.body(9, color: AppColors.muted),
                               ),
                               Text(
-                                'Campos de enlace FK/PK:',
+                                tr('Campos de enlace FK/PK:'),
                                 style: AppText.body(8.5, color: AppColors.muted),
                               ),
                               // Display PK columns or some info
@@ -729,7 +730,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'SENTENCIA SQL',
+            tr('SENTENCIA SQL'),
             style: AppText.mono(9, color: AppColors.muted, weight: FontWeight.bold),
           ),
           const SizedBox(height: 6),
@@ -746,8 +747,8 @@ class _ServerDbTabState extends State<ServerDbTab> {
                 minLines: 8,
                 keyboardType: TextInputType.multiline,
                 style: AppText.mono(10.5),
-                decoration: const InputDecoration(
-                  hintText: 'SELECT * FROM users;\n-- ingresa tu código SQL aquí',
+                decoration: InputDecoration(
+                  hintText: tr('SELECT * FROM users;\n-- ingresa tu código SQL aquí'),
                   contentPadding: EdgeInsets.all(12),
                   border: InputBorder.none,
                 ),
@@ -759,13 +760,13 @@ class _ServerDbTabState extends State<ServerDbTab> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               GhostButton(
-                label: 'Limpiar',
+                label: tr('Limpiar'),
                 dense: true,
                 onPressed: () => _sqlController.clear(),
               ),
               const SizedBox(width: 8),
               InvertedButton(
-                label: 'EJECUTAR',
+                label: tr('EJECUTAR'),
                 icon: Icons.play_arrow,
                 dense: true,
                 onPressed: () async {
@@ -782,7 +783,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
           ),
           const SizedBox(height: 14),
           Text(
-            'RESULTADO',
+            tr('RESULTADO'),
             style: AppText.mono(9, color: AppColors.muted, weight: FontWeight.bold),
           ),
           const SizedBox(height: 6),
@@ -797,7 +798,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
               ),
               child: SingleChildScrollView(
                 child: SelectableText(
-                  _sqlOutput.isEmpty ? 'Consola SQL lista. Presiona ejecutar para ver salida.' : _sqlOutput,
+                  _sqlOutput.isEmpty ? tr('Consola SQL lista. Presiona ejecutar para ver salida.') : _sqlOutput,
                   style: AppText.mono(9.5,
                       color: _sqlOutput.startsWith('Error') ? Colors.redAccent : AppColors.bone),
                 ),
@@ -829,16 +830,16 @@ class _ServerDbTabState extends State<ServerDbTab> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('BASES DE DATOS',
+                Text(tr('BASES DE DATOS'),
                     style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
                 const SizedBox(height: 4),
-                Text('Conéctate a PostgreSQL o MySQL para gestionar esquemas',
+                Text(tr('Conéctate a PostgreSQL o MySQL para gestionar esquemas'),
                     style: AppText.body(9.5, color: AppColors.muted)),
               ],
             ),
             const Spacer(),
             InvertedButton(
-              label: 'Nuevo Perfil',
+              label: tr('Nuevo Perfil'),
               icon: Icons.add,
               dense: true,
               onPressed: () {
@@ -888,11 +889,11 @@ class _ServerDbTabState extends State<ServerDbTab> {
               children: [
                 Icon(Icons.storage_outlined, size: 40, color: AppColors.muted),
                 const SizedBox(height: 12),
-                Text('SIN PERFILES DE BASES DE DATOS',
+                Text(tr('SIN PERFILES DE BASES DE DATOS'),
                     style: AppText.mono(10, color: AppColors.bone, weight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 Text(
-                  'Crea un nuevo perfil o asócialo a un contenedor de Docker.',
+                  tr('Crea un nuevo perfil o asócialo a un contenedor de Docker.'),
                   style: AppText.body(9.5, color: AppColors.muted),
                   textAlign: TextAlign.center,
                 ),
@@ -919,8 +920,8 @@ class _ServerDbTabState extends State<ServerDbTab> {
                 ),
                 subtitle: Text(
                   isDocker
-                      ? 'DOCKER: ${p.dockerContainer} · DB: ${p.databaseName}'
-                      : 'CONEXIÓN: ${p.host}:${p.port} · DB: ${p.databaseName}',
+                      ? tr('DOCKER: {0} · DB: {1}', [p.dockerContainer, p.databaseName])
+                      : tr('CONEXIÓN: {0}:{1} · DB: {2}', [p.host, p.port, p.databaseName]),
                   style: AppText.mono(8.5, color: AppColors.muted),
                 ),
                 trailing: Row(
@@ -932,7 +933,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                     ),
                     const SizedBox(width: 4),
                     InvertedButton(
-                      label: 'Conectar',
+                      label: tr('Conectar'),
                       dense: true,
                       onPressed: () => server.connectToDatabase(p),
                     ),
@@ -966,7 +967,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
         children: [
           Row(
             children: [
-              Text('CREAR PERFIL DE BASE DE DATOS',
+              Text(tr('CREAR PERFIL DE BASE DE DATOS'),
                   style: AppText.label(11, color: AppColors.bone, spacing: 1.5)),
               const Spacer(),
               IconButton(
@@ -980,7 +981,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
           
           // Container Detection Quick Fill Panel
           if (dbContainers.isNotEmpty && _selectedContainer == null) ...[
-            Text('CONTENEDORES DETECTADOS EN EL SERVIDOR',
+            Text(tr('CONTENEDORES DETECTADOS EN EL SERVIDOR'),
                 style: AppText.mono(8.5, color: AppColors.muted, weight: FontWeight.bold)),
             const SizedBox(height: 6),
             ...dbContainers.map((c) {
@@ -1010,7 +1011,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Contenedor: ${c.name} (${isPg ? 'Postgres' : 'MySQL/MariaDB'})',
+                          tr('Contenedor: {0} ({1})', [c.name, isPg ? 'Postgres' : 'MySQL/MariaDB']),
                           style: AppText.mono(9, color: AppColors.bone),
                         ),
                       ),
@@ -1025,7 +1026,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
 
           DropdownButtonFormField<String>(
             value: _engine,
-            decoration: const InputDecoration(labelText: 'MOTOR DE BASE DE DATOS'),
+            decoration: InputDecoration(labelText: tr('MOTOR DE BASE DE DATOS')),
             dropdownColor: AppColors.panel,
             style: AppText.mono(11, color: AppColors.bone),
             items: const [
@@ -1044,19 +1045,19 @@ class _ServerDbTabState extends State<ServerDbTab> {
           const SizedBox(height: 12),
           TextFormField(
             controller: _nameCtrl,
-            decoration: const InputDecoration(labelText: 'NOMBRE DEL PERFIL (ej: Prod DB)'),
+            decoration: InputDecoration(labelText: tr('NOMBRE DEL PERFIL (ej: Prod DB)')),
             style: AppText.mono(11),
-            validator: (v) => v == null || v.trim().isEmpty ? 'Obligatorio' : null,
+            validator: (v) => v == null || v.trim().isEmpty ? tr('Obligatorio') : null,
           ),
           const SizedBox(height: 12),
           
           DropdownButtonFormField<String?>(
             value: _selectedContainer,
-            decoration: const InputDecoration(labelText: 'DOCKER CONTAINER (OPCIONAL)'),
+            decoration: InputDecoration(labelText: tr('DOCKER CONTAINER (OPCIONAL)')),
             dropdownColor: AppColors.panel,
             style: AppText.mono(11, color: AppColors.bone),
             items: [
-              const DropdownMenuItem(value: null, child: Text('NINGUNO (CONEXIÓN DIRECTA)')),
+              DropdownMenuItem(value: null, child: Text(tr('NINGUNO (CONEXIÓN DIRECTA)'))),
               ...server.containers.map((c) => DropdownMenuItem(value: c.name, child: Text(c.name))),
             ],
             onChanged: (val) {
@@ -1073,40 +1074,40 @@ class _ServerDbTabState extends State<ServerDbTab> {
           if (_selectedContainer == null) ...[
             TextFormField(
               controller: _hostCtrl,
-              decoration: const InputDecoration(labelText: 'HOST DE BASE DE DATOS'),
+              decoration: InputDecoration(labelText: tr('HOST DE BASE DE DATOS')),
               style: AppText.mono(11),
-              validator: (v) => v == null || v.trim().isEmpty ? 'Obligatorio' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? tr('Obligatorio') : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _portCtrl,
-              decoration: const InputDecoration(labelText: 'PUERTO'),
+              decoration: InputDecoration(labelText: tr('PUERTO')),
               keyboardType: TextInputType.number,
               style: AppText.mono(11),
-              validator: (v) => v == null || v.trim().isEmpty ? 'Obligatorio' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? tr('Obligatorio') : null,
             ),
             const SizedBox(height: 12),
           ],
 
           TextFormField(
             controller: _userCtrl,
-            decoration: const InputDecoration(labelText: 'USUARIO'),
+            decoration: InputDecoration(labelText: tr('USUARIO')),
             style: AppText.mono(11),
-            validator: (v) => v == null || v.trim().isEmpty ? 'Obligatorio' : null,
+            validator: (v) => v == null || v.trim().isEmpty ? tr('Obligatorio') : null,
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _passCtrl,
-            decoration: const InputDecoration(labelText: 'CONTRASEÑA'),
+            decoration: InputDecoration(labelText: tr('CONTRASEÑA')),
             obscureText: true,
             style: AppText.mono(11),
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _dbNameCtrl,
-            decoration: const InputDecoration(labelText: 'NOMBRE DE LA BASE DE DATOS'),
+            decoration: InputDecoration(labelText: tr('NOMBRE DE LA BASE DE DATOS')),
             style: AppText.mono(11),
-            validator: (v) => v == null || v.trim().isEmpty ? 'Obligatorio' : null,
+            validator: (v) => v == null || v.trim().isEmpty ? tr('Obligatorio') : null,
           ),
           const SizedBox(height: 20),
 
@@ -1114,7 +1115,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
             children: [
               Expanded(
                 child: GhostButton(
-                  label: 'Cancelar',
+                  label: tr('Cancelar'),
                   dense: true,
                   onPressed: () => setState(() => _showAddForm = false),
                 ),
@@ -1122,7 +1123,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
               const SizedBox(width: 12),
               Expanded(
                 child: InvertedButton(
-                  label: 'Guardar Perfil',
+                  label: tr('Guardar Perfil'),
                   dense: true,
                   onPressed: () {
                     if (_formKey.currentState!.validate()) {
@@ -1156,7 +1157,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: Text('ERROR EN LA OPERACIÓN',
+        title: Text(tr('ERROR EN LA OPERACIÓN'),
             style: AppText.mono(11, color: AppColors.bone, weight: FontWeight.bold)),
         content: Text(
           error,
@@ -1164,7 +1165,7 @@ class _ServerDbTabState extends State<ServerDbTab> {
         ),
         actions: [
           InvertedButton(
-            label: 'Aceptar',
+            label: tr('Aceptar'),
             dense: true,
             onPressed: () => Navigator.pop(ctx),
           ),

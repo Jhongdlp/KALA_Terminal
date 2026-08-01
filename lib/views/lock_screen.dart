@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/app_lock.dart';
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// Full-screen gate shown before the app shell when the app lock is enabled.
 /// Prompts for biometric/device-credential auth on appear and on demand, and
@@ -75,14 +76,14 @@ class _LockScreenState extends State<LockScreen> {
                 const SizedBox(height: 10),
                 Text(
                   _failed
-                      ? 'AUTENTICACIÓN CANCELADA'
-                      : 'APLICACIÓN BLOQUEADA',
+                      ? tr('AUTENTICACIÓN CANCELADA')
+                      : tr('APLICACIÓN BLOQUEADA'),
                   style: AppText.label(9,
                       color: _failed ? AppColors.danger : AppColors.muted),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Usa tu huella o el bloqueo del teléfono para continuar.',
+                  tr('Usa tu huella o el bloqueo del teléfono para continuar.'),
                   textAlign: TextAlign.center,
                   style: AppText.body(12, color: AppColors.faint),
                 ),
@@ -128,7 +129,7 @@ class _UnlockButton extends StatelessWidget {
                   ),
                 )
               : Text(
-                  'DESBLOQUEAR',
+                  tr('DESBLOQUEAR'),
                   style: AppText.label(11,
                       color: AppColors.ink, weight: FontWeight.w800),
                 ),

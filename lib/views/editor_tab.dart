@@ -11,6 +11,7 @@ import 'image_view.dart';
 import 'markdown_view.dart';
 import 'pdf_view.dart';
 import 'video_view.dart';
+import '../l10n/l10n.dart';
 
 class EditorTab extends StatefulWidget {
   const EditorTab({super.key});
@@ -81,11 +82,11 @@ class _EditorTabState extends State<EditorTab> {
             children: [
               Icon(Icons.layers_outlined, size: 36, color: AppColors.faint),
               const SizedBox(height: 14),
-              Text('NINGÚN ARCHIVO ABIERTO',
+              Text(tr('NINGÚN ARCHIVO ABIERTO'),
                   style:
                       AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
               const SizedBox(height: 8),
-              Text('Abre un archivo desde la pestaña Archivos',
+              Text(tr('Abre un archivo desde la pestaña Archivos'),
                   style: AppText.body(11, color: AppColors.faint)),
             ],
           ),
@@ -151,7 +152,7 @@ class _EditorTabState extends State<EditorTab> {
                   icon: Icon(Icons.close,
                       color: AppColors.muted, size: 16),
                   onPressed: () => context.read<AppState>().closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -163,7 +164,7 @@ class _EditorTabState extends State<EditorTab> {
                 const SizedBox(width: 8),
                 if (isMarkdown || isSvg) ...[
                   GhostButton(
-                    label: 'Vista',
+                    label: tr('Vista'),
                     icon: Icons.visibility_outlined,
                     dense: true,
                     onPressed: () =>
@@ -186,7 +187,7 @@ class _EditorTabState extends State<EditorTab> {
                 ),
                 const SizedBox(width: 8),
                 InvertedButton(
-                  label: 'Guardar',
+                  label: tr('Guardar'),
                   icon: Icons.save_outlined,
                   dense: true,
                   onPressed: isFileDirty
@@ -282,7 +283,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => state.closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -315,7 +316,7 @@ class _EditorTabState extends State<EditorTab> {
                 ),
                 const SizedBox(width: 8),
                 InvertedButton(
-                  label: 'Editar',
+                  label: tr('Editar'),
                   icon: Icons.edit_outlined,
                   dense: true,
                   onPressed: () => state.setPreviewMode(false),
@@ -358,7 +359,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => context.read<AppState>().closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -411,7 +412,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => context.read<AppState>().closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -421,7 +422,7 @@ class _EditorTabState extends State<EditorTab> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                MonoTag(extension.isEmpty ? 'IMAGEN' : extension,
+                MonoTag(extension.isEmpty ? tr('IMAGEN') : extension,
                     color: AppColors.faint),
                 const SizedBox(width: 4),
               ],
@@ -465,7 +466,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => context.read<AppState>().closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -519,7 +520,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => context.read<AppState>().closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -575,7 +576,7 @@ class _EditorTabState extends State<EditorTab> {
                 IconButton(
                   icon: Icon(Icons.close, color: AppColors.muted, size: 16),
                   onPressed: () => state.closeFile(),
-                  tooltip: 'Cerrar archivo',
+                  tooltip: tr('Cerrar archivo'),
                 ),
                 Expanded(
                   child: _FileTitle(
@@ -588,7 +589,7 @@ class _EditorTabState extends State<EditorTab> {
                 MonoTag('SVG', color: AppColors.faint),
                 const SizedBox(width: 8),
                 InvertedButton(
-                  label: 'Guardar',
+                  label: tr('Guardar'),
                   icon: Icons.save_outlined,
                   dense: true,
                   onPressed:
@@ -596,7 +597,7 @@ class _EditorTabState extends State<EditorTab> {
                 ),
                 const SizedBox(width: 6),
                 InvertedButton(
-                  label: 'Editar',
+                  label: tr('Editar'),
                   icon: Icons.edit_outlined,
                   dense: true,
                   onPressed: () => state.setPreviewMode(false),
@@ -656,7 +657,7 @@ class _FileTitle extends StatelessWidget {
         const SizedBox(height: 2),
         Row(
           children: [
-            MonoTag(isEditingFileRemote ? 'REMOTO · SFTP' : 'LOCAL'),
+            MonoTag(isEditingFileRemote ? tr('REMOTO · SFTP') : tr('LOCAL')),
             if (markdown) ...[
               const SizedBox(width: 6),
               MonoTag('MARKDOWN', color: AppColors.faint),

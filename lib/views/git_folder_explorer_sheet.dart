@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 class FolderTreeNode {
   final String path;
@@ -82,7 +83,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
     final node = FolderTreeNode(
       path: rootPath,
       name: rootPath.split('/').last.isEmpty
-          ? 'Proyecto'
+          ? tr('Proyecto')
           : rootPath.split('/').last,
       isExpanded: true,
     );
@@ -166,7 +167,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
   Future<void> _performCommit() async {
     final message = _commitMessageController.text.trim();
     if (message.isEmpty) {
-      _snack('El mensaje de commit no puede estar vacío.', AppColors.bone);
+      _snack(tr('El mensaje de commit no puede estar vacío.'), AppColors.bone);
       return;
     }
 
@@ -182,11 +183,11 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
     });
 
     if (error != null) {
-      _snack('Error al hacer commit: $error', AppColors.danger);
+      _snack(tr('Error al hacer commit: {0}', [error]), AppColors.danger);
     } else {
       _commitMessageController.clear();
       _refreshGitChanges();
-      _snack('Commit realizado con éxito', AppColors.accent);
+      _snack(tr('Commit realizado con éxito'), AppColors.accent);
     }
   }
 
@@ -271,7 +272,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('PROYECTO GIT',
+                Text(tr('PROYECTO GIT'),
                     style:
                         AppText.label(11, color: AppColors.bone, spacing: 1.5)),
                 if (_rootPath.isNotEmpty) ...[
@@ -351,7 +352,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
       children: [
         _sectionHeader(
           expanded: _changesExpanded,
-          label: 'CAMBIOS PENDIENTES',
+          label: tr('CAMBIOS PENDIENTES'),
           onTap: () => setState(() => _changesExpanded = !_changesExpanded),
           trailing: FutureBuilder<List<GitChangedFile>>(
             future: _gitChangesFuture,
@@ -402,7 +403,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
                           Icon(Icons.check_circle_outline,
                               size: 24, color: AppColors.muted),
                           const SizedBox(height: 8),
-                          Text('SIN CAMBIOS PENDIENTES',
+                          Text(tr('SIN CAMBIOS PENDIENTES'),
                               style: AppText.label(9,
                                   color: AppColors.muted, spacing: 1.0)),
                         ],
@@ -513,7 +514,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
             maxLines: 2,
             style: AppText.mono(11, color: AppColors.bone),
             decoration: InputDecoration(
-              hintText: 'Mensaje de commit...',
+              hintText: tr('Mensaje de commit...'),
               hintStyle: AppText.mono(11, color: AppColors.muted),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -539,7 +540,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
                     child: CircularProgressIndicator(
                         strokeWidth: 1.5, color: Colors.black),
                   )
-                : Text('HACER COMMIT',
+                : Text(tr('HACER COMMIT'),
                     style: AppText.label(10, color: AppColors.ink)),
           ),
           const SizedBox(height: 14),
@@ -548,7 +549,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
             children: [
               Icon(Icons.auto_awesome, size: 12, color: AppColors.muted),
               const SizedBox(width: 6),
-              Text('DELEGAR A LA IA',
+              Text(tr('DELEGAR A LA IA'),
                   style:
                       AppText.label(8, color: AppColors.muted, spacing: 1.2)),
             ],
@@ -558,26 +559,22 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
             children: [
               Expanded(
                 child: _agentButton(
-                  label: 'COMMIT TODO',
+                  label: tr('COMMIT TODO'),
                   icon: Icons.done_all,
                   onTap: () => _sendAgentCommit(
-                    'Haz git add -A y crea un commit con un mensaje '
-                    'descriptivo en español que resuma todos los cambios '
-                    'actuales.',
-                    'Enviado a la IA: commit de todos los cambios',
+                    tr('Haz git add -A y crea un commit con un mensaje descriptivo en español que resuma todos los cambios actuales.'),
+                    tr('Enviado a la IA: commit de todos los cambios'),
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _agentButton(
-                  label: 'COMMIT + PUSH',
+                  label: tr('COMMIT + PUSH'),
                   icon: Icons.cloud_upload_outlined,
                   onTap: () => _sendAgentCommit(
-                    'Haz git add -A, crea un commit con un mensaje '
-                    'descriptivo en español que resuma todos los cambios '
-                    'actuales y luego haz git push.',
-                    'Enviado a la IA: commit y push',
+                    tr('Haz git add -A, crea un commit con un mensaje descriptivo en español que resuma todos los cambios actuales y luego haz git push.'),
+                    tr('Enviado a la IA: commit y push'),
                   ),
                 ),
               ),
@@ -627,7 +624,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
       children: [
         _sectionHeader(
           expanded: _treeExpanded,
-          label: 'ARCHIVOS DEL PROYECTO',
+          label: tr('ARCHIVOS DEL PROYECTO'),
           onTap: () => setState(() => _treeExpanded = !_treeExpanded),
         ),
         if (_treeExpanded)
@@ -653,7 +650,7 @@ class _GitFolderExplorerSheetState extends State<GitFolderExplorerSheet> {
     if (nodes.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        child: Text('SIN ARCHIVOS',
+        child: Text(tr('SIN ARCHIVOS'),
             style: AppText.mono(9, color: AppColors.muted),
             textAlign: TextAlign.center),
       );

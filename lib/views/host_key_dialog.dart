@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../services/known_hosts.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 /// Asks the user to accept a server's identity.
 ///
@@ -27,8 +28,8 @@ Future<bool> showHostKeyDialog(
           Expanded(
             child: Text(
               changed
-                  ? 'LA IDENTIDAD DEL SERVIDOR CAMBIÓ'
-                  : 'PRIMERA CONEXIÓN CON ESTE SERVIDOR',
+                  ? tr('LA IDENTIDAD DEL SERVIDOR CAMBIÓ')
+                  : tr('PRIMERA CONEXIÓN CON ESTE SERVIDOR'),
               style: AppText.label(11,
                   color: changed ? AppColors.danger : AppColors.bone,
                   spacing: 1.2),
@@ -43,18 +44,13 @@ Future<bool> showHostKeyDialog(
           children: [
             Text(
               changed
-                  ? 'La huella de ${challenge.host}:${challenge.port} no es la '
-                      'que guardamos. Puede que hayan reinstalado el servidor… '
-                      'o que alguien se esté haciendo pasar por él para robar '
-                      'tu contraseña y todo lo que pase por los túneles.'
-                  : 'Nunca te habías conectado a ${challenge.host}:'
-                      '${challenge.port}. Comprueba que esta huella coincide '
-                      'con la del servidor antes de aceptar.',
+                  ? tr('La huella de {0}:{1} no es la que guardamos. Puede que hayan reinstalado el servidor… o que alguien se esté haciendo pasar por él para robar tu contraseña y todo lo que pase por los túneles.', [challenge.host, challenge.port])
+                  : tr('Nunca te habías conectado a {0}:{1}. Comprueba que esta huella coincide con la del servidor antes de aceptar.', [challenge.host, challenge.port]),
               style: AppText.body(12, color: AppColors.muted),
             ),
             const SizedBox(height: 14),
             _FingerprintBlock(
-              label: changed ? 'HUELLA RECIBIDA AHORA' : 'HUELLA DEL SERVIDOR',
+              label: changed ? tr('HUELLA RECIBIDA AHORA') : tr('HUELLA DEL SERVIDOR'),
               value: challenge.fingerprint,
               keyType: challenge.keyType,
               danger: changed,
@@ -62,8 +58,8 @@ Future<bool> showHostKeyDialog(
             if (changed && challenge.previousFingerprint != null) ...[
               const SizedBox(height: 10),
               _FingerprintBlock(
-                label: 'HUELLA GUARDADA'
-                    '${challenge.previousAddedAt != null ? ' · ${_date(challenge.previousAddedAt!)}' : ''}',
+                label: tr('HUELLA GUARDADA') +
+                    (challenge.previousAddedAt != null ? ' · ${_date(challenge.previousAddedAt!)}' : ''),
                 value: challenge.previousFingerprint!,
                 keyType: null,
                 danger: false,
@@ -72,10 +68,8 @@ Future<bool> showHostKeyDialog(
             const SizedBox(height: 14),
             Text(
               changed
-                  ? 'Si no reinstalaste el servidor tú, cancela y averigua qué '
-                      'pasó antes de volver a conectarte.'
-                  : 'En el servidor puedes verla con:\n'
-                      'ssh-keygen -lf /etc/ssh/ssh_host_${challenge.keyType.replaceAll('ssh-', '')}_key.pub',
+                  ? tr('Si no reinstalaste el servidor tú, cancela y averigua qué pasó antes de volver a conectarte.')
+                  : tr('En el servidor puedes verla con:\n{0}', ['ssh-keygen -lf /etc/ssh/ssh_host_${challenge.keyType.replaceAll('ssh-', '')}_key.pub']),
               style: AppText.mono(10, color: AppColors.faint),
             ),
           ],
@@ -83,12 +77,12 @@ Future<bool> showHostKeyDialog(
       ),
       actions: [
         GhostButton(
-          label: 'Cancelar',
+          label: tr('Cancelar'),
           dense: true,
           onPressed: () => Navigator.of(ctx).pop(false),
         ),
         GhostButton(
-          label: changed ? 'Aceptar el cambio' : 'Confiar y guardar',
+          label: changed ? tr('Aceptar el cambio') : tr('Confiar y guardar'),
           dense: true,
           danger: changed,
           onPressed: () => Navigator.of(ctx).pop(true),

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/connection_profile.dart';
 import '../models/db_connection_profile.dart';
+import '../l10n/l10n.dart';
 
 /// Lifecycle of the server console: pick a server → connecting → managing.
 enum ServerPhase { pickServer, connecting, ready, error }
@@ -171,7 +172,7 @@ class ServerMonitor {
   double diskPercent = 0;
   bool loaded = false;
   final List<ServiceStatus> services = [
-    ServiceStatus('nginx', 'Nginx Web Server'),
+    ServiceStatus('nginx', tr('Nginx Web Server')),
     ServiceStatus('docker', 'Docker Engine'),
     ServiceStatus('postgresql', 'PostgreSQL Database'),
     ServiceStatus('mysql', 'MySQL / MariaDB'),
@@ -302,7 +303,7 @@ class ServerController extends ChangeNotifier {
       await refresh();
     } catch (e) {
       if (gen != _generation) return;
-      lastError = 'No se pudo conectar: $e';
+      lastError = tr('No se pudo conectar: {0}', [e]);
       phase = ServerPhase.error;
       notifyListeners();
     }
@@ -362,7 +363,7 @@ class ServerController extends ChangeNotifier {
   void _onConnectionLost(int gen) {
     if (gen != _generation) return;
     if (phase != ServerPhase.ready && phase != ServerPhase.connecting) return;
-    lastError = 'CONEXIÓN PERDIDA CON EL SERVIDOR';
+    lastError = tr('CONEXIÓN PERDIDA CON EL SERVIDOR');
     phase = ServerPhase.error;
     notifyListeners();
   }
@@ -423,7 +424,7 @@ class ServerController extends ChangeNotifier {
   Future<RemoteCmdResult> _run(String cmd, {String? stdinInput}) async {
     final client = _client;
     if (client == null) {
-      return const RemoteCmdResult('', 'Sin conexión con el servidor.', 1);
+      return RemoteCmdResult('', tr('Sin conexión con el servidor.'), 1);
     }
     final s = await client.execute(cmd);
     if (stdinInput != null) {
@@ -474,8 +475,8 @@ class ServerController extends ChangeNotifier {
       _sudoPassword = null;
       needsSudoPassword = true;
       notifyListeners();
-      return const RemoteCmdResult(
-          '', 'La contraseña sudo ya no es válida; introdúcela de nuevo.', 1);
+      return RemoteCmdResult(
+          '', tr('La contraseña sudo ya no es válida; introdúcela de nuevo.'), 1);
     }
     return r;
   }
@@ -506,10 +507,9 @@ class ServerController extends ChangeNotifier {
     }
     needsSudoPassword = true;
     notifyListeners();
-    return const RemoteCmdResult(
+    return RemoteCmdResult(
         '',
-        'Docker requiere permisos elevados y sudo pide contraseña. '
-        'Introdúcela para continuar.',
+        tr('Docker requiere permisos elevados y sudo pide contraseña. Introdúcela para continuar.'),
         1);
   }
 
@@ -517,7 +517,7 @@ class ServerController extends ChangeNotifier {
   /// for the rest of the connection and the Docker sections are enabled.
   /// Returns null on success or an error message.
   Future<String?> submitSudoPassword(String password) async {
-    if (_client == null) return 'Sin conexión con el servidor.';
+    if (_client == null) return tr('Sin conexión con el servidor.');
     final gen = _generation;
     busy = true;
     notifyListeners();
@@ -528,7 +528,7 @@ class ServerController extends ChangeNotifier {
           stdinInput: '$password\n');
       if (gen != _generation) return null;
       if (!r.ok) {
-        return _isWrongSudoPassword(r) ? 'Contraseña incorrecta.' : r.errorText;
+        return _isWrongSudoPassword(r) ? tr('Contraseña incorrecta.') : r.errorText;
       }
       _sudoPassword = password;
       useSudo = true;
@@ -569,13 +569,13 @@ class ServerController extends ChangeNotifier {
     if (r.exitCode == 127 ||
         r.stderr.contains('command not found') ||
         r.stderr.contains('not found')) {
-      return 'Docker no está instalado en este servidor.';
+      return tr('Docker no está instalado en este servidor.');
     }
     if (r.stderr.contains('Cannot connect to the Docker daemon')) {
-      return 'El daemon de Docker no está activo en este servidor.';
+      return tr('El daemon de Docker no está activo en este servidor.');
     }
     return r.errorText.isEmpty
-        ? 'No se pudo consultar Docker en el servidor.'
+        ? tr('No se pudo consultar Docker en el servidor.')
         : r.errorText;
   }
 
@@ -588,10 +588,10 @@ class ServerController extends ChangeNotifier {
   static bool isSafeToken(String s) => _safeToken.hasMatch(s);
 
   static String? _guardToken(String s) =>
-      _safeToken.hasMatch(s) ? null : 'Identificador no válido: $s';
+      _safeToken.hasMatch(s) ? null : tr('Identificador no válido: {0}', [s]);
 
   static String? _guardRef(String s) =>
-      _safeRef.hasMatch(s) ? null : 'Referencia no válida: $s';
+      _safeRef.hasMatch(s) ? null : tr('Referencia no válida: {0}', [s]);
 
   /// Runs an action command; returns null on success or an error message.
   Future<String?> _action(Future<RemoteCmdResult> Function() run) async {
@@ -643,7 +643,7 @@ fi
         case 'H':
           m.hostname = value;
         case 'O':
-          m.osInfo = value.isNotEmpty ? value : 'Linux Genérico';
+          m.osInfo = value.isNotEmpty ? value : tr('Linux Genérico');
         case 'L':
           m.cpuLoad = double.tryParse(value.split(' ').first) ?? 0;
         case 'M':
@@ -686,9 +686,9 @@ fi
 
   /// 'start' | 'stop' | 'restart' on a watched system service.
   Future<String?> controlService(String name, String action) async {
-    if (!_knownServices.contains(name)) return 'Servicio no reconocido.';
+    if (!_knownServices.contains(name)) return tr('Servicio no reconocido.');
     if (!const {'start', 'stop', 'restart'}.contains(action)) {
-      return 'Acción no válida.';
+      return tr('Acción no válida.');
     }
     final err = await _action(() => _runPrivileged(
         'sh -c "command -v systemctl >/dev/null && systemctl $action $name '
@@ -741,7 +741,7 @@ fi
 
   /// One of [_containerVerbs].
   Future<String?> containerAction(String id, String verb) async {
-    if (!_containerVerbs.contains(verb)) return 'Acción no válida.';
+    if (!_containerVerbs.contains(verb)) return tr('Acción no válida.');
     final guard = _guardToken(id);
     if (guard != null) return guard;
     final err = await _action(() => runDocker("$verb '$id'"));
@@ -772,7 +772,7 @@ fi
             if (seenPorts.add(line)) ports.add(line);
           }
         } else {
-          ports.add('$cPort (sin publicar)');
+          ports.add(tr('{0} (sin publicar)', [cPort]));
         }
       });
 
@@ -807,7 +807,7 @@ fi
         null
       );
     } catch (e) {
-      return (null, 'No se pudo interpretar docker inspect: $e');
+      return (null, tr('No se pudo interpretar docker inspect: {0}', [e]));
     }
   }
 
@@ -1007,7 +1007,7 @@ fi
   /// 'up -d' | 'down' | 'restart'
   Future<String?> composeAction(ComposeProject p, String verb) async {
     if (p.configFiles.isEmpty) {
-      return 'El proyecto no expone sus archivos compose.';
+      return tr('El proyecto no expone sus archivos compose.');
     }
     final flags = StringBuffer();
     for (final f in p.configFiles) {
@@ -1046,7 +1046,7 @@ fi
   /// 'container' | 'image' | 'volume' | 'network' | 'system'
   Future<String?> prune(String what) async {
     const allowed = {'container', 'image', 'volume', 'network', 'system'};
-    if (!allowed.contains(what)) return 'Objetivo de limpieza no válido.';
+    if (!allowed.contains(what)) return tr('Objetivo de limpieza no válido.');
     final err = await _action(() => runDocker('$what prune -f'));
     await refresh();
     return err;
@@ -1164,11 +1164,9 @@ fi
           final pkg = dbProfile.engine == 'postgres'
               ? 'postgresql-client'
               : 'mysql-client (o mariadb-client)';
-          dbError = 'El servidor remoto no tiene instalado el cliente "$bin". '
-              'Instálalo con: sudo apt install $pkg (Debian/Ubuntu) '
-              'o el equivalente de tu distribución.';
+          dbError = tr('El servidor remoto no tiene instalado el cliente "{0}". Instálalo con: sudo apt install {1} (Debian/Ubuntu) o el equivalente de tu distribución.', [bin, pkg]);
         } else {
-          dbError = testResult.stderr.isNotEmpty ? testResult.stderr.trim() : 'Fallo en la conexión.';
+          dbError = testResult.stderr.isNotEmpty ? testResult.stderr.trim() : tr('Fallo en la conexión.');
         }
         dbConnected = false;
         return false;
@@ -1178,7 +1176,7 @@ fi
       await fetchTables();
       return true;
     } catch (e) {
-      dbError = 'Error conectando a la base de datos: $e';
+      dbError = tr('Error conectando a la base de datos: {0}', [e]);
       dbConnected = false;
       return false;
     } finally {
@@ -1229,7 +1227,7 @@ fi
       // Fetch relationships too!
       await fetchRelationships();
     } catch (e) {
-      dbError = 'Error cargando tablas: $e';
+      dbError = tr('Error cargando tablas: {0}', [e]);
       dbTables = [];
     } finally {
       dbLoading = false;
@@ -1273,7 +1271,7 @@ fi
           dbRelations = [];
           dbError ??= res.stderr.trim().isNotEmpty
               ? res.stderr.trim()
-              : 'No se pudieron cargar las relaciones entre tablas.';
+              : tr('No se pudieron cargar las relaciones entre tablas.');
         }
       } else {
         // MySQL foreign keys
@@ -1309,13 +1307,13 @@ fi
           dbRelations = [];
           dbError ??= res.stderr.trim().isNotEmpty
               ? res.stderr.trim()
-              : 'No se pudieron cargar las relaciones entre tablas.';
+              : tr('No se pudieron cargar las relaciones entre tablas.');
         }
       }
     } catch (e) {
       debugPrint('Error loading db relations: $e');
       dbRelations = [];
-      dbError ??= 'Error cargando relaciones: $e';
+      dbError ??= tr('Error cargando relaciones: {0}', [e]);
     } finally {
       notifyListeners();
     }
@@ -1436,7 +1434,7 @@ fi
         }
       }
     } catch (e) {
-      dbError = 'Error cargando datos de tabla: $e';
+      dbError = tr('Error cargando datos de tabla: {0}', [e]);
       dbColumns = [];
       dbRows = [];
     } finally {
@@ -1447,7 +1445,7 @@ fi
 
   Future<String> executeCustomSql(String sqlQuery) async {
     final dbProfile = activeDbProfile;
-    if (dbProfile == null || !dbConnected) return 'Error: Base de datos no conectada.';
+    if (dbProfile == null || !dbConnected) return tr('Error: Base de datos no conectada.');
     
     dbLoading = true;
     dbError = null;
@@ -1462,12 +1460,12 @@ fi
       }
       
       if (res.ok) {
-        return res.stdout.isNotEmpty ? res.stdout.trim() : 'Sentencia ejecutada correctamente.';
+        return res.stdout.isNotEmpty ? res.stdout.trim() : tr('Sentencia ejecutada correctamente.');
       } else {
-        return 'Error:\n${res.stderr.trim()}';
+        return tr('Error:\n{0}', [res.stderr.trim()]);
       }
     } catch (e) {
-      return 'Error ejecutando SQL: $e';
+      return tr('Error ejecutando SQL: {0}', [e]);
     } finally {
       dbLoading = false;
       notifyListeners();
@@ -1512,7 +1510,7 @@ fi
         return false;
       }
     } catch (e) {
-      dbError = 'Error insertando fila: $e';
+      dbError = tr('Error insertando fila: {0}', [e]);
       return false;
     } finally {
       dbLoading = false;
@@ -1561,7 +1559,7 @@ fi
         return false;
       }
     } catch (e) {
-      dbError = 'Error eliminando fila: $e';
+      dbError = tr('Error eliminando fila: {0}', [e]);
       return false;
     } finally {
       dbLoading = false;

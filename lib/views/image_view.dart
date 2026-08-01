@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// Renders an image from in-memory [data] inside the editor tab, with
 /// pinch/drag zoom via [InteractiveViewer]. SVG goes through flutter_svg;
@@ -62,7 +63,7 @@ class _ImageError extends StatelessWidget {
       children: [
         Icon(Icons.broken_image_outlined, size: 36, color: AppColors.faint),
         const SizedBox(height: 14),
-        Text('NO SE PUDO ABRIR LA IMAGEN',
+        Text(tr('NO SE PUDO ABRIR LA IMAGEN'),
             style: AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
         const SizedBox(height: 8),
         Text('$error',

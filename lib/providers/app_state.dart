@@ -24,6 +24,7 @@ import '../services/server_controller.dart';
 import '../services/tunnel_manager.dart';
 import '../services/notification_service.dart';
 import '../services/secure_store.dart';
+import '../l10n/l10n.dart';
 
 enum ConnectionStatus { disconnected, connecting, remote }
 
@@ -590,16 +591,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       if (_notificationPrefs.intensityFor(kind) == AlertIntensity.off) continue;
       await NotificationService.showAlert(
         sessionId: 'test-${kind.name}',
-        title: 'Prueba · ${kind.label}',
+        title: tr('Prueba · {0}', [kind.label]),
         body: kind.description,
         kind: kind.name,
-        sessionName: 'Notificación de prueba',
+        sessionName: tr('Notificación de prueba'),
       );
       _logAlert(AlertLogEntry(
         at: now,
-        sessionName: 'Prueba',
+        sessionName: tr('Prueba'),
         kind: kind,
-        detail: 'Notificación de prueba enviada.',
+        detail: tr('Notificación de prueba enviada.'),
       ));
     }
     notifyListeners();
@@ -1009,19 +1010,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       ));
     }
 
-    if (!prefs.enabled) return drop('Avisos de agente desactivados');
-    if (prefs.isMuted(session.id)) return drop('Sesión silenciada');
+    if (!prefs.enabled) return drop(tr('Avisos de agente desactivados'));
+    if (prefs.isMuted(session.id)) return drop(tr('Sesión silenciada'));
     if (prefs.intensityFor(alertKind) == AlertIntensity.off) {
-      return drop('"${alertKind.label}" está en NO AVISAR');
+      return drop(tr('"{0}" está en NO AVISAR', [alertKind.label]));
     }
-    if (prefs.isQuiet(now)) return drop('Horario silencioso');
+    if (prefs.isQuiet(now)) return drop(tr('Horario silencioso'));
     if (_appInForeground && prefs.when == AlertWhen.backgroundOnly) {
-      return drop('Configurado para avisar sólo en segundo plano');
+      return drop(tr('Configurado para avisar sólo en segundo plano'));
     }
     if (_appInForeground &&
         prefs.skipActiveSession &&
         identical(session, activeSession)) {
-      return drop('Es la sesión que estás viendo');
+      return drop(tr('Es la sesión que estás viendo'));
     }
 
     final last = session.lastAlertAt;
@@ -1031,7 +1032,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // and a flat debounce used to drop the question — the alert that
       // actually needed the user — while keeping the "finished" one.
       if (!(isQuestion && !session.lastAlertWasQuestion)) {
-        return drop('Repetido dentro de la ventana antirrebote');
+        return drop(tr('Repetido dentro de la ventana antirrebote'));
       }
     }
     session.lastAlertAt = now;
@@ -1047,8 +1048,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     String finalBody = body ?? '';
     if (finalBody.isEmpty) {
       finalBody = agent != null
-          ? 'Espera tu respuesta'
-          : 'El terminal pide tu atención';
+          ? tr('Espera tu respuesta')
+          : tr('El terminal pide tu atención');
     }
 
     if (!_appInForeground) {
@@ -1294,7 +1295,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final snippet =
         _notificationPrefs.includeSnippet ? _alertSnippet(recent) : '';
     final headline =
-        isQuestion ? 'Espera tu respuesta' : 'Terminó de escribir';
+        isQuestion ? tr('Espera tu respuesta') : tr('Terminó de escribir');
     _onSessionAlert(
       session,
       body: snippet.isEmpty ? headline : '$headline\n$snippet',
@@ -1914,21 +1915,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _snippets = [
         PromptSnippet(
           id: const Uuid().v4(),
-          title: 'Tests y arreglos',
-          text: 'Corre los tests del proyecto y arregla los fallos que '
-              'encuentres. Muéstrame un resumen de lo que cambiaste.',
+          title: tr('Tests y arreglos'),
+          text: tr('Corre los tests del proyecto y arregla los fallos que encuentres. Muéstrame un resumen de lo que cambiaste.'),
         ),
         PromptSnippet(
           id: const Uuid().v4(),
-          title: 'Commit y push',
-          text: 'Haz commit de los cambios pendientes con un mensaje '
-              'descriptivo y haz push a la rama actual.',
+          title: tr('Commit y push'),
+          text: tr('Haz commit de los cambios pendientes con un mensaje descriptivo y haz push a la rama actual.'),
         ),
         PromptSnippet(
           id: const Uuid().v4(),
-          title: 'Explicar error',
-          text: 'Explica el último error que apareció y propón cómo '
-              'solucionarlo antes de tocar nada.',
+          title: tr('Explicar error'),
+          text: tr('Explica el último error que apareció y propón cómo solucionarlo antes de tocar nada.'),
         ),
       ];
       await _persistSnippets(prefs);
@@ -1979,7 +1977,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final ssh = session.sshClient;
     if (ssh == null || ssh.isClosed) {
       session.sftpClient = null;
-      throw Exception('El cliente SSH no está conectado');
+      throw Exception(tr('El cliente SSH no está conectado'));
     }
     if (!fresh && session.sftpClient != null) {
       return session.sftpClient!;
@@ -2015,8 +2013,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final pem = await DeviceKey.privatePem();
       if (pem == null) {
         onNotice?.call(
-            'Este perfil usa la llave del dispositivo pero aún no existe; '
-            'génerala en Ajustes.');
+            tr('Este perfil usa la llave del dispositivo pero aún no existe; génerala en Ajustes.'));
       } else {
         identities.addAll(SSHKeyPair.fromPem(pem));
       }
@@ -2031,7 +2028,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
                 ? profile.password
                 : null));
       } catch (e) {
-        onNotice?.call('No se pudo leer la llave privada del perfil: $e');
+        onNotice?.call(tr('No se pudo leer la llave privada del perfil: {0}', [e]));
       }
     }
 
@@ -2072,8 +2069,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final known = await KnownHosts.instance.lookup(profile.host, profile.port);
     final confirm = hostKeyConfirm;
     if (confirm == null) {
-      onNotice?.call('No se pudo verificar la identidad del servidor '
-          '($fingerprint). Conexión cancelada.');
+      onNotice?.call(tr('No se pudo verificar la identidad del servidor ({0}). Conexión cancelada.', [fingerprint]));
       return false;
     }
 
@@ -2090,15 +2086,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     if (!accepted) {
       onNotice?.call(verdict == HostKeyVerdict.mismatch
-          ? 'La identidad del servidor cambió y no fue aceptada. Conexión '
-              'cancelada.'
-          : 'Identidad del servidor no aceptada. Conexión cancelada.');
+          ? tr('La identidad del servidor cambió y no fue aceptada. Conexión cancelada.')
+          : tr('Identidad del servidor no aceptada. Conexión cancelada.'));
       return false;
     }
 
     await KnownHosts.instance
         .trust(profile.host, profile.port, keyType, fingerprint);
-    onNotice?.call('Identidad del servidor guardada: $fingerprint');
+    onNotice?.call(tr('Identidad del servidor guardada: {0}', [fingerprint]));
     return true;
   }
 
@@ -2211,7 +2206,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           tunnels.onSessionLost(session.id);
           session.terminal.write('\r\nConexión cerrada por el servidor.\r\n');
           _onSessionAlert(session,
-              body: 'Se cerró la conexión con ${session.name}.',
+              body: tr('Se cerró la conexión con {0}.', [session.name]),
               kind: AlertKind.disconnect);
           notifyListeners();
         }
@@ -2221,7 +2216,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           tunnels.onSessionLost(session.id);
           session.terminal.write('\r\nError de conexión: $e\r\n');
           _onSessionAlert(session,
-              body: 'Se perdió la conexión con ${session.name}.',
+              body: tr('Se perdió la conexión con {0}.', [session.name]),
               kind: AlertKind.disconnect);
           notifyListeners();
         }
@@ -2528,7 +2523,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// empty message means the user cancelled the picker.
   Future<({bool ok, String message})> attachFile() async {
     final session = activeSession;
-    if (session == null) return (ok: false, message: 'No hay sesión activa');
+    if (session == null) return (ok: false, message: tr('No hay sesión activa'));
 
     final picked = await FilePicker.platform.pickFiles(type: FileType.any);
     final src = picked?.files.single.path;
@@ -2541,7 +2536,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     // inserted — the remote agent reads the real bytes, not a phone path.
     if (session.connectionStatus != ConnectionStatus.remote ||
         session.sshClient == null) {
-      return (ok: false, message: 'Adjuntar requiere una sesión SSH activa');
+      return (ok: false, message: tr('Adjuntar requiere una sesión SSH activa'));
     }
     final String shellPath;
     _beginAttach(name);
@@ -2561,7 +2556,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await f.write(_attachChunks(bytes));
       await f.close();
     } catch (e) {
-      return (ok: false, message: 'No se pudo adjuntar: $e');
+      return (ok: false, message: tr('No se pudo adjuntar: {0}', [e]));
     } finally {
       _endAttach();
     }
@@ -2569,14 +2564,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     // Leading + trailing space keep the path separate from whatever the user
     // types around it. The path itself is bare when safe, quoted when not.
     _typeLiteral(session, ' ${_formatPathForInput(shellPath)} ');
-    return (ok: true, message: 'Adjuntado: $name');
+    return (ok: true, message: tr('Adjuntado: {0}', [name]));
   }
 
   /// Picks files from the user's phone/device and uploads them directly to the
   /// current folder in the active explorer session.
   Future<({bool ok, String message})> uploadFilesFromPhone() async {
     final session = activeSession;
-    if (session == null) return (ok: false, message: 'No hay sesión activa');
+    if (session == null) return (ok: false, message: tr('No hay sesión activa'));
 
     try {
       await _ensureStoragePermission();
@@ -2618,9 +2613,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         count++;
       }
 
-      return (ok: true, message: 'Se subió $count archivo(s) correctamente');
+      return (ok: true, message: tr('Se subió {0} archivo(s) correctamente', [count]));
     } catch (e) {
-      return (ok: false, message: 'Error al subir: $e');
+      return (ok: false, message: tr('Error al subir: {0}', [e]));
     } finally {
       session.isLoadingFiles = false;
       notifyListeners();
@@ -3094,7 +3089,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     final isRemote = session.connectionStatus == ConnectionStatus.remote;
     if (isRemote && (session.sshClient == null || session.sshClient!.isClosed)) {
-      _finishDownloadWithError('La sesión SSH no está conectada.');
+      _finishDownloadWithError(tr('La sesión SSH no está conectada.'));
       return;
     }
 
@@ -3137,8 +3132,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         await probe.delete();
       } catch (e) {
         throw Exception(
-            'No se puede escribir en $finalDir. Concede el permiso de '
-            'almacenamiento o elige otra carpeta.');
+            tr('No se puede escribir en {0}. Concede el permiso de almacenamiento o elige otra carpeta.', [finalDir]));
       }
 
       // A cached SFTP client can belong to a connection that has since dropped;
@@ -3564,7 +3558,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       });
     } catch (e) {
       hasError = true;
-      debugPrint('Error al cargar archivos: $e');
+      debugPrint(tr('Error al cargar archivos: {0}', [e]));
       session.terminal.write('⚠️ Error al cargar archivos: $e\r\n');
       session.sftpClient = null;
     } finally {
@@ -4050,12 +4044,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// crashed agent drops back to the shell and leaves the alt-screen).
   String? sendAgentPrompt(String prompt) {
     final session = activeSession;
-    if (session == null) return 'No hay una sesión activa.';
+    if (session == null) return tr('No hay una sesión activa.');
     if (session.connectionStatus != ConnectionStatus.remote) {
-      return 'No hay una conexión activa.';
+      return tr('No hay una conexión activa.');
     }
     if (!session.terminal.isUsingAltBuffer) {
-      return 'No hay un agente de IA abierto en la terminal. Ábrelo (p. ej. claude) y vuelve a intentarlo.';
+      return tr('No hay un agente de IA abierto en la terminal. Ábrelo (p. ej. claude) y vuelve a intentarlo.');
     }
     session.terminal.paste(prompt);
     // Give the agent a beat to ingest the bracketed paste before submitting.
@@ -4069,13 +4063,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<String?> commitChanges(String message) async {
     final session = activeSession;
-    if (session == null) return 'Sin sesión activa';
-    if (message.trim().isEmpty) return 'El mensaje de commit no puede estar vacío';
+    if (session == null) return tr('Sin sesión activa');
+    if (message.trim().isEmpty) return tr('El mensaje de commit no puede estar vacío');
 
     final currentDir = _workingDirFor(session);
     try {
       if (session.connectionStatus == ConnectionStatus.remote) {
-        if (session.sshClient == null) return 'Desconectado';
+        if (session.sshClient == null) return tr('Desconectado');
         final escapedMsg = message.replaceAll('"', '\\"');
         final run = await session.sshClient!.execute('cd "$currentDir" && git add . && git commit -m "$escapedMsg"');
         final errBytes = await run.stderr.cast<List<int>>().transform(utf8.decoder).join();

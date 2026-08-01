@@ -6,6 +6,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../l10n/l10n.dart';
+
 /// Owner/repo whose GitHub Releases host the distributed APKs. The "latest"
 /// release endpoint is public (no token required) for public repositories.
 const String _kRepo = 'Jhongdlp/Kammel_ssh';
@@ -87,7 +89,7 @@ class UpdateService {
       final req = http.Request('GET', Uri.parse(update.apkUrl));
       final resp = await client.send(req);
       if (resp.statusCode != 200) {
-        return 'Descarga fallida (HTTP ${resp.statusCode})';
+        return tr('Descarga fallida (HTTP {0})', [resp.statusCode]);
       }
 
       final dir = await getApplicationSupportDirectory();
@@ -115,7 +117,7 @@ class UpdateService {
       if (result.type != ResultType.done) return result.message;
       return null;
     } catch (e) {
-      return 'Error al actualizar: $e';
+      return tr('Error al actualizar: {0}', [e]);
     } finally {
       client.close();
     }

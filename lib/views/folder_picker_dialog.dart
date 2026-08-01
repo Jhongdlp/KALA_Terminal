@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// A lightweight, in-app folder browser for picking a **local** destination
 /// directory (e.g. where to save files downloaded over SFTP). It walks the
@@ -71,7 +72,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'No se pudo abrir la carpeta';
+        _error = tr('No se pudo abrir la carpeta');
         _dirs = const [];
         _loading = false;
       });
@@ -103,7 +104,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo crear la carpeta',
+          content: Text(tr('No se pudo crear la carpeta'),
               style: AppText.mono(11, color: AppColors.bone)),
         ),
       );
@@ -124,7 +125,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
             // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text('ELEGIR DESTINO',
+              child: Text(tr('ELEGIR DESTINO'),
                   style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
             ),
             // Path + navigation
@@ -139,7 +140,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
               ),
               child: Row(
                 children: [
-                  _icon(Icons.arrow_upward, 'Subir', _goUp),
+                  _icon(Icons.arrow_upward, tr('Subir'), _goUp),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(_path,
@@ -147,7 +148,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
                   ),
-                  _icon(Icons.create_new_folder_outlined, 'Nueva carpeta',
+                  _icon(Icons.create_new_folder_outlined, tr('Nueva carpeta'),
                       _createFolder),
                 ],
               ),
@@ -165,7 +166,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
                   Expanded(
                     child: TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: Text('CANCELAR',
+                      child: Text(tr('CANCELAR'),
                           style: AppText.mono(10,
                               color: AppColors.muted, spacing: 1.0)),
                     ),
@@ -174,7 +175,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
                   Expanded(
                     child: TextButton(
                       onPressed: () => Navigator.pop(context, _path),
-                      child: Text('DESCARGAR AQUÍ',
+                      child: Text(tr('DESCARGAR AQUÍ'),
                           style: AppText.mono(10,
                               color: AppColors.bone, spacing: 1.0)),
                     ),
@@ -207,7 +208,7 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
     }
     if (_dirs.isEmpty) {
       return Center(
-        child: Text('SIN SUBCARPETAS',
+        child: Text(tr('SIN SUBCARPETAS'),
             style: AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
       );
     }
@@ -258,7 +259,7 @@ Future<String?> _promptFolderName(BuildContext context) {
   return showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: Text('NUEVA CARPETA',
+      title: Text(tr('NUEVA CARPETA'),
           style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
       content: TextField(
         controller: controller,
@@ -271,12 +272,12 @@ Future<String?> _promptFolderName(BuildContext context) {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx),
-          child: Text('CANCELAR',
+          child: Text(tr('CANCELAR'),
               style: AppText.mono(10, color: AppColors.muted, spacing: 1.0)),
         ),
         TextButton(
           onPressed: () => Navigator.pop(ctx, controller.text),
-          child: Text('CREAR',
+          child: Text(tr('CREAR'),
               style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
         ),
       ],

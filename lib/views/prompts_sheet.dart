@@ -8,6 +8,7 @@ import '../models/prompt_snippet.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 /// Bottom sheet with the saved prompt library: tap a template to insert it
 /// into the active terminal (as a bracketed paste, without submitting), or
@@ -39,7 +40,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Row(
                 children: [
-                  Text('PROMPTS',
+                  Text(tr('PROMPTS'),
                       style:
                           AppText.label(11, color: AppColors.bone, spacing: 1.4)),
                   const Spacer(),
@@ -63,7 +64,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
                   children: [
                     Icon(Icons.mic_none, size: 16, color: AppColors.bone),
                     const SizedBox(width: 12),
-                    Text('REDACTAR / DICTAR…',
+                    Text(tr('REDACTAR / DICTAR…'),
                         style: AppText.label(10,
                             color: AppColors.bone, spacing: 1.0)),
                   ],
@@ -75,7 +76,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
               Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'Sin plantillas. Redacta un prompt y guárdalo para reusarlo.',
+                  tr('Sin plantillas. Redacta un prompt y guárdalo para reusarlo.'),
                   textAlign: TextAlign.center,
                   style: AppText.body(12, color: AppColors.muted),
                 ),
@@ -230,11 +231,11 @@ class _PromptComposerState extends State<_PromptComposer> {
     try {
       final available = await _speech.initialize();
       if (!available) {
-        _toast('Reconocimiento de voz no disponible');
+        _toast(tr('Reconocimiento de voz no disponible'));
         return;
       }
     } catch (_) {
-      _toast('Reconocimiento de voz no disponible');
+      _toast(tr('Reconocimiento de voz no disponible'));
       return;
     }
     _dictationBase = _textController.text;
@@ -279,7 +280,7 @@ class _PromptComposerState extends State<_PromptComposer> {
   Future<void> _save() async {
     final text = _textController.text.trim();
     if (text.isEmpty) {
-      _toast('Escribe o dicta el prompt primero');
+      _toast(tr('Escribe o dicta el prompt primero'));
       return;
     }
     var title = _titleController.text.trim();
@@ -294,7 +295,7 @@ class _PromptComposerState extends State<_PromptComposer> {
       text: text,
     ));
     if (!mounted) return;
-    _toast('Plantilla guardada');
+    _toast(tr('Plantilla guardada'));
   }
 
   @override
@@ -313,8 +314,8 @@ class _PromptComposerState extends State<_PromptComposer> {
           children: [
             Text(
                 widget.existing == null
-                    ? 'REDACTAR PROMPT'
-                    : 'EDITAR PLANTILLA',
+                    ? tr('REDACTAR PROMPT')
+                    : tr('EDITAR PLANTILLA'),
                 style: AppText.label(10, color: AppColors.bone, spacing: 1.6)),
             const SizedBox(height: 4),
             Hairline(),
@@ -323,7 +324,7 @@ class _PromptComposerState extends State<_PromptComposer> {
               controller: _titleController,
               enableIMEPersonalizedLearning: true,
               decoration:
-                  const InputDecoration(labelText: 'TÍTULO (OPCIONAL)'),
+                  InputDecoration(labelText: tr('TÍTULO (OPCIONAL)')),
               style: AppText.body(13),
             ),
             const SizedBox(height: 12),
@@ -335,8 +336,8 @@ class _PromptComposerState extends State<_PromptComposer> {
               autocorrect: true,
               enableIMEPersonalizedLearning: true,
               keyboardType: TextInputType.multiline,
-              decoration: const InputDecoration(
-                labelText: 'PROMPT',
+              decoration: InputDecoration(
+                labelText: tr('PROMPT'),
                 alignLabelWithHint: true,
               ),
               style: AppText.body(13),
@@ -365,7 +366,7 @@ class _PromptComposerState extends State<_PromptComposer> {
                           color:
                               _listening ? AppColors.ink : AppColors.bone),
                       const SizedBox(width: 10),
-                      Text(_listening ? 'ESCUCHANDO… TOCA PARA PARAR' : 'DICTAR',
+                      Text(_listening ? tr('ESCUCHANDO… TOCA PARA PARAR') : tr('DICTAR'),
                           style: AppText.label(10,
                               color:
                                   _listening ? AppColors.ink : AppColors.bone,
@@ -379,7 +380,7 @@ class _PromptComposerState extends State<_PromptComposer> {
               children: [
                 Expanded(
                   child: GhostButton(
-                    label: 'Guardar plantilla',
+                    label: tr('Guardar plantilla'),
                     icon: Icons.bookmark_add_outlined,
                     dense: true,
                     onPressed: _save,
@@ -388,13 +389,13 @@ class _PromptComposerState extends State<_PromptComposer> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: InvertedButton(
-                    label: 'Insertar',
+                    label: tr('Insertar'),
                     icon: Icons.keyboard_return,
                     dense: true,
                     onPressed: () {
                       final text = _textController.text.trim();
                       if (text.isEmpty) {
-                        _toast('Escribe o dicta el prompt primero');
+                        _toast(tr('Escribe o dicta el prompt primero'));
                         return;
                       }
                       widget.onInsert(text);

@@ -16,6 +16,7 @@ import 'about_tab.dart';
 import 'notifications_tab.dart';
 import 'tunnels_tab.dart';
 import 'update_dialog.dart';
+import '../l10n/l10n.dart';
 
 class HomeView extends StatefulWidget {
   const HomeView({super.key});
@@ -25,12 +26,12 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
-  static const _items = <_NavSpec>[
-    _NavSpec('CONEXIONES', Icons.dns_outlined),
-    _NavSpec('CONSOLA', Icons.terminal_outlined),
-    _NavSpec('ARCHIVOS', Icons.folder_outlined),
-    _NavSpec('EDITOR', Icons.code),
-    _NavSpec('MENÚ', Icons.menu),
+  static List<_NavSpec> get _items => <_NavSpec>[
+    _NavSpec(tr('CONEXIONES'), Icons.dns_outlined),
+    _NavSpec(tr('CONSOLA'), Icons.terminal_outlined),
+    _NavSpec(tr('ARCHIVOS'), Icons.folder_outlined),
+    _NavSpec(tr('EDITOR'), Icons.code),
+    _NavSpec(tr('MENÚ'), Icons.menu),
   ];
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -67,8 +68,8 @@ class _HomeViewState extends State<HomeView> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-          const SnackBar(
-            content: Text('Presiona atrás de nuevo para salir'),
+          SnackBar(
+            content: Text(tr('Presiona atrás de nuevo para salir')),
             duration: Duration(seconds: 2),
           ),
       );

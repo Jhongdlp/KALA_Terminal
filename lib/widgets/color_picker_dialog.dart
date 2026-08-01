@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// Self-contained HSV color picker (saturation/value field + hue bar + hex
 /// input). Returns the chosen color as `#RRGGBB`, or null when cancelled.
@@ -84,7 +85,7 @@ class _ColorPickerDialogState extends State<ColorPickerDialog> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 16, 14, 12),
-              child: Text('COLOR PERSONALIZADO',
+              child: Text(tr('COLOR PERSONALIZADO'),
                   style: AppText.label(10, color: AppColors.bone)),
             ),
             Container(height: 1, color: AppColors.hairline),
@@ -151,14 +152,14 @@ class _ColorPickerDialogState extends State<ColorPickerDialog> {
               children: [
                 Expanded(
                   child: _DialogButton(
-                    label: 'CANCELAR',
+                    label: tr('CANCELAR'),
                     onTap: () => Navigator.of(context).pop(),
                   ),
                 ),
                 Container(width: 1, height: 44, color: AppColors.hairline),
                 Expanded(
                   child: _DialogButton(
-                    label: 'GUARDAR',
+                    label: tr('GUARDAR'),
                     filled: true,
                     onTap: () =>
                         Navigator.of(context).pop(AppColors.toHex(_color)),

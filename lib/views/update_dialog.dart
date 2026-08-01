@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// Shows the "new version available" dialog for [update]. While downloading it
 /// is non-dismissible and swaps its actions for a progress bar; on success the
@@ -56,7 +57,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
           children: [
             Icon(Icons.system_update_alt, size: 18, color: AppColors.bone),
             const SizedBox(width: 10),
-            Text('NUEVA VERSIÓN', style: AppText.label(12, color: AppColors.bone)),
+            Text(tr('NUEVA VERSIÓN'), style: AppText.label(12, color: AppColors.bone)),
           ],
         ),
         content: Column(
@@ -64,7 +65,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Versión ${widget.update.version} disponible',
+              tr('Versión {0} disponible', [widget.update.version]),
               style: AppText.body(14, color: AppColors.bone),
             ),
             if (notes.isNotEmpty) ...[
@@ -98,8 +99,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
               const SizedBox(height: 8),
               Text(
                 _progress > 0
-                    ? 'Descargando ${(_progress * 100).toStringAsFixed(0)}%'
-                    : 'Descargando…',
+                    ? tr('Descargando {0}%', [(_progress * 100).toStringAsFixed(0)])
+                    : tr('Descargando…'),
                 style: AppText.mono(10, color: AppColors.muted),
               ),
             ],
@@ -110,12 +111,12 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             : [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text('DESPUÉS',
+                  child: Text(tr('DESPUÉS'),
                       style: AppText.label(11, color: AppColors.muted)),
                 ),
                 TextButton(
                   onPressed: _start,
-                  child: Text('ACTUALIZAR',
+                  child: Text(tr('ACTUALIZAR'),
                       style: AppText.label(11, color: AppColors.bone)),
                 ),
               ],

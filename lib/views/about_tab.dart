@@ -4,6 +4,7 @@ import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import 'update_dialog.dart';
+import '../l10n/l10n.dart';
 
 /// Tab for displaying application information, the official icon, version info,
 /// and checking for updates.
@@ -17,7 +18,7 @@ class AboutTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),
         children: [
-          ScreenHeader('Acerca De', eyebrow: 'Información y Actualización'),
+          ScreenHeader(tr('Acerca De'), eyebrow: tr('Información y Actualización')),
 
           // Premium App Logo presentation
           Center(
@@ -54,7 +55,7 @@ class AboutTab extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'CLIENTE SSH & TERMINAL AGENTE',
+                    tr('CLIENTE SSH & TERMINAL AGENTE'),
                     style: AppText.mono(8.5, color: AppColors.muted, spacing: 1.5),
                   ),
                 ],
@@ -65,11 +66,11 @@ class AboutTab extends StatelessWidget {
           const SizedBox(height: 8),
 
           SwissPanel(
-            title: 'Detalles de la Aplicación',
+            title: tr('Detalles de la Aplicación'),
             children: [
-              _InfoRow(label: 'APLICACIÓN', value: 'KAMMEL SSH'),
+              _InfoRow(label: tr('APLICACIÓN'), value: 'KAMMEL SSH'),
               Hairline(),
-              _InfoRow(label: 'PAQUETE', value: 'terminal_agent'),
+              _InfoRow(label: tr('PAQUETE'), value: 'terminal_agent'),
               Hairline(),
               const _VersionRow(),
               Hairline(),
@@ -94,7 +95,7 @@ class _VersionRow extends StatelessWidget {
         final value = info == null
             ? '…'
             : '${info.version}+${info.buildNumber}';
-        return _InfoRow(label: 'VERSIÓN', value: value);
+        return _InfoRow(label: tr('VERSIÓN'), value: value);
       },
     );
   }
@@ -145,7 +146,7 @@ class _UpdateCheckRowState extends State<_UpdateCheckRow> {
           ..showSnackBar(
             SnackBar(
               content: Text(
-                'Ya tienes la última versión instalada',
+                tr('Ya tienes la última versión instalada'),
                 style: AppText.mono(11, color: AppColors.bone),
               ),
               backgroundColor: AppColors.panelHi,
@@ -159,7 +160,7 @@ class _UpdateCheckRowState extends State<_UpdateCheckRow> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              'Error al buscar actualizaciones',
+              tr('Error al buscar actualizaciones'),
               style: AppText.mono(11, color: AppColors.bone),
             ),
             backgroundColor: AppColors.panelHi,
@@ -180,7 +181,7 @@ class _UpdateCheckRowState extends State<_UpdateCheckRow> {
           children: [
             Expanded(
               child: Text(
-                'ACTUALIZACIONES',
+                tr('ACTUALIZACIONES'),
                 style: AppText.label(9, color: AppColors.muted),
               ),
             ),
@@ -195,7 +196,7 @@ class _UpdateCheckRowState extends State<_UpdateCheckRow> {
               )
             else
               Text(
-                'BUSCAR ACTUALIZACIONES',
+                tr('BUSCAR ACTUALIZACIONES'),
                 style: AppText.mono(12, color: AppColors.accent, weight: FontWeight.w700),
               ),
           ],

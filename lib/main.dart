@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
+import 'l10n/l10n.dart';
 import 'providers/app_state.dart';
 import 'services/tunnel_manager.dart';
 import 'theme/app_theme.dart';
@@ -12,10 +14,14 @@ import 'views/lock_screen.dart';
 /// BuildContext.
 final navigatorKey = GlobalKey<NavigatorState>();
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize the media_kit/libmpv backend used by the video/audio viewers.
   MediaKit.ensureInitialized();
+
+  // Resolve the UI language before the first frame, otherwise the app would
+  // flash in Spanish and then swap.
+  await L10n.load();
 
   final appState = AppState();
 
@@ -86,11 +92,24 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // builds, since widgets read AppColors.* directly.
     AppColors.apply(themeChoice, platformBrightness, accentColorHex: accentColorHex);
 
-    return MaterialApp(
-      title: 'KAMMEL SSH',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.themeFor(themeChoice, platformBrightness, accentColorHex: accentColorHex),
-      home: const _LockGate(),
+    // `tr()` reads a global, not an InheritedWidget, so a language change has
+    // nothing to notify. Rebuilding MaterialApp under a new key remounts the
+    // tree and re-runs every tr() call; sessions and settings live in AppState,
+    // so nothing the user cares about is lost.
+    return ValueListenableBuilder<AppLang>(
+      valueListenable: L10n.notifier,
+      builder: (context, lang, _) => MaterialApp(
+        key: ValueKey(lang),
+        title: 'KAMMEL SSH',
+        navigatorKey: navigatorKey,
+        debugShowCheckedModeBanner: false,
+        locale: Locale(lang.code),
+        supportedLocales: AppLang.values.map((l) => Locale(l.code)),
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        theme: AppTheme.themeFor(themeChoice, platformBrightness,
+            accentColorHex: accentColorHex),
+        home: const _LockGate(),
+      ),
     );
   }
 }

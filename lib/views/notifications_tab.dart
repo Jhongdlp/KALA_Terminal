@@ -5,6 +5,7 @@ import '../providers/app_state.dart';
 import '../services/notification_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import '../l10n/l10n.dart';
 
 /// Everything about agent notifications in one place: which events raise an
 /// alert, how loud each one is, when they're allowed through, how sensitive the
@@ -27,19 +28,18 @@ class NotificationsTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),
         children: [
-          ScreenHeader('Notificaciones', eyebrow: 'Avisos de agente'),
+          ScreenHeader(tr('Notificaciones'), eyebrow: tr('Avisos de agente')),
 
           const _PermissionWarning(),
 
           // ---- Master switch ---------------------------------------------
           SwissPanel(
-            title: 'General',
+            title: tr('General'),
             children: [
               ToggleRow(
-                label: 'AVISOS DE AGENTE',
+                label: tr('AVISOS DE AGENTE'),
                 description:
-                    'Interruptor maestro. Con esto apagado no se envía ningún '
-                    'aviso, sin importar el resto de ajustes.',
+                    tr('Interruptor maestro. Con esto apagado no se envía ningún aviso, sin importar el resto de ajustes.'),
                 value: prefs.enabled,
                 onChanged: (v) =>
                     state.updateNotificationPrefs(prefs.copyWith(enabled: v)),
@@ -50,7 +50,7 @@ class NotificationsTab extends StatelessWidget {
 
           // ---- Per-kind intensity ----------------------------------------
           SwissPanel(
-            title: 'Qué avisar y con cuánta fuerza',
+            title: tr('Qué avisar y con cuánta fuerza'),
             children: [
               for (var i = 0; i < AlertKind.values.length; i++) ...[
                 if (i > 0) Hairline(),
@@ -73,23 +73,21 @@ class NotificationsTab extends StatelessWidget {
 
           // ---- When ------------------------------------------------------
           SwissPanel(
-            title: 'Cuándo',
+            title: tr('Cuándo'),
             children: [
               ToggleRow(
-                label: 'TAMBIÉN CON LA APP ABIERTA',
+                label: tr('TAMBIÉN CON LA APP ABIERTA'),
                 description:
-                    'Si estás dentro de la app, marca la pestaña de la sesión '
-                    'en vez de enviar una notificación del sistema. Apagado, '
-                    'sólo avisa en segundo plano.',
+                    tr('Si estás dentro de la app, marca la pestaña de la sesión en vez de enviar una notificación del sistema. Apagado, sólo avisa en segundo plano.'),
                 value: prefs.when == AlertWhen.always,
                 onChanged: (v) => state.updateNotificationPrefs(prefs.copyWith(
                     when: v ? AlertWhen.always : AlertWhen.backgroundOnly)),
               ),
               Hairline(),
               ToggleRow(
-                label: 'NO AVISAR DE LA SESIÓN ACTIVA',
+                label: tr('NO AVISAR DE LA SESIÓN ACTIVA'),
                 description:
-                    'No te avisa de la sesión que ya estás mirando en pantalla.',
+                    tr('No te avisa de la sesión que ya estás mirando en pantalla.'),
                 value: prefs.skipActiveSession,
                 onChanged: (v) => state.updateNotificationPrefs(
                     prefs.copyWith(skipActiveSession: v)),
@@ -102,27 +100,23 @@ class NotificationsTab extends StatelessWidget {
 
           // ---- Detector sensitivity --------------------------------------
           SwissPanel(
-            title: 'Sensibilidad del detector',
+            title: tr('Sensibilidad del detector'),
             children: [
               _IdleDelayRow(prefs: prefs),
               Hairline(),
               ToggleRow(
-                label: 'LAS PAUSAS LARGAS NO SON EL FINAL',
+                label: tr('LAS PAUSAS LARGAS NO SON EL FINAL'),
                 description:
-                    'Si el agente sigue mostrando un spinner o un "esc to '
-                    'interrupt", se considera que sigue trabajando y no se '
-                    'avisa. Es lo que evita los avisos falsos mientras piensa.',
+                    tr('Si el agente sigue mostrando un spinner o un "esc to interrupt", se considera que sigue trabajando y no se avisa. Es lo que evita los avisos falsos mientras piensa.'),
                 value: prefs.suppressWhileBusy,
                 onChanged: (v) => state.updateNotificationPrefs(
                     prefs.copyWith(suppressWhileBusy: v)),
               ),
               Hairline(),
               ToggleRow(
-                label: 'INCLUIR EXTRACTO DE LA PANTALLA',
+                label: tr('INCLUIR EXTRACTO DE LA PANTALLA'),
                 description:
-                    'Añade las últimas líneas del terminal al cuerpo del aviso. '
-                    'Apágalo si no quieres que salga contenido remoto en la '
-                    'pantalla de bloqueo.',
+                    tr('Añade las últimas líneas del terminal al cuerpo del aviso. Apágalo si no quieres que salga contenido remoto en la pantalla de bloqueo.'),
                 value: prefs.includeSnippet,
                 onChanged: (v) => state.updateNotificationPrefs(
                     prefs.copyWith(includeSnippet: v)),
@@ -137,13 +131,12 @@ class NotificationsTab extends StatelessWidget {
 
           // ---- Diagnostics -------------------------------------------------
           SwissPanel(
-            title: 'Diagnóstico',
+            title: tr('Diagnóstico'),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 4),
                 child: Text(
-                  'Envía un aviso de cada tipo para comprobar que llegan y '
-                  'suenan como esperas.',
+                  tr('Envía un aviso de cada tipo para comprobar que llegan y suenan como esperas.'),
                   style:
                       AppText.label(8.5, color: AppColors.faint, spacing: 0.3),
                 ),
@@ -151,7 +144,7 @@ class NotificationsTab extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
                 child: GhostButton(
-                  label: 'PROBAR NOTIFICACIÓN',
+                  label: tr('PROBAR NOTIFICACIÓN'),
                   onPressed: state.sendTestNotifications,
                 ),
               ),
@@ -201,17 +194,16 @@ class _PermissionWarningState extends State<_PermissionWarning> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('NOTIFICACIONES BLOQUEADAS',
+            Text(tr('NOTIFICACIONES BLOQUEADAS'),
                 style: AppText.label(9, color: AppColors.accent)),
             const SizedBox(height: 6),
             Text(
-              'Android tiene bloqueadas las notificaciones de esta app, así '
-              'que ningún ajuste de esta pantalla tendrá efecto.',
+              tr('Android tiene bloqueadas las notificaciones de esta app, así que ningún ajuste de esta pantalla tendrá efecto.'),
               style: AppText.label(8.5, color: AppColors.faint, spacing: 0.3),
             ),
             const SizedBox(height: 10),
             GhostButton(
-              label: 'ABRIR AJUSTES DEL SISTEMA',
+              label: tr('ABRIR AJUSTES DEL SISTEMA'),
               onPressed: () async {
                 await NotificationService.openSystemSettings();
                 await _check();
@@ -325,7 +317,7 @@ class _IdleDelayRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text('ESPERA ANTES DE AVISAR',
+                child: Text(tr('ESPERA ANTES DE AVISAR'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               MonoTag('${prefs.idleDelaySeconds}S',
@@ -334,9 +326,7 @@ class _IdleDelayRow extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           Text(
-            'Silencio que debe pasar antes de dar al agente por parado. Más '
-            'bajo avisa antes, pero confunde una pausa larga con el final de '
-            'la tarea.',
+            tr('Silencio que debe pasar antes de dar al agente por parado. Más bajo avisa antes, pero confunde una pausa larga con el final de la tarea.'),
             style: AppText.label(8.5, color: AppColors.faint, spacing: 0.3),
           ),
           Slider(
@@ -402,11 +392,11 @@ class _QuietHoursRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('HORARIO SILENCIOSO',
+                    Text(tr('HORARIO SILENCIOSO'),
                         style: AppText.label(9, color: AppColors.muted)),
                     const SizedBox(height: 5),
                     Text(
-                      'Dentro de esta franja no se envía ningún aviso.',
+                      tr('Dentro de esta franja no se envía ningún aviso.'),
                       style: AppText.label(8.5,
                           color: AppColors.faint, spacing: 0.3),
                     ),
@@ -432,12 +422,12 @@ class _QuietHoursRow extends StatelessWidget {
             Row(
               children: [
                 GhostButton(
-                  label: 'DESDE ${_format(prefs.quietFromMinutes!)}',
+                  label: tr('DESDE {0}', [_format(prefs.quietFromMinutes!)]),
                   onPressed: () => _pick(context, isStart: true),
                 ),
                 const SizedBox(width: 8),
                 GhostButton(
-                  label: 'HASTA ${_format(prefs.quietToMinutes!)}',
+                  label: tr('HASTA {0}', [_format(prefs.quietToMinutes!)]),
                   onPressed: () => _pick(context, isStart: false),
                 ),
               ],
@@ -462,7 +452,7 @@ class _SessionsPanel extends StatelessWidget {
     final prefs = state.notificationPrefs;
 
     return SwissPanel(
-      title: 'Por sesión',
+      title: tr('Por sesión'),
       children: [
         for (var i = 0; i < sessions.length; i++) ...[
           if (i > 0) Hairline(),
@@ -479,8 +469,8 @@ class _SessionsPanel extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         sessions[i].agentLabel != null
-                            ? 'Detectado: ${sessions[i].agentLabel}'
-                            : 'Agente no identificado',
+                            ? tr('Detectado: {0}', [sessions[i].agentLabel])
+                            : tr('Agente no identificado'),
                         style: AppText.label(8,
                             color: AppColors.faint, spacing: 0.3),
                       ),
@@ -488,7 +478,7 @@ class _SessionsPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text('SILENCIAR',
+                Text(tr('SILENCIAR'),
                     style: AppText.mono(8, color: AppColors.faint)),
                 Switch(
                   value: prefs.isMuted(sessions[i].id),
@@ -526,16 +516,16 @@ class _AlertLogPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('ÚLTIMOS EVENTOS',
+          Text(tr('ÚLTIMOS EVENTOS'),
               style: AppText.label(9, color: AppColors.muted)),
           const SizedBox(height: 5),
           Text(
-            'Cada decisión del detector, se enviara o no, con su motivo.',
+            tr('Cada decisión del detector, se enviara o no, con su motivo.'),
             style: AppText.label(8.5, color: AppColors.faint, spacing: 0.3),
           ),
           const SizedBox(height: 10),
           if (log.isEmpty)
-            Text('Todavía no hay eventos registrados.',
+            Text(tr('Todavía no hay eventos registrados.'),
                 style: AppText.mono(8.5, color: AppColors.faint))
           else
             for (final entry in log)
@@ -567,8 +557,8 @@ class _AlertLogPanel extends StatelessWidget {
                           ),
                           Text(
                             entry.delivered
-                                ? 'Enviado — ${entry.kind.label}'
-                                : 'Descartado — ${entry.suppressedReason}',
+                                ? tr('Enviado — {0}', [entry.kind.label])
+                                : tr('Descartado — {0}', [entry.suppressedReason]),
                             style: AppText.label(8,
                                 color: entry.delivered
                                     ? AppColors.accent

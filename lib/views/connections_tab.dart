@@ -7,6 +7,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import 'tunnel_editor_sheet.dart';
+import '../l10n/l10n.dart';
 
 class ConnectionsTab extends StatelessWidget {
   const ConnectionsTab({super.key});
@@ -21,10 +22,10 @@ class ConnectionsTab extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 32),
         children: [
           ScreenHeader(
-            'Workspace',
+            tr('Workspace'),
             eyebrow: 'KAMMEL SSH',
             trailing: InvertedButton(
-              label: 'Nueva',
+              label: tr('Nueva'),
               icon: Icons.add,
               dense: true,
               onPressed: () => _showProfileDialog(context, null),
@@ -33,14 +34,14 @@ class ConnectionsTab extends StatelessWidget {
 
           // SSH servers panel
           SwissPanel(
-            title: 'Servidores remotos · SSH',
+            title: tr('Servidores remotos · SSH'),
             children: [
               if (state.profiles.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 28),
                   child: Center(
-                    child: Text('SIN SERVIDORES CONFIGURADOS',
+                    child: Text(tr('SIN SERVIDORES CONFIGURADOS'),
                         style: AppText.mono(9,
                             color: AppColors.muted, spacing: 1.5)),
                   ),
@@ -100,31 +101,31 @@ class ConnectionsTab extends StatelessWidget {
             ),
             Hairline(),
             if (isConnected) ...[
-              _actionTile(sheetCtx, Icons.bolt_outlined, 'IR A LA CONSOLA', () {
+              _actionTile(sheetCtx, Icons.bolt_outlined, tr('IR A LA CONSOLA'), () {
                 state.setActiveTabIndex(1);
               }),
               Hairline(),
             ],
-            _actionTile(sheetCtx, Icons.add_circle_outline, 'NUEVA SESIÓN', () {
+            _actionTile(sheetCtx, Icons.add_circle_outline, tr('NUEVA SESIÓN'), () {
               state.connectToSSH(profile);
             }),
             Hairline(),
             if (!isConnected) ...[
-              _actionTile(sheetCtx, Icons.bolt_outlined, 'CONECTAR', () {
+              _actionTile(sheetCtx, Icons.bolt_outlined, tr('CONECTAR'), () {
                 state.connectToSSH(profile);
               }),
               Hairline(),
             ],
-            _actionTile(sheetCtx, Icons.edit_outlined, 'EDITAR', () {
+            _actionTile(sheetCtx, Icons.edit_outlined, tr('EDITAR'), () {
               _showProfileDialog(context, profile);
             }),
             if (isConnected) ...[
               Hairline(),
-              _actionTile(sheetCtx, Icons.power_settings_new, 'DESCONECTAR',
+              _actionTile(sheetCtx, Icons.power_settings_new, tr('DESCONECTAR'),
                   () => state.disconnect()),
             ],
             Hairline(),
-            _actionTile(sheetCtx, Icons.delete_outline, 'ELIMINAR', () {
+            _actionTile(sheetCtx, Icons.delete_outline, tr('ELIMINAR'), () {
               _showDeleteConfirmation(context, state, profile);
             }, danger: true),
           ],
@@ -163,18 +164,18 @@ class ConnectionsTab extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: Text('ELIMINAR CONEXIÓN',
+        title: Text(tr('ELIMINAR CONEXIÓN'),
             style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
-        content: Text('¿Eliminar el perfil "${profile.name}"?',
+        content: Text(tr('¿Eliminar el perfil "{0}"?', [profile.name]),
             style: AppText.body(12, color: AppColors.muted)),
         actions: [
           GhostButton(
-            label: 'Cancelar',
+            label: tr('Cancelar'),
             dense: true,
             onPressed: () => Navigator.of(context).pop(),
           ),
           GhostButton(
-            label: 'Eliminar',
+            label: tr('Eliminar'),
             dense: true,
             danger: true,
             onPressed: () {
@@ -226,7 +227,7 @@ class ConnectionsTab extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(isEditing ? 'EDITAR PERFIL SSH' : 'NUEVO PERFIL SSH',
+                Text(isEditing ? tr('EDITAR PERFIL SSH') : tr('NUEVO PERFIL SSH'),
                     style: AppText.label(10,
                         color: AppColors.bone, spacing: 1.6)),
                 const SizedBox(height: 4),
@@ -234,16 +235,16 @@ class ConnectionsTab extends StatelessWidget {
                 const SizedBox(height: 16),
 
                 // ---- Paste full ssh command -> autofill ------------------
-                Text('PEGAR COMANDO SSH',
+                Text(tr('PEGAR COMANDO SSH'),
                     style: AppText.label(9,
                         color: AppColors.muted, spacing: 1.4)),
                 const SizedBox(height: 6),
                 _field(commandController,
-                    'ssh -L 3000:localhost:3000 usuario@host',
+                    tr('ssh -L 3000:localhost:3000 usuario@host'),
                     mono: true),
                 const SizedBox(height: 8),
                 GhostButton(
-                  label: 'Autocompletar desde el comando',
+                  label: tr('Autocompletar desde el comando'),
                   icon: Icons.auto_fix_high,
                   dense: true,
                   onPressed: () {
@@ -251,9 +252,9 @@ class ConnectionsTab extends StatelessWidget {
                         ConnectionProfile.parseCommand(commandController.text);
                     if (parsed == null) {
                       ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                        const SnackBar(
+                        SnackBar(
                             content: Text(
-                                'No se pudo leer el comando. Verifica el formato.')),
+                                tr('No se pudo leer el comando. Verifica el formato.'))),
                       );
                       return;
                     }
@@ -278,57 +279,54 @@ class ConnectionsTab extends StatelessWidget {
                 Hairline(),
                 const SizedBox(height: 16),
 
-                _field(nameController, 'NOMBRE DEL PERFIL'),
+                _field(nameController, tr('NOMBRE DEL PERFIL')),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       flex: 3,
-                      child: _field(hostController, 'HOST / IP', mono: true),
+                      child: _field(hostController, tr('HOST / IP'), mono: true),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       flex: 1,
-                      child: _field(portController, 'PUERTO',
+                      child: _field(portController, tr('PUERTO'),
                           mono: true, number: true),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                _field(usernameController, 'USUARIO', mono: true),
+                _field(usernameController, tr('USUARIO'), mono: true),
                 const SizedBox(height: 12),
-                _field(passwordController, 'CONTRASEÑA (OPCIONAL)',
+                _field(passwordController, tr('CONTRASEÑA (OPCIONAL)'),
                     obscure: true),
                 const SizedBox(height: 8),
 
                 // ---- Public-key auth -------------------------------------
                 ToggleRow(
-                  label: 'USAR LLAVE DEL DISPOSITIVO',
+                  label: tr('USAR LLAVE DEL DISPOSITIVO'),
                   description:
-                      'Autentica con la llave SSH del teléfono (se genera en '
-                      'Ajustes). Requiere su llave pública en el servidor.',
+                      tr('Autentica con la llave SSH del teléfono (se genera en Ajustes). Requiere su llave pública en el servidor.'),
                   value: useDeviceKey,
                   onChanged: (v) => setSheetState(() => useDeviceKey = v),
                 ),
                 _field(privateKeyController,
-                    'LLAVE PRIVADA DEL PERFIL (PEM, OPCIONAL)',
+                    tr('LLAVE PRIVADA DEL PERFIL (PEM, OPCIONAL)'),
                     mono: true, maxLines: 3),
                 const SizedBox(height: 8),
 
                 // ---- Persistent session (tmux) ---------------------------
                 ToggleRow(
-                  label: 'SESIÓN PERSISTENTE (TMUX)',
+                  label: tr('SESIÓN PERSISTENTE (TMUX)'),
                   description:
-                      'Los agentes y procesos siguen corriendo si se corta la '
-                      'conexión; al reconectar vuelves donde estabas. Requiere '
-                      'tmux en el servidor.',
+                      tr('Los agentes y procesos siguen corriendo si se corta la conexión; al reconectar vuelves donde estabas. Requiere tmux en el servidor.'),
                   value: useTmux,
                   onChanged: (v) => setSheetState(() => useTmux = v),
                 ),
                 const SizedBox(height: 8),
 
                 // ---- Port-forward tunnels (-L / -D / -R) -----------------
-                Text('TÚNELES · PORT FORWARDING',
+                Text(tr('TÚNELES · PORT FORWARDING'),
                     style: AppText.label(9,
                         color: AppColors.muted, spacing: 1.4)),
                 const SizedBox(height: 8),
@@ -336,9 +334,7 @@ class ConnectionsTab extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Sin túneles. Puedes abrir un servicio del servidor en '
-                      'este teléfono, usar el servidor como proxy o publicar '
-                      'algo tuyo en él.',
+                      tr('Sin túneles. Puedes abrir un servicio del servidor en este teléfono, usar el servidor como proxy o publicar algo tuyo en él.'),
                       style: AppText.body(11, color: AppColors.muted),
                     ),
                   ),
@@ -355,7 +351,7 @@ class ConnectionsTab extends StatelessWidget {
                     onRemove: () => setSheetState(() => tunnels.removeAt(i)),
                   ),
                 GhostButton(
-                  label: 'Añadir túnel',
+                  label: tr('Añadir túnel'),
                   icon: Icons.add,
                   dense: true,
                   onPressed: () async {
@@ -368,15 +364,15 @@ class ConnectionsTab extends StatelessWidget {
                 const SizedBox(height: 20),
 
                 InvertedButton(
-                  label: isEditing ? 'Guardar cambios' : 'Conectar y guardar',
+                  label: isEditing ? tr('Guardar cambios') : tr('Conectar y guardar'),
                   expand: true,
                   onPressed: () {
                     if (nameController.text.isEmpty ||
                         hostController.text.isEmpty ||
                         usernameController.text.isEmpty) {
                       ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                        const SnackBar(
-                            content: Text('Completa los campos requeridos')),
+                        SnackBar(
+                            content: Text(tr('Completa los campos requeridos'))),
                       );
                       return;
                     }
@@ -437,7 +433,7 @@ class ConnectionsTab extends StatelessWidget {
                     Text(tunnel.describe(),
                         style: AppText.mono(10, color: AppColors.muted)),
                   if (tunnel.exposeToLan && tunnel.kind.listensOnDevice)
-                    Text('EXPUESTO A LA RED LOCAL',
+                    Text(tr('EXPUESTO A LA RED LOCAL'),
                         style: AppText.label(8,
                             color: AppColors.danger, spacing: 1.0)),
                 ],

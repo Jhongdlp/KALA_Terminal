@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
 import 'folder_picker_dialog.dart';
+import '../l10n/l10n.dart';
 
 class ExplorerTab extends StatefulWidget {
   const ExplorerTab({super.key});
@@ -162,13 +163,13 @@ class _ExplorerTabState extends State<ExplorerTab> {
       child: Row(
         children: [
           _barIcon(Icons.arrow_back,
-              tooltip: 'Volver',
+              tooltip: tr('Volver'),
               color: canNavigateBack ? null : AppColors.hairline,
               onTap: canNavigateBack
                   ? () => context.read<AppState>().navigateBack()
                   : () {}),
           _barIcon(Icons.arrow_upward,
-              tooltip: 'Subir un nivel',
+              tooltip: tr('Subir un nivel'),
               onTap: () => context.read<AppState>().navigateUp()),
           Expanded(
             child: SingleChildScrollView(
@@ -181,22 +182,22 @@ class _ExplorerTabState extends State<ExplorerTab> {
             ),
           ),
           _barIcon(Icons.terminal,
-              tooltip: 'Abrir terminal aquí',
+              tooltip: tr('Abrir terminal aquí'),
               onTap: () =>
                   context.read<AppState>().openTerminalAt(currentPath)),
-          _barIcon(Icons.search, tooltip: 'Buscar', active: _searchOpen,
+          _barIcon(Icons.search, tooltip: tr('Buscar'), active: _searchOpen,
               onTap: () {
             setState(() => _searchOpen = !_searchOpen);
             if (!_searchOpen) context.read<AppState>().setFileSearchQuery('');
           }),
           _barIcon(
               showHidden ? Icons.visibility : Icons.visibility_off,
-              tooltip: showHidden ? 'Ocultar archivos ocultos' : 'Mostrar archivos ocultos',
+              tooltip: showHidden ? tr('Ocultar archivos ocultos') : tr('Mostrar archivos ocultos'),
               active: showHidden,
               onTap: () => context.read<AppState>().setShowHidden(!showHidden)),
           _buildFilterButton(context, typeFilter),
           _barIcon(Icons.refresh,
-              tooltip: 'Actualizar',
+              tooltip: tr('Actualizar'),
               onTap: () =>
                   context.read<AppState>().changeDirectory(currentPath)),
         ],
@@ -205,13 +206,13 @@ class _ExplorerTabState extends State<ExplorerTab> {
   }
 
   Widget _buildFilterButton(BuildContext context, FileTypeFilter typeFilter) {
-    const labels = {
-      FileTypeFilter.all: 'TODOS',
-      FileTypeFilter.folders: 'CARPETAS',
-      FileTypeFilter.filesOnly: 'ARCHIVOS',
+    final labels = {
+      FileTypeFilter.all: tr('TODOS'),
+      FileTypeFilter.folders: tr('CARPETAS'),
+      FileTypeFilter.filesOnly: tr('ARCHIVOS'),
     };
     return PopupMenuButton<FileTypeFilter>(
-      tooltip: 'Filtrar por tipo',
+      tooltip: tr('Filtrar por tipo'),
       color: AppColors.panel,
       shape: RoundedRectangleBorder(
         side: BorderSide(color: AppColors.hairline, width: 1),
@@ -310,21 +311,21 @@ class _ExplorerTabState extends State<ExplorerTab> {
             if (_sideDockOpen) ...[
               Hairline(),
               dockButton(Icons.mobile_screen_share,
-                  tooltip: 'Subir desde celular',
+                  tooltip: tr('Subir desde celular'),
                   color: AppColors.accent,
                   onTap: handleUpload),
               dockButton(Icons.select_all,
-                  tooltip: 'Seleccionar todo',
+                  tooltip: tr('Seleccionar todo'),
                   onTap: visible.isEmpty
                       ? null
                       : () => state.selectPaths(visible.map((f) => f.path))),
               dockButton(Icons.copy_outlined,
-                  tooltip: 'Copiar seleccionados',
+                  tooltip: tr('Copiar seleccionados'),
                   onTap: selected.isEmpty
                       ? null
                       : () => state.copySelectionToClipboard(move: false)),
               dockButton(Icons.content_paste,
-                  tooltip: 'Pegar aquí',
+                  tooltip: tr('Pegar aquí'),
                   onTap: clipboardCount == 0
                       ? null
                       : () => state.pasteClipboard()),
@@ -365,14 +366,14 @@ class _ExplorerTabState extends State<ExplorerTab> {
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 contentPadding: EdgeInsets.zero,
-                hintText: 'Buscar archivos…',
+                hintText: tr('Buscar archivos…'),
                 hintStyle: AppText.mono(12, color: AppColors.muted),
               ),
             ),
           ),
           if (searchQuery.isNotEmpty)
             _barIcon(Icons.close,
-                tooltip: 'Limpiar búsqueda',
+                tooltip: tr('Limpiar búsqueda'),
                 onTap: () =>
                     context.read<AppState>().setFileSearchQuery('')),
         ],
@@ -394,30 +395,30 @@ class _ExplorerTabState extends State<ExplorerTab> {
       child: Row(
         children: [
           Expanded(
-            child: Text('${selected.length} SELECCIONADO(S)',
+            child: Text(tr('{0} SELECCIONADO(S)', [selected.length]),
                 style: AppText.mono(9, color: AppColors.bone, spacing: 1.5),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis),
           ),
           _barIcon(Icons.select_all,
-              tooltip: 'Seleccionar todo',
+              tooltip: tr('Seleccionar todo'),
               onTap: () => state.selectPaths(visible.map((f) => f.path))),
           _barIcon(Icons.copy_outlined,
-              tooltip: 'Copiar',
+              tooltip: tr('Copiar'),
               onTap: () => state.copySelectionToClipboard(move: false)),
           _barIcon(Icons.drive_file_move_outlined,
-              tooltip: 'Mover',
+              tooltip: tr('Mover'),
               onTap: () => state.copySelectionToClipboard(move: true)),
           // Descargar al dispositivo (tanto para sesión remota SSH como para local).
           _barIcon(Icons.download_outlined,
-              tooltip: 'Descargar al dispositivo',
+              tooltip: tr('Descargar al dispositivo'),
               onTap: () => _downloadWithPicker(context, state)),
           _barIcon(Icons.delete_outline,
-              tooltip: 'Eliminar',
+              tooltip: tr('Eliminar'),
               color: AppColors.danger,
               onTap: () => _confirmDelete(context, selected.length)),
           _barIcon(Icons.close,
-              tooltip: 'Cancelar selección', onTap: state.clearSelection),
+              tooltip: tr('Cancelar selección'), onTap: state.clearSelection),
         ],
       ),
     );
@@ -442,11 +443,11 @@ class _ExplorerTabState extends State<ExplorerTab> {
     final String detail;
     if (scanning) {
       detail = state.downloadCurrentName.isEmpty
-          ? 'CALCULANDO…'
-          : 'CALCULANDO · ${state.downloadCurrentName}';
+          ? tr('CALCULANDO…')
+          : tr('CALCULANDO · {0}', [state.downloadCurrentName]);
     } else {
       final counts =
-          '${state.downloadFilesDone}/${state.downloadFilesTotal} archivos';
+          tr('{0}/{1} archivos', [state.downloadFilesDone, state.downloadFilesTotal]);
       final bytes = state.downloadBytesTotal > 0
           ? ' · ${_formatBytes(state.downloadBytesDone)} / ${_formatBytes(state.downloadBytesTotal)}'
           : '';
@@ -484,8 +485,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
                   children: [
                     Text(
                       scanning
-                          ? 'PREPARANDO DESCARGA'
-                          : 'DESCARGANDO${pct != null ? ' · $pct%' : ''}',
+                          ? tr('PREPARANDO DESCARGA')
+                          : tr('DESCARGANDO') + (pct != null ? ' · $pct%' : ''),
                       style:
                           AppText.mono(9, color: AppColors.bone, spacing: 1.5),
                       maxLines: 1,
@@ -501,7 +502,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
                 ),
               ),
               _barIcon(Icons.close,
-                  tooltip: 'Cancelar descarga', onTap: state.cancelDownload),
+                  tooltip: tr('Cancelar descarga'), onTap: state.cancelDownload),
             ],
           ),
           const SizedBox(height: 6),
@@ -525,12 +526,12 @@ class _ExplorerTabState extends State<ExplorerTab> {
     final String title;
     final String detail;
     if (isError) {
-      title = 'DESCARGA FALLIDA';
+      title = tr('DESCARGA FALLIDA');
       detail = state.downloadError;
     } else {
       title = failed > 0
-          ? '${state.downloadFilesDone} DESCARGADO(S) · $failed CON ERRORES'
-          : '${state.downloadFilesDone} ARCHIVO(S) DESCARGADO(S)';
+          ? tr('{0} DESCARGADO(S) · {1} CON ERRORES', [state.downloadFilesDone, failed])
+          : tr('{0} ARCHIVO(S) DESCARGADO(S)', [state.downloadFilesDone]);
       detail = state.downloadDestDir;
     }
 
@@ -563,7 +564,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
                   const SizedBox(height: 2),
                   Text(
                       failed > 0
-                          ? '$detail — toca para ver los errores'
+                          ? tr('{0} — toca para ver los errores', [detail])
                           : detail,
                       style: AppText.mono(9,
                           color: AppColors.muted, spacing: 0.6),
@@ -573,7 +574,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
               ),
             ),
             _barIcon(Icons.close,
-                tooltip: 'Cerrar', onTap: state.dismissDownloadStatus),
+                tooltip: tr('Cerrar'), onTap: state.dismissDownloadStatus),
           ],
         ),
       ),
@@ -586,7 +587,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('ERRORES DE DESCARGA',
+        title: Text(tr('ERRORES DE DESCARGA'),
             style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
         content: SizedBox(
           width: double.maxFinite,
@@ -605,7 +606,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('CERRAR',
+            child: Text(tr('CERRAR'),
                 style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
           ),
         ],
@@ -628,18 +629,18 @@ class _ExplorerTabState extends State<ExplorerTab> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-                '$count EN PORTAPAPELES · ${isMove ? 'MOVER' : 'COPIAR'}',
+                tr('{0} EN PORTAPAPELES · {1}', [count, isMove ? tr('MOVER') : tr('COPIAR')]),
                 style: AppText.mono(9, color: AppColors.muted, spacing: 1.2),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis),
           ),
           InvertedButton(
-            label: 'Pegar aquí',
+            label: tr('Pegar aquí'),
             dense: true,
             onPressed: () => context.read<AppState>().pasteClipboard(),
           ),
           _barIcon(Icons.close,
-              tooltip: 'Descartar',
+              tooltip: tr('Descartar'),
               onTap: () => context.read<AppState>().clearClipboard()),
         ],
       ),
@@ -666,13 +667,13 @@ class _ExplorerTabState extends State<ExplorerTab> {
       final failed = state.downloadFailures.length;
       final String message;
       if (phase == DownloadPhase.error) {
-        message = 'Descarga fallida: ${state.downloadError}';
+        message = tr('Descarga fallida: {0}', [state.downloadError]);
       } else if (failed > 0) {
         message =
-            '${state.downloadFilesDone} archivo(s) descargado(s), $failed con errores';
+            tr('{0} archivo(s) descargado(s), {1} con errores', [state.downloadFilesDone, failed]);
       } else {
         message =
-            '${state.downloadFilesDone} archivo(s) descargado(s) en ${state.downloadDestDir}';
+            tr('{0} archivo(s) descargado(s) en {1}', [state.downloadFilesDone, state.downloadDestDir]);
       }
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
@@ -710,21 +711,20 @@ class _ExplorerTabState extends State<ExplorerTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('ELIMINAR',
+        title: Text(tr('ELIMINAR'),
             style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
         content: Text(
-            '¿Eliminar $count elemento(s)? Las carpetas se borran con todo su '
-            'contenido. Esta acción no se puede deshacer.',
+            tr('¿Eliminar {0} elemento(s)? Las carpetas se borran con todo su contenido. Esta acción no se puede deshacer.', [count]),
             style: AppText.body(13, color: AppColors.bone)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('CANCELAR',
+            child: Text(tr('CANCELAR'),
                 style: AppText.mono(10, color: AppColors.muted, spacing: 1.0)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('ELIMINAR',
+            child: Text(tr('ELIMINAR'),
                 style:
                     AppText.mono(10, color: AppColors.danger, spacing: 1.0)),
           ),
@@ -755,14 +755,14 @@ class _ExplorerTabState extends State<ExplorerTab> {
 
     if (files.isEmpty) {
       return Center(
-        child: Text('DIRECTORIO VACÍO',
+        child: Text(tr('DIRECTORIO VACÍO'),
             style: AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
       );
     }
 
     if (visible.isEmpty) {
       return Center(
-        child: Text('SIN RESULTADOS',
+        child: Text(tr('SIN RESULTADOS'),
             style: AppText.mono(9, color: AppColors.muted, spacing: 1.5)),
       );
     }
@@ -790,7 +790,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
                               : Icons.description_outlined),
           title: item.name,
           meta: item.isDirectory
-              ? 'CARPETA'
+              ? tr('CARPETA')
               : '${_formatBytes(item.size)} · ${_formatDate(item.modified)}',
           active: isSelected,
           // The folder's trailing button drops the terminal into that path.

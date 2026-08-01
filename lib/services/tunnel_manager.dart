@@ -5,6 +5,7 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/ssh_tunnel.dart';
+import '../l10n/l10n.dart';
 
 /// Live state of a tunnel.
 enum TunnelState { stopped, starting, active, failed }
@@ -40,8 +41,16 @@ class TunnelRuntime {
   /// back exactly the tunnels that were up.
   bool desired = false;
 
+  /// True when the tunnel was closed by its own inactivity timer rather than by
+  /// the user or a failure — the row says so instead of just "parado".
+  bool stoppedForIdle = false;
+
+  /// When the idle countdown will fire, for the "se cerrará en N min" hint.
+  DateTime? idleDeadline;
+
   // ---- internals -----------------------------------------------------------
   ServerSocket? _server;
+  Timer? _idleTimer;
   SSHDynamicForward? _dynamic;
   SSHRemoteForward? _remote;
   StreamSubscription<Socket>? _acceptSub;
@@ -231,6 +240,8 @@ class TunnelManager extends ChangeNotifier {
         bucket.tunnels.add(TunnelRuntime(t));
       } else {
         existing.config = t;
+        // The edit may have changed the inactivity timeout.
+        if (existing.isUp) _armIdleTimer(bucket, existing);
       }
     }
   }
@@ -282,8 +293,7 @@ class TunnelManager extends ChangeNotifier {
 
     final client = bucket.client;
     if (client == null || client.isClosed) {
-      _fail(rt, 'La sesión SSH no está conectada. El túnel se abrirá al '
-          'reconectar.');
+      _fail(rt, tr('La sesión SSH no está conectada. El túnel se abrirá al reconectar.'));
       return;
     }
 
@@ -310,15 +320,16 @@ class TunnelManager extends ChangeNotifier {
     } catch (e) {
       _teardown(rt);
       _fail(rt, _humanError(e, rt.config), detail: '$e');
-      bucket.log?.call('No se pudo abrir el túnel ${rt.config.toSpec()}: '
-          '${rt.error}');
+      bucket.log?.call(tr('No se pudo abrir el túnel {0}: {1}', [rt.config.toSpec(), rt.error]));
       return;
     }
 
     rt.state = TunnelState.active;
     rt.startedAt = DateTime.now();
+    rt.stoppedForIdle = false;
+    _armIdleTimer(bucket, rt);
     notifyListeners();
-    bucket.log?.call('Túnel activo: ${rt.config.describe(boundPort: rt.boundPort)}');
+    bucket.log?.call(tr('Túnel activo: {0}', [rt.config.describe(boundPort: rt.boundPort)]));
   }
 
   Future<void> stop(String sessionId, String tunnelId,
@@ -328,6 +339,7 @@ class TunnelManager extends ChangeNotifier {
     if (userInitiated) rt.desired = false;
     _teardown(rt);
     rt.state = TunnelState.stopped;
+    rt.stoppedForIdle = false;
     rt.error = null;
     rt.errorDetail = null;
     notifyListeners();
@@ -443,14 +455,69 @@ class TunnelManager extends ChangeNotifier {
       );
     } catch (e) {
       channel.destroy();
-      rt.error = 'No se pudo conectar con ${rt.config.destHost}:'
-          '${rt.config.destPort} en este dispositivo. ¿Está el servicio '
-          'levantado?';
+      rt.error = tr('No se pudo conectar con {0}:{1} en este dispositivo. ¿Está el servicio levantado?', [rt.config.destHost, rt.config.destPort]);
       rt.errorDetail = '$e';
       _notifySoon();
       return;
     }
     _bridge(rt, socket, channel);
+  }
+
+  // ---- idle shutdown -------------------------------------------------------
+
+  /// Starts (or restarts) the inactivity countdown for a tunnel.
+  ///
+  /// The clock only runs while the tunnel has **no open connections**, so a
+  /// database client or a long download is never cut mid-flight: every new
+  /// connection cancels the timer and closing the last one starts it again.
+  /// Disabled for SOCKS, where we can't see the connections.
+  void _armIdleTimer(_SessionTunnels bucket, TunnelRuntime rt) {
+    rt._idleTimer?.cancel();
+    rt._idleTimer = null;
+    rt.idleDeadline = null;
+
+    final minutes = rt.config.idleTimeoutMinutes;
+    if (minutes <= 0) return;
+    if (rt.config.kind == TunnelKind.dynamicSocks) return;
+    if (!rt.isUp || rt.liveConnections > 0) return;
+
+    final delay = Duration(minutes: minutes);
+    rt.idleDeadline = DateTime.now().add(delay);
+    rt._idleTimer = Timer(delay, () {
+      // Re-check: a connection may have arrived while the timer was pending.
+      if (!rt.isUp || rt.liveConnections > 0) {
+        _armIdleTimer(bucket, rt);
+        return;
+      }
+      _teardown(rt);
+      rt.state = TunnelState.stopped;
+      rt.stoppedForIdle = true;
+      // Keep `desired` so a reconnect (or the next autoStart) brings it back —
+      // this is a hygiene measure, not the user cancelling the tunnel.
+      notifyListeners();
+      bucket.log?.call(
+          tr('Túnel cerrado por inactividad ({0} min): {1}', [minutes, rt.config.toSpec()]));
+    });
+  }
+
+  /// Called whenever a tunnel's connection count changes.
+  void _onConnectionCountChanged(TunnelRuntime rt) {
+    final bucket = _bucketOf(rt);
+    if (bucket == null) return;
+    if (rt.liveConnections > 0) {
+      rt._idleTimer?.cancel();
+      rt._idleTimer = null;
+      rt.idleDeadline = null;
+    } else {
+      _armIdleTimer(bucket, rt);
+    }
+  }
+
+  _SessionTunnels? _bucketOf(TunnelRuntime rt) {
+    for (final bucket in _sessions.values) {
+      if (bucket.tunnels.contains(rt)) return bucket;
+    }
+    return null;
   }
 
   // ---- plumbing ------------------------------------------------------------
@@ -467,6 +534,7 @@ class TunnelManager extends ChangeNotifier {
     rt._bridges.add(bridge);
     rt.liveConnections++;
     rt.totalConnections++;
+    _onConnectionCountChanged(rt);
     notifyListeners();
 
     // Hard teardown: only on error or when both directions are finished.
@@ -475,6 +543,7 @@ class TunnelManager extends ChangeNotifier {
       bridge.closed = true;
       rt._bridges.remove(bridge);
       rt.liveConnections = rt.liveConnections > 0 ? rt.liveConnections - 1 : 0;
+      _onConnectionCountChanged(rt);
       bridge.socketSub?.cancel();
       bridge.channelSub?.cancel();
       try {
@@ -560,6 +629,9 @@ class TunnelManager extends ChangeNotifier {
   /// first, then kill the connections already in flight — closing a
   /// `ServerSocket` does not touch sockets it already handed out.
   void _teardown(TunnelRuntime rt) {
+    rt._idleTimer?.cancel();
+    rt._idleTimer = null;
+    rt.idleDeadline = null;
     rt._acceptSub?.cancel();
     rt._acceptSub = null;
     final server = rt._server;
@@ -603,8 +675,7 @@ class TunnelManager extends ChangeNotifier {
   /// is kept in `errorDetail` for debugging.
   String _humanError(Object e, SshTunnel tunnel) {
     if (e is _TunnelRejected) {
-      return 'El servidor rechazó abrir el puerto ${e.port}. Suele faltar '
-          '`GatewayPorts yes` en su sshd_config, o el puerto ya está en uso allí.';
+      return tr('El servidor rechazó abrir el puerto {0}. Suele faltar `GatewayPorts yes` en su sshd_config, o el puerto ya está en uso allí.', [e.port]);
     }
     if (e is SocketException) {
       final code = e.osError?.errorCode;
@@ -616,29 +687,24 @@ class TunnelManager extends ChangeNotifier {
           code == 48 ||
           text.contains('address already in use') ||
           text.contains('shared flag')) {
-        return 'El puerto ${tunnel.listenPort} ya está ocupado en este '
-            'dispositivo. Elige otro.';
+        return tr('El puerto {0} ya está ocupado en este dispositivo. Elige otro.', [tunnel.listenPort]);
       }
       if (code == 13 || code == 1 || text.contains('permission denied')) {
-        return 'Android no permite abrir el puerto ${tunnel.listenPort}. Usa '
-            'uno mayor que 1024.';
+        return tr('Android no permite abrir el puerto {0}. Usa uno mayor que 1024.', [tunnel.listenPort]);
       }
       if (code == 99 || text.contains('cannot assign requested address')) {
-        return 'No se pudo enlazar la dirección local. Prueba sin exponer el '
-            'túnel a la red.';
+        return tr('No se pudo enlazar la dirección local. Prueba sin exponer el túnel a la red.');
       }
-      return 'No se pudo abrir el puerto ${tunnel.listenPort}: ${e.osError?.message ?? e.message}';
+      return tr('No se pudo abrir el puerto {0}: {1}', [tunnel.listenPort, e.osError?.message ?? e.message]);
     }
     final text = '$e';
     if (text.contains('SSHChannelOpenError') ||
         text.toLowerCase().contains('administratively prohibited') ||
         text.toLowerCase().contains('connect failed')) {
-      return 'El servidor no dejó conectar con ${tunnel.destHost}:'
-          '${tunnel.destPort}. ¿Está el servicio levantado y permitido el '
-          'forwarding?';
+      return tr('El servidor no dejó conectar con {0}:{1}. ¿Está el servicio levantado y permitido el forwarding?', [tunnel.destHost, tunnel.destPort]);
     }
     if (text.contains('SSHStateError') || text.contains('closed')) {
-      return 'La sesión SSH se cerró. El túnel volverá al reconectar.';
+      return tr('La sesión SSH se cerró. El túnel volverá al reconectar.');
     }
     return text;
   }
@@ -674,5 +740,5 @@ class _TunnelRejected implements Exception {
   final int port;
   const _TunnelRejected(this.port);
   @override
-  String toString() => 'El servidor rechazó el puerto remoto $port';
+  String toString() => tr('El servidor rechazó el puerto remoto {0}', [port]);
 }

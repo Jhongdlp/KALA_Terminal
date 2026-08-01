@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../theme/app_theme.dart';
+import '../l10n/l10n.dart';
 
 /// Android/Termux-style text-selection layer for a [TerminalView].
 ///
@@ -319,11 +320,11 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _barAction('COPIAR', _copy),
+              _barAction(tr('COPIAR'), _copy),
               _barDivider(),
-              _barAction('PEGAR', _paste),
+              _barAction(tr('PEGAR'), _paste),
               _barDivider(),
-              _barAction('TODO', _selectAll),
+              _barAction(tr('TODO'), _selectAll),
             ],
           ),
         ),
@@ -355,7 +356,7 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
     final text = widget.terminal.buffer.getText(selection);
     widget.controller.clearSelection();
     await Clipboard.setData(ClipboardData(text: text));
-    widget.onToast?.call('Copiado al portapapeles');
+    widget.onToast?.call(tr('Copiado al portapapeles'));
   }
 
   Future<void> _paste() async {

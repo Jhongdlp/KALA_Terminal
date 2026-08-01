@@ -30,6 +30,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Localized strings for the built-in Material widgets (text-selection menus,
+  # dialogs…) so they follow the language picked in Ajustes → Idioma.
+  flutter_localizations:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

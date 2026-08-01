@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import '../l10n/l10n.dart';
 
 /// The three kinds of SSH port forwarding, mirroring OpenSSH's flags.
 enum TunnelKind {
@@ -25,22 +26,19 @@ extension TunnelKindInfo on TunnelKind {
       };
 
   String get title => switch (this) {
-        TunnelKind.local => 'LOCAL',
-        TunnelKind.dynamicSocks => 'SOCKS',
-        TunnelKind.remote => 'REMOTO',
+        TunnelKind.local => tr('LOCAL'),
+        TunnelKind.dynamicSocks => tr('SOCKS'),
+        TunnelKind.remote => tr('REMOTO'),
       };
 
   /// One-line explanation shown in the tunnel editor.
   String get blurb => switch (this) {
         TunnelKind.local =>
-          'Trae un servicio del servidor a este teléfono. Abres localhost:PUERTO '
-              'aquí y llegas a un servicio que sólo existe allí.',
+          tr('Trae un servicio del servidor a este teléfono. Abres localhost:PUERTO aquí y llegas a un servicio que sólo existe allí.'),
         TunnelKind.dynamicSocks =>
-          'Convierte el servidor en un proxy SOCKS5. Las apps que apunten a '
-              'localhost:PUERTO saldrán a internet desde el servidor.',
+          tr('Convierte el servidor en un proxy SOCKS5. Las apps que apunten a localhost:PUERTO saldrán a internet desde el servidor.'),
         TunnelKind.remote =>
-          'Publica algo de este teléfono en el servidor. Quien entre al puerto '
-              'del servidor llega a un servicio que corre aquí.',
+          tr('Publica algo de este teléfono en el servidor. Quien entre al puerto del servidor llega a un servicio que corre aquí.'),
       };
 
   /// Whether this kind opens the listening socket on the device (vs. on the
@@ -86,6 +84,17 @@ class SshTunnel {
   /// Only meaningful when [TunnelKindInfo.listensOnDevice].
   final bool exposeToLan;
 
+  /// Stop the tunnel after this many minutes with **no open connections**
+  /// (0 = never). It shrinks the window in which any other app on the phone
+  /// could reach the forwarded service through the local port, without ever
+  /// cutting a session that's in use: the countdown only runs while
+  /// `liveConnections == 0` and restarts on every new connection.
+  ///
+  /// Not offered for [TunnelKind.dynamicSocks]: the SOCKS server lives inside
+  /// dartssh2 and doesn't report its connections, so a timer there would kill
+  /// a proxy that's actively in use.
+  final int idleTimeoutMinutes;
+
   SshTunnel({
     String? id,
     this.label = '',
@@ -95,6 +104,7 @@ class SshTunnel {
     this.destPort = 0,
     this.autoStart = true,
     this.exposeToLan = false,
+    this.idleTimeoutMinutes = 0,
   }) : id = id ?? const Uuid().v4();
 
   SshTunnel copyWith({
@@ -105,6 +115,7 @@ class SshTunnel {
     int? destPort,
     bool? autoStart,
     bool? exposeToLan,
+    int? idleTimeoutMinutes,
   }) {
     return SshTunnel(
       id: id,
@@ -115,6 +126,7 @@ class SshTunnel {
       destPort: destPort ?? this.destPort,
       autoStart: autoStart ?? this.autoStart,
       exposeToLan: exposeToLan ?? this.exposeToLan,
+      idleTimeoutMinutes: idleTimeoutMinutes ?? this.idleTimeoutMinutes,
     );
   }
 
@@ -127,6 +139,7 @@ class SshTunnel {
         'destPort': destPort,
         'autoStart': autoStart,
         'exposeToLan': exposeToLan,
+        'idleTimeoutMinutes': idleTimeoutMinutes,
       };
 
   factory SshTunnel.fromMap(Map<String, dynamic> map) {
@@ -142,6 +155,7 @@ class SshTunnel {
       destPort: map['destPort'] ?? 0,
       autoStart: map['autoStart'] ?? true,
       exposeToLan: map['exposeToLan'] ?? false,
+      idleTimeoutMinutes: map['idleTimeoutMinutes'] ?? 0,
     );
   }
 
@@ -237,25 +251,23 @@ class SshTunnel {
     if (kind == TunnelKind.remote) {
       // 0 = "let the server choose a port", which OpenSSH also allows.
       if (listenPort < 0 || listenPort > 65535) {
-        return 'El puerto remoto debe estar entre 1 y 65535 (o 0 para que lo '
-            'elija el servidor).';
+        return tr('El puerto remoto debe estar entre 1 y 65535 (o 0 para que lo elija el servidor).');
       }
     } else {
       if (listenPort < 1 || listenPort > 65535) {
-        return 'El puerto debe estar entre 1 y 65535.';
+        return tr('El puerto debe estar entre 1 y 65535.');
       }
       if (listenPort < 1024) {
-        return 'Android no permite abrir puertos por debajo de 1024. Usa uno '
-            'más alto, por ejemplo 1080, 3000 u 8080.';
+        return tr('Android no permite abrir puertos por debajo de 1024. Usa uno más alto, por ejemplo 1080, 3000 u 8080.');
       }
     }
 
     if (kind.hasDestination) {
       if (destHost.trim().isEmpty) {
-        return 'Falta el host de destino.';
+        return tr('Falta el host de destino.');
       }
       if (destPort < 1 || destPort > 65535) {
-        return 'El puerto de destino debe estar entre 1 y 65535.';
+        return tr('El puerto de destino debe estar entre 1 y 65535.');
       }
     }
     return null;

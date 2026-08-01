@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:local_auth_android/local_auth_android.dart';
+import '../l10n/l10n.dart';
 
 /// Wraps [LocalAuthentication] for the optional app lock. The lock uses the
 /// device biometric (fingerprint/face) as the primary factor and falls back to
@@ -28,7 +29,7 @@ class AppLock {
   Future<bool> authenticate() async {
     try {
       return await _auth.authenticate(
-        localizedReason: 'Desbloquea KAMMEL SSH para continuar',
+        localizedReason: tr('Desbloquea KAMMEL SSH para continuar'),
         options: const AuthenticationOptions(
           // Allow the phone's PIN/pattern/password as a fallback, not just
           // biometrics.
@@ -37,19 +38,17 @@ class AppLock {
           // system biometric UI), instead of erroring out.
           stickyAuth: true,
         ),
-        authMessages: const [
+        authMessages: [
           AndroidAuthMessages(
-            signInTitle: 'Desbloquear KAMMEL SSH',
+            signInTitle: tr('Desbloquear KAMMEL SSH'),
             biometricHint: '',
-            cancelButton: 'Cancelar',
-            deviceCredentialsRequiredTitle: 'Bloqueo no configurado',
+            cancelButton: tr('Cancelar'),
+            deviceCredentialsRequiredTitle: tr('Bloqueo no configurado'),
             deviceCredentialsSetupDescription:
-                'Configura un bloqueo de pantalla en tu teléfono para usar '
-                'esta función.',
-            goToSettingsButton: 'Ajustes',
+                tr('Configura un bloqueo de pantalla en tu teléfono para usar esta función.'),
+            goToSettingsButton: tr('Ajustes'),
             goToSettingsDescription:
-                'Configura huella o un bloqueo de pantalla en los ajustes del '
-                'teléfono.',
+                tr('Configura huella o un bloqueo de pantalla en los ajustes del teléfono.'),
           ),
         ],
       );
