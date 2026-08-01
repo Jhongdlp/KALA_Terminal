@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 # Dynamically extract GitHub token from origin remote URL to avoid hardcoding credentials
 TOKEN=$(git remote get-url origin | sed -n 's/.*:\(ghp_[^@]*\)@.*/\1/p')
-REPO="Jhongdlp/KALA_Terminal"
+REPO="Jhongdlp/Kammel_ssh"
 
 if [ -z "$TOKEN" ]; then
   echo "Error: Could not extract GitHub Personal Access Token from git remote URL." >&2

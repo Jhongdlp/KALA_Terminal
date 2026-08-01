@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 /// Owner/repo whose GitHub Releases host the distributed APKs. The "latest"
 /// release endpoint is public (no token required) for public repositories.
-const String _kRepo = 'Jhongdlp/KALA_Terminal';
+const String _kRepo = 'Jhongdlp/Kammel_ssh';
 
 /// Metadata about a release that is newer than the installed build.
 class AppUpdate {

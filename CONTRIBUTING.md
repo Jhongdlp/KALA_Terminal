@@ -17,8 +17,8 @@ Thank you for your interest in contributing! KALA is a young project and every k
 1. Fork and clone the repo:
 
    ```bash
-   git clone https://github.com/<your-user>/TerminalAI.git
-   cd TerminalAI
+   git clone https://github.com/<your-user>/Kammel_ssh.git
+   cd Kammel_ssh
    ```
 
 2. Use Flutter 3.44+ / Dart 3.12+. The repo vendors a full Flutter SDK at `sdk/flutter` — if you don't have a matching Flutter on your `PATH`, just use it directly:
