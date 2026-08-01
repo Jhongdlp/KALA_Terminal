@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/icon/IconKAMMEL.png" width="120" alt="KAMMEL SSH">
+<img src="public/icon/iconog.png" width="260" alt="KAMMEL SSH">
 
 # KAMMEL SSH
 
