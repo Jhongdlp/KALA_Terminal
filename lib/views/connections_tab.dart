@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/connection_profile.dart';
+import '../models/ssh_tunnel.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import 'tunnel_editor_sheet.dart';
 
 class ConnectionsTab extends StatelessWidget {
   const ConnectionsTab({super.key});
@@ -198,8 +200,7 @@ class ConnectionsTab extends StatelessWidget {
     final privateKeyController =
         TextEditingController(text: profile?.privateKey ?? '');
     final commandController = TextEditingController();
-    final tunnelController = TextEditingController();
-    final forwards = List<PortForward>.from(profile?.forwards ?? const []);
+    final tunnels = List<SshTunnel>.from(profile?.tunnels ?? const []);
     var useTmux = profile?.useTmux ?? false;
     var useDeviceKey = profile?.useDeviceKey ?? false;
 
@@ -262,10 +263,10 @@ class ConnectionsTab extends StatelessWidget {
                         usernameController.text = parsed.username!;
                       }
                       portController.text = (parsed.port ?? 22).toString();
-                      if (parsed.forwards.isNotEmpty) {
-                        forwards
+                      if (parsed.tunnels.isNotEmpty) {
+                        tunnels
                           ..clear()
-                          ..addAll(parsed.forwards);
+                          ..addAll(parsed.tunnels);
                       }
                       if (nameController.text.isEmpty) {
                         nameController.text = parsed.host;
@@ -326,46 +327,43 @@ class ConnectionsTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
 
-                // ---- Port-forward tunnels (-L) ---------------------------
-                Text('TÚNELES · PORT FORWARDING (-L)',
+                // ---- Port-forward tunnels (-L / -D / -R) -----------------
+                Text('TÚNELES · PORT FORWARDING',
                     style: AppText.label(9,
                         color: AppColors.muted, spacing: 1.4)),
                 const SizedBox(height: 8),
-                for (int i = 0; i < forwards.length; i++)
-                  _tunnelRow(forwards[i], () {
-                    setSheetState(() => forwards.removeAt(i));
-                  }),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: _field(
-                          tunnelController, 'PUERTO:HOST:PUERTO (3000:localhost:3000)',
-                          mono: true),
+                if (tunnels.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Sin túneles. Puedes abrir un servicio del servidor en '
+                      'este teléfono, usar el servidor como proxy o publicar '
+                      'algo tuyo en él.',
+                      style: AppText.body(11, color: AppColors.muted),
                     ),
-                    const SizedBox(width: 8),
-                    GhostButton(
-                      label: 'Añadir',
-                      icon: Icons.add,
-                      dense: true,
-                      onPressed: () {
-                        final pf =
-                            PortForward.parseSpec(tunnelController.text.trim());
-                        if (pf == null) {
-                          ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                            const SnackBar(
-                                content: Text(
-                                    'Formato de túnel inválido. Usa puerto:host:puerto')),
-                          );
-                          return;
-                        }
-                        setSheetState(() {
-                          forwards.add(pf);
-                          tunnelController.clear();
-                        });
-                      },
-                    ),
-                  ],
+                  ),
+                for (int i = 0; i < tunnels.length; i++)
+                  _tunnelRow(
+                    tunnels[i],
+                    onEdit: () async {
+                      final edited = await showTunnelEditor(sheetCtx,
+                          initial: tunnels[i]);
+                      if (edited != null) {
+                        setSheetState(() => tunnels[i] = edited);
+                      }
+                    },
+                    onRemove: () => setSheetState(() => tunnels.removeAt(i)),
+                  ),
+                GhostButton(
+                  label: 'Añadir túnel',
+                  icon: Icons.add,
+                  dense: true,
+                  onPressed: () async {
+                    final created = await showTunnelEditor(sheetCtx);
+                    if (created != null) {
+                      setSheetState(() => tunnels.add(created));
+                    }
+                  },
                 ),
                 const SizedBox(height: 20),
 
@@ -395,7 +393,7 @@ class ConnectionsTab extends StatelessWidget {
                       privateKey: privateKeyController.text.trim().isEmpty
                           ? null
                           : privateKeyController.text.trim(),
-                      forwards: forwards,
+                      tunnels: tunnels,
                       useTmux: useTmux,
                       useDeviceKey: useDeviceKey,
                     );
@@ -417,27 +415,43 @@ class ConnectionsTab extends StatelessWidget {
     );
   }
 
-  Widget _tunnelRow(PortForward fwd, VoidCallback onRemove) {
+  Widget _tunnelRow(SshTunnel tunnel,
+      {required VoidCallback onEdit, required VoidCallback onRemove}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Icon(Icons.swap_horiz, size: 14, color: AppColors.muted),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'localhost:${fwd.bindPort}  →  ${fwd.remoteHost}:${fwd.remotePort}',
-              style: AppText.mono(12, color: AppColors.bone),
+      child: InkWell(
+        onTap: onEdit,
+        child: Row(
+          children: [
+            MonoTag(tunnel.kind.flag, bordered: true),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tunnel.label.isEmpty ? tunnel.describe() : tunnel.label,
+                    style: AppText.mono(12, color: AppColors.bone),
+                  ),
+                  if (tunnel.label.isNotEmpty)
+                    Text(tunnel.describe(),
+                        style: AppText.mono(10, color: AppColors.muted)),
+                  if (tunnel.exposeToLan && tunnel.kind.listensOnDevice)
+                    Text('EXPUESTO A LA RED LOCAL',
+                        style: AppText.label(8,
+                            color: AppColors.danger, spacing: 1.0)),
+                ],
+              ),
             ),
-          ),
-          InkWell(
-            onTap: onRemove,
-            child: const Padding(
-              padding: EdgeInsets.all(4),
-              child: Icon(Icons.close, size: 14, color: AppColors.danger),
+            InkWell(
+              onTap: onRemove,
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 14, color: AppColors.danger),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

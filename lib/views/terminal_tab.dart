@@ -9,7 +9,11 @@ import '../widgets/terminal_selection.dart';
 import 'prompts_sheet.dart';
 import 'git_folder_explorer_sheet.dart';
 import 'shortcut_manager_sheet.dart';
+import 'tunnel_editor_sheet.dart';
+import 'tunnels_tab.dart';
+import '../models/connection_profile.dart';
 import '../models/terminal_shortcut.dart';
+import '../services/tunnel_manager.dart';
 
 class TerminalTab extends StatefulWidget {
   const TerminalTab({super.key});
@@ -324,6 +328,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             'Teclas rápidas',
             () => setState(() => _showKeys = !_showKeys),
           ),
+          _tunnelsButton(context, state),
           _toolbarIcon(Icons.open_in_full, 'Expandir terminal',
               () => state.setTerminalFullscreen(true)),
           const SizedBox(width: 4),
@@ -482,6 +487,121 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  /// Toolbar entry point for the active session's tunnels. Badged with the
+  /// number of live ones (red when one failed) so a broken tunnel is visible
+  /// without opening anything.
+  Widget _tunnelsButton(BuildContext context, AppState state) {
+    final session = state.activeSession;
+    if (session == null) return const SizedBox.shrink();
+    final manager = context.watch<TunnelManager>();
+    final active = manager.activeCount(session.id);
+    final failed = manager.failedCount(session.id);
+    final total = manager.forSession(session.id).length;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        _toolbarIcon(Icons.swap_horiz, 'Túneles',
+            () => _showTunnelsSheet(context, state, session.id)),
+        if (total > 0)
+          Positioned(
+            right: 4,
+            top: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              color: failed > 0 ? AppColors.danger : AppColors.accent,
+              child: Text('${failed > 0 ? failed : active}',
+                  style: AppText.mono(8, color: AppColors.ink)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Session-scoped tunnel list: the same rows as the tunnels screen plus a
+  /// shortcut to add one to the session's profile.
+  void _showTunnelsSheet(
+      BuildContext context, AppState state, String sessionId) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.panel,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
+      builder: (sheetCtx) {
+        final manager = sheetCtx.watch<TunnelManager>();
+        final tunnels = manager.forSession(sessionId);
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                  child: Text('TÚNELES DE ESTA SESIÓN',
+                      style: AppText.label(11,
+                          color: AppColors.bone, spacing: 1.4)),
+                ),
+                Hairline(),
+                if (tunnels.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Esta sesión no tiene túneles. Añade uno para abrir un '
+                      'servicio del servidor en este teléfono, usar el servidor '
+                      'como proxy o publicar algo tuyo en él.',
+                      style: AppText.body(12, color: AppColors.muted),
+                    ),
+                  ),
+                for (var i = 0; i < tunnels.length; i++) ...[
+                  if (i > 0) Hairline(),
+                  TunnelRow(
+                    sessionId: sessionId,
+                    runtime: tunnels[i],
+                    manager: manager,
+                    state: state,
+                  ),
+                ],
+                Hairline(),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: GhostButton(
+                    label: 'Añadir túnel',
+                    icon: Icons.add,
+                    dense: true,
+                    onPressed: () => _addTunnel(sheetCtx, state, sessionId),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Tunnels belong to the profile, so adding one from here saves the profile;
+  /// AppState then applies it to the live session without reconnecting.
+  Future<void> _addTunnel(
+      BuildContext sheetCtx, AppState state, String sessionId) async {
+    final session = state.sessions.firstWhere((s) => s.id == sessionId);
+    final profileId = session.activeProfile?.id;
+    ConnectionProfile? profile;
+    for (final p in state.profiles) {
+      if (p.id == profileId) profile = p;
+    }
+    if (profile == null) {
+      _toast('Esta sesión no tiene un perfil guardado donde guardar el túnel.');
+      return;
+    }
+    final created = await showTunnelEditor(sheetCtx);
+    if (created == null) return;
+    await state.saveProfile(
+        profile.copyWith(tunnels: [...profile.tunnels, created]));
   }
 
   Widget _toolbarIcon(IconData icon, String tip, VoidCallback onTap) {

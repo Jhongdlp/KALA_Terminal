@@ -2,18 +2,42 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'providers/app_state.dart';
+import 'services/tunnel_manager.dart';
 import 'theme/app_theme.dart';
 import 'views/home_view.dart';
+import 'views/host_key_dialog.dart';
 import 'views/lock_screen.dart';
+
+/// Lets code outside the widget tree (host key confirmation) reach a
+/// BuildContext.
+final navigatorKey = GlobalKey<NavigatorState>();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize the media_kit/libmpv backend used by the video/audio viewers.
   MediaKit.ensureInitialized();
 
+  final appState = AppState();
+
+  // Host key confirmation needs a dialog, and connections start from AppState
+  // (which has no BuildContext) — so the UI plugs itself in here. If no context
+  // is available the handler returns false, i.e. an unverified server is
+  // refused rather than silently trusted.
+  appState.hostKeyConfirm = (challenge) async {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return false;
+    return showHostKeyDialog(ctx, challenge);
+  };
+
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => AppState(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: appState),
+        // Tunnels notify on every traffic tick; exposing the manager on its own
+        // keeps those rebuilds inside the tunnels UI instead of the whole app.
+        // AppState owns it, so it must not be disposed twice.
+        ChangeNotifierProvider<TunnelManager>.value(value: appState.tunnels),
+      ],
       child: const MyApp(),
     ),
   );

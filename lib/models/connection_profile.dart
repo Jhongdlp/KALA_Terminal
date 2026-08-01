@@ -1,8 +1,13 @@
 import 'dart:convert';
 
-/// A local port-forward, equivalent to `ssh -L bindPort:remoteHost:remotePort`.
-/// Connections to `localhost:bindPort` on the device are tunneled through the
-/// SSH connection to `remoteHost:remotePort` (as seen from the server).
+import 'ssh_tunnel.dart';
+
+/// Legacy shape of a local port-forward (`ssh -L bindPort:remoteHost:remotePort`)
+/// as persisted by app versions before [SshTunnel] existed.
+///
+/// Kept only so old profiles keep working: [ConnectionProfile.fromMap] migrates
+/// these into [SshTunnel]s, and [ConnectionProfile.toMap] keeps writing them so
+/// downgrading the app doesn't silently lose the user's tunnels.
 class PortForward {
   final int bindPort;
   final String remoteHost;
@@ -63,7 +68,10 @@ class ConnectionProfile {
   final String? password;
   final String? privateKey;
   final bool isLocal;
-  final List<PortForward> forwards;
+
+  /// Port forwards (`-L`/`-D`/`-R`) declared on this profile. Started by
+  /// `TunnelManager` when a session using this profile connects.
+  final List<SshTunnel> tunnels;
 
   /// Wrap the remote shell in `tmux new-session -A` so the session (and any
   /// agent running inside) survives network drops; reconnecting re-attaches.
@@ -83,7 +91,7 @@ class ConnectionProfile {
     this.password,
     this.privateKey,
     this.isLocal = false,
-    this.forwards = const [],
+    this.tunnels = const [],
     this.useTmux = false,
     this.useDeviceKey = false,
   });
@@ -107,7 +115,17 @@ class ConnectionProfile {
       'password': password,
       'privateKey': privateKey,
       'isLocal': isLocal,
-      'forwards': forwards.map((f) => f.toMap()).toList(),
+      'tunnels': tunnels.map((t) => t.toMap()).toList(),
+      // Legacy mirror of the local tunnels, so an older build (or a downgrade)
+      // still finds its `-L` forwards where it expects them.
+      'forwards': tunnels
+          .where((t) => t.kind == TunnelKind.local)
+          .map((t) => PortForward(
+                bindPort: t.listenPort,
+                remoteHost: t.destHost,
+                remotePort: t.destPort,
+              ).toMap())
+          .toList(),
       'useTmux': useTmux,
       'useDeviceKey': useDeviceKey,
     };
@@ -128,6 +146,7 @@ class ConnectionProfile {
   ConnectionProfile copyWith({
     String? password,
     String? privateKey,
+    List<SshTunnel>? tunnels,
   }) {
     return ConnectionProfile(
       id: id,
@@ -138,7 +157,7 @@ class ConnectionProfile {
       password: password ?? this.password,
       privateKey: privateKey ?? this.privateKey,
       isLocal: isLocal,
-      forwards: forwards,
+      tunnels: tunnels ?? this.tunnels,
       useTmux: useTmux,
       useDeviceKey: useDeviceKey,
     );
@@ -154,13 +173,32 @@ class ConnectionProfile {
       password: map['password'],
       privateKey: map['privateKey'],
       isLocal: map['isLocal'] ?? false,
-      forwards: (map['forwards'] as List?)
-              ?.map((e) => PortForward.fromMap(Map<String, dynamic>.from(e)))
-              .toList() ??
-          const [],
+      tunnels: _tunnelsFromMap(map),
       useTmux: map['useTmux'] ?? false,
       useDeviceKey: map['useDeviceKey'] ?? false,
     );
+  }
+
+  /// Reads the tunnel list, falling back to the pre-[SshTunnel] `forwards` key
+  /// so profiles saved by older builds keep their `-L` tunnels.
+  static List<SshTunnel> _tunnelsFromMap(Map<String, dynamic> map) {
+    final raw = map['tunnels'] as List?;
+    if (raw != null) {
+      return raw
+          .map((e) => SshTunnel.fromMap(Map<String, dynamic>.from(e)))
+          .toList();
+    }
+    final legacy = map['forwards'] as List?;
+    if (legacy == null) return const [];
+    return legacy
+        .map((e) => PortForward.fromMap(Map<String, dynamic>.from(e)))
+        .map((f) => SshTunnel(
+              kind: TunnelKind.local,
+              listenPort: f.bindPort,
+              destHost: f.remoteHost,
+              destPort: f.remotePort,
+            ))
+        .toList();
   }
 
   String toJson() => json.encode(toMap());
@@ -183,7 +221,7 @@ class ConnectionProfile {
     String? host;
     String? username;
     int? port;
-    final forwards = <PortForward>[];
+    final tunnels = <SshTunnel>[];
 
     for (var i = 0; i < tokens.length; i++) {
       final t = tokens[i];
@@ -199,21 +237,28 @@ class ConnectionProfile {
         return null;
       }
 
-      if (t == '-L' || t.startsWith('-L')) {
-        final v = takeValue('-L');
+      // Tunnel flags: the value is parsed by SshTunnel so `-L`, `-D` and `-R`
+      // all land in the profile's tunnel list.
+      var matchedTunnelFlag = false;
+      for (final kind in TunnelKind.values) {
+        if (!t.startsWith(kind.flag)) continue;
+        matchedTunnelFlag = true;
+        final v = takeValue(kind.flag);
         if (v != null) {
-          final pf = PortForward.parseSpec(v);
-          if (pf != null) forwards.add(pf);
+          final tunnel = SshTunnel.parseSpec('${kind.flag} $v');
+          if (tunnel != null) tunnels.add(tunnel);
         }
-        continue;
+        break;
       }
+      if (matchedTunnelFlag) continue;
+
       if (t == '-p' || t.startsWith('-p')) {
         final v = takeValue('-p');
         if (v != null) port = int.tryParse(v);
         continue;
       }
       // Skip other value-taking flags so their argument isn't read as host.
-      if (t == '-i' || t == '-o' || t == '-D' || t == '-R' || t == '-J') {
+      if (t == '-i' || t == '-o' || t == '-J') {
         i++; // consume the following value
         continue;
       }
@@ -236,7 +281,7 @@ class ConnectionProfile {
       host: host,
       username: username,
       port: port,
-      forwards: forwards,
+      tunnels: tunnels,
     );
   }
 }
@@ -245,12 +290,12 @@ class ParsedSshCommand {
   final String host;
   final String? username;
   final int? port;
-  final List<PortForward> forwards;
+  final List<SshTunnel> tunnels;
 
   ParsedSshCommand({
     required this.host,
     this.username,
     this.port,
-    this.forwards = const [],
+    this.tunnels = const [],
   });
 }

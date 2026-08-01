@@ -19,7 +19,9 @@ import '../models/terminal_shortcut.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
+import '../services/known_hosts.dart';
 import '../services/server_controller.dart';
+import '../services/tunnel_manager.dart';
 import '../services/notification_service.dart';
 import '../services/secure_store.dart';
 
@@ -77,7 +79,6 @@ class TerminalSession {
   // is established). SSH sessions connect on creation, so this is effectively
   // always true for a live session; kept for the explorer's bookkeeping.
   bool started;
-  List<ServerSocket> forwardServers;
   // Set when this session rang the bell (or emitted an OSC notification)
   // while it wasn't the visible one; rendered as an accent dot in the session
   // selector and cleared when the user switches to it.
@@ -145,9 +146,7 @@ class TerminalSession {
     List<FileSystemEntityInfo>? files,
     this.isLoadingFiles = false,
     this.started = false,
-    List<ServerSocket>? forwardServers,
-  })  : files = files ?? [],
-        forwardServers = forwardServers ?? [];
+  }) : files = files ?? [];
 }
 
 // WidgetsBindingObserver: AppState tracks the app's foreground/background
@@ -218,6 +217,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Multiple Sessions State
   final List<TerminalSession> _sessions = [];
   List<TerminalSession> get sessions => _sessions;
+
+  /// Port forwards (`-L`/`-D`/`-R`) for every session. Its own ChangeNotifier
+  /// so the byte counters don't rebuild the whole app — the tunnels screen
+  /// listens to it directly (same split as [server]).
+  final TunnelManager tunnels = TunnelManager();
 
   // Per-session idle timers: armed when the (normalized) screen content
   // changes while backgrounded, fire after [_agentIdleDelay] of no further
@@ -1870,6 +1874,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await _persistProfiles(prefs);
     notifyListeners();
+
+    // Live sessions on this profile pick up tunnel changes immediately —
+    // adding a tunnel shouldn't require reconnecting. Everything else on the
+    // profile still only applies to the next connection.
+    for (final session in _sessions) {
+      if (session.activeProfile?.id != profile.id) continue;
+      session.activeProfile = profile;
+      await tunnels.syncConfig(
+        sessionId: session.id,
+        sessionName: session.name,
+        tunnels: profile.tunnels,
+      );
+    }
   }
 
   Future<void> deleteProfile(String id) async {
@@ -2023,10 +2040,66 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       username: profile.username,
       identities: identities.isEmpty ? null : identities,
       onPasswordRequest: () => profile.password ?? '',
+      // Host key pinning. Without this dartssh2 accepts any key, so anyone able
+      // to intercept the connection could impersonate the server and harvest
+      // the password (and everything sent through the tunnels).
+      onVerifyHostkeyBlob: (type, blob) =>
+          _verifyHostKey(profile, type, blob, onNotice: onNotice),
     );
     // Fail fast on bad credentials instead of on the first channel open.
     await client.authenticated;
     return client;
+  }
+
+  /// Asked by the UI layer to confirm an unknown or changed host key. Set in
+  /// `main.dart`; when it's null (no UI available) an unrecognized key is
+  /// refused rather than silently trusted.
+  Future<bool> Function(HostKeyChallenge challenge)? hostKeyConfirm;
+
+  /// Trust-on-first-use host key check, OpenSSH style:
+  /// - known and unchanged → connect silently;
+  /// - never seen → ask once and pin it;
+  /// - changed → block by default and make the user look at both fingerprints.
+  Future<bool> _verifyHostKey(
+      ConnectionProfile profile, String keyType, Uint8List blob,
+      {void Function(String msg)? onNotice}) async {
+    final fingerprint = KnownHosts.fingerprintOf(blob);
+    final verdict =
+        await KnownHosts.instance.check(profile.host, profile.port, fingerprint);
+
+    if (verdict == HostKeyVerdict.match) return true;
+
+    final known = await KnownHosts.instance.lookup(profile.host, profile.port);
+    final confirm = hostKeyConfirm;
+    if (confirm == null) {
+      onNotice?.call('No se pudo verificar la identidad del servidor '
+          '($fingerprint). Conexión cancelada.');
+      return false;
+    }
+
+    final accepted = await confirm(HostKeyChallenge(
+      profileName: profile.name,
+      host: profile.host,
+      port: profile.port,
+      keyType: keyType,
+      fingerprint: fingerprint,
+      verdict: verdict,
+      previousFingerprint: known?.fingerprint,
+      previousAddedAt: known?.addedAt,
+    ));
+
+    if (!accepted) {
+      onNotice?.call(verdict == HostKeyVerdict.mismatch
+          ? 'La identidad del servidor cambió y no fue aceptada. Conexión '
+              'cancelada.'
+          : 'Identidad del servidor no aceptada. Conexión cancelada.');
+      return false;
+    }
+
+    await KnownHosts.instance
+        .trust(profile.host, profile.port, keyType, fingerprint);
+    onNotice?.call('Identidad del servidor guardada: $fingerprint');
+    return true;
   }
 
   // Connect a session to a remote SSH server
@@ -2034,12 +2107,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       {String? initialCommand}) async {
     _disposeWriters(session);
     // A reconnect reuses the session object: drop every leftover from the
-    // previous connection first — bound forward ports (they'd fail to re-bind
-    // in _setupForwards) and stale SFTP/SSH handles.
-    for (final server in session.forwardServers) {
-      server.close();
-    }
-    session.forwardServers.clear();
+    // previous connection first — bound tunnel ports (they'd fail to re-bind)
+    // and stale SFTP/SSH handles. Tunnels that were up keep their "desired"
+    // flag, so syncOnConnect brings exactly those back.
+    tunnels.onSessionLost(session.id);
     session.sftpClient?.close();
     session.sftpClient = null;
     session.sshSession?.close();
@@ -2100,7 +2171,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // First live SSH session → keep the process alive while backgrounded.
       _ensureBackgroundService();
 
-      await _setupForwards(session, profile);
+      // Port forwards declared on the profile (-L / -D / -R). Failures are
+      // reported per tunnel and never abort the connection.
+      await tunnels.syncOnConnect(
+        sessionId: session.id,
+        sessionName: session.name,
+        client: session.sshClient!,
+        tunnels: profile.tunnels,
+        log: (msg) => session.terminal.write('$msg\r\n'),
+      );
 
       // Separate batched writers for stdout/stderr: each keeps its own UTF-8
       // decoder so a multi-byte glyph split across packets is reassembled
@@ -2129,6 +2208,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.sshClient!.done.then((_) {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
+          tunnels.onSessionLost(session.id);
           session.terminal.write('\r\nConexión cerrada por el servidor.\r\n');
           _onSessionAlert(session,
               body: 'Se cerró la conexión con ${session.name}.',
@@ -2138,6 +2218,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }).catchError((e) {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
+          tunnels.onSessionLost(session.id);
           session.terminal.write('\r\nError de conexión: $e\r\n');
           _onSessionAlert(session,
               body: 'Se perdió la conexión con ${session.name}.',
@@ -2164,33 +2245,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.connectionStatus = ConnectionStatus.disconnected;
       session.terminal.write('\r\nError de conexión: $e\r\n');
       notifyListeners();
-    }
-  }
-
-  // Sets up the local port-forwards (`ssh -L`) declared on the profile.
-  Future<void> _setupForwards(
-      TerminalSession session, ConnectionProfile profile) async {
-    for (final fwd in profile.forwards) {
-      try {
-        final server = await ServerSocket.bind(
-            InternetAddress.loopbackIPv4, fwd.bindPort);
-        session.forwardServers.add(server);
-        server.listen((socket) async {
-          try {
-            final forward =
-                await session.sshClient!.forwardLocal(fwd.remoteHost, fwd.remotePort);
-            forward.stream.cast<List<int>>().pipe(socket);
-            socket.cast<List<int>>().pipe(forward.sink);
-          } catch (_) {
-            socket.destroy();
-          }
-        });
-        session.terminal.write(
-            'Túnel activo: localhost:${fwd.bindPort} → ${fwd.remoteHost}:${fwd.remotePort}\r\n');
-      } catch (e) {
-        session.terminal.write(
-            'No se pudo abrir el túnel en el puerto ${fwd.bindPort}: $e\r\n');
-      }
     }
   }
 
@@ -2267,6 +2321,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (index < 0 || index >= _sessions.length) return;
     if (newName.trim().isNotEmpty) {
       _sessions[index].name = newName.trim();
+      tunnels.renameSession(_sessions[index].id, _sessions[index].name);
       notifyListeners();
     }
   }
@@ -2291,10 +2346,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _sessionAlertTimers.remove(session.id)?.cancel();
     _sessionCheckTimers.remove(session.id)?.cancel();
     _disposeWriters(session);
-    for (final server in session.forwardServers) {
-      server.close();
-    }
-    session.forwardServers.clear();
+    tunnels.removeSession(session.id);
     session.sftpClient?.close();
     session.sshSession?.close();
     session.sshClient?.close();
@@ -4053,6 +4105,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     for (final session in _sessions) {
       _cleanupSession(session);
     }
+    tunnels.dispose();
     super.dispose();
   }
 }

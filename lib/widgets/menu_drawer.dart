@@ -54,6 +54,25 @@ class MenuDrawer extends StatelessWidget {
             ),
             Hairline(),
 
+            // Section 1b: Tunnels. Live state of every port forward, which the
+            // profile form (where they're configured) can't show.
+            ListTile(
+              leading: Icon(Icons.swap_horiz, color: AppColors.accent),
+              title: Text(
+                'TÚNELES',
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                'Port forwarding activo y su tráfico',
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(9); // Switch to Tunnels Tab
+              },
+            ),
+            Hairline(),
+
             // Section 2: General settings
             ListTile(
               leading: Icon(Icons.tune, color: AppColors.accent),
