@@ -2876,6 +2876,84 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await sftp.rmdir(path);
   }
 
+  /// Create an empty subdirectory named [name] inside the active session's
+  /// current directory.
+  Future<void> createFolder(String name) async {
+    final session = activeSession;
+    if (session == null || name.isEmpty) return;
+    session.isLoadingFiles = true;
+    notifyListeners();
+    try {
+      final path = '${session.currentPath}/$name'.replaceAll('//', '/');
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        final sftp = await _getSftpClient(session);
+        await sftp.mkdir(path);
+      } else {
+        await Directory(path).create();
+      }
+    } catch (e) {
+      session.terminal.write('Error al crear carpeta: $e\r\n');
+      session.sftpClient = null;
+    } finally {
+      await _loadFiles();
+    }
+  }
+
+  /// Create an empty file named [name] inside the active session's current
+  /// directory.
+  Future<void> createFile(String name) async {
+    final session = activeSession;
+    if (session == null || name.isEmpty) return;
+    session.isLoadingFiles = true;
+    notifyListeners();
+    try {
+      final path = '${session.currentPath}/$name'.replaceAll('//', '/');
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        final sftp = await _getSftpClient(session);
+        final fileHandle = await sftp.open(
+          path,
+          mode: SftpFileOpenMode.write |
+              SftpFileOpenMode.create |
+              SftpFileOpenMode.truncate,
+        );
+        await fileHandle.close();
+      } else {
+        await File(path).create();
+      }
+    } catch (e) {
+      session.terminal.write('Error al crear archivo: $e\r\n');
+      session.sftpClient = null;
+    } finally {
+      await _loadFiles();
+    }
+  }
+
+  /// Rename [entry] to [newName], keeping it in the same directory.
+  Future<void> renameEntry(FileSystemEntityInfo entry, String newName) async {
+    final session = activeSession;
+    if (session == null || newName.isEmpty || newName == entry.name) return;
+    final parent = entry.path.substring(
+        0, entry.path.length - entry.name.length);
+    final newPath = '$parent$newName';
+    session.isLoadingFiles = true;
+    notifyListeners();
+    try {
+      if (session.connectionStatus == ConnectionStatus.remote) {
+        final sftp = await _getSftpClient(session);
+        await sftp.rename(entry.path, newPath);
+      } else if (entry.isDirectory) {
+        await Directory(entry.path).rename(newPath);
+      } else {
+        await File(entry.path).rename(newPath);
+      }
+    } catch (e) {
+      session.terminal.write('Error al renombrar: $e\r\n');
+      session.sftpClient = null;
+    } finally {
+      await _loadFiles();
+    }
+  }
+
   /// Paste the clipboard into the active session's current directory. Handles
   /// every source/destination combination (local↔local, remote↔remote, and
   /// local↔remote up/downloads). Move uses a rename fast path when source and

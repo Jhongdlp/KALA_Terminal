@@ -314,6 +314,18 @@ class _ExplorerTabState extends State<ExplorerTab> {
                   tooltip: tr('Subir desde celular'),
                   color: AppColors.accent,
                   onTap: handleUpload),
+              dockButton(Icons.create_new_folder_outlined,
+                  tooltip: tr('Nueva carpeta'),
+                  onTap: () {
+                    setState(() => _sideDockOpen = false);
+                    _promptCreate(context, isFolder: true);
+                  }),
+              dockButton(Icons.note_add_outlined,
+                  tooltip: tr('Nuevo archivo'),
+                  onTap: () {
+                    setState(() => _sideDockOpen = false);
+                    _promptCreate(context, isFolder: false);
+                  }),
               dockButton(Icons.select_all,
                   tooltip: tr('Seleccionar todo'),
                   onTap: visible.isEmpty
@@ -400,6 +412,14 @@ class _ExplorerTabState extends State<ExplorerTab> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis),
           ),
+          if (selected.length == 1)
+            _barIcon(Icons.drive_file_rename_outline,
+                tooltip: tr('Renombrar'),
+                onTap: () {
+                  final entry =
+                      visible.firstWhere((f) => f.path == selected.first);
+                  _promptRename(context, entry);
+                }),
           _barIcon(Icons.select_all,
               tooltip: tr('Seleccionar todo'),
               onTap: () => state.selectPaths(visible.map((f) => f.path))),
@@ -705,6 +725,84 @@ class _ExplorerTabState extends State<ExplorerTab> {
     final dest = await pickLocalDirectory(context, initialPath: initialPath);
     if (dest == null) return; // user cancelled
     await state.downloadSelection(destDir: dest);
+  }
+
+  Future<void> _promptCreate(BuildContext context,
+      {required bool isFolder}) async {
+    final state = context.read<AppState>();
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isFolder ? tr('NUEVA CARPETA') : tr('NUEVO ARCHIVO'),
+            style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: AppText.mono(13, color: AppColors.bone),
+          cursorColor: AppColors.bone,
+          decoration: InputDecoration(
+            hintText:
+                isFolder ? tr('Nombre de la carpeta') : tr('Nombre del archivo'),
+            hintStyle: AppText.mono(12, color: AppColors.muted),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('CANCELAR'),
+                style: AppText.mono(10, color: AppColors.muted, spacing: 1.0)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(tr('CREAR'),
+                style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    if (isFolder) {
+      await state.createFolder(name);
+    } else {
+      await state.createFile(name);
+    }
+  }
+
+  Future<void> _promptRename(
+      BuildContext context, FileSystemEntityInfo entry) async {
+    final state = context.read<AppState>();
+    final controller = TextEditingController(text: entry.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('RENOMBRAR'),
+            style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: AppText.mono(13, color: AppColors.bone),
+          cursorColor: AppColors.bone,
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('CANCELAR'),
+                style: AppText.mono(10, color: AppColors.muted, spacing: 1.0)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(tr('RENOMBRAR'),
+                style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || name == entry.name) return;
+    await state.renameEntry(entry, name);
+    if (context.mounted) state.clearSelection();
   }
 
   Future<void> _confirmDelete(BuildContext context, int count) async {
