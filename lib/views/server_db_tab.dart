@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/db_connection_profile.dart';
 import '../services/server_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import '../l10n/l10n.dart';
 
@@ -383,10 +384,11 @@ class _ServerDbTabState extends State<ServerDbTab> {
       row.forEach((k, v) => deleteKeys[k] = v);
     }
 
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
+      maxWidth: 560,
       builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -486,13 +488,11 @@ class _ServerDbTabState extends State<ServerDbTab> {
       inputControllers[col['column_name'] as String] = TextEditingController();
     }
 
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.8,
-      ),
+      heightFactor: 0.8,
       builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: EdgeInsets.only(

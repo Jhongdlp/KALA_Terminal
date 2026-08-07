@@ -32,9 +32,13 @@ class PersonalizationTab extends StatelessWidget {
         customAccentJoined.isEmpty ? <String>[] : customAccentJoined.split(',');
     final monoFontChoice =
         context.select<AppState, String>((s) => s.monoFontChoice);
+    // Selected, not read: without a dependency the selector keeps highlighting
+    // the previous layout after a tap, even though the terminal already moved.
+    final shortcutLayout =
+        context.select<AppState, TerminalShortcutLayout>((s) => s.shortcutLayout);
     final state = context.read<AppState>();
 
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),
@@ -182,26 +186,31 @@ class PersonalizationTab extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 child: _ShortcutLayoutSelector(
-                  value: state.shortcutLayout,
+                  value: shortcutLayout,
                   onChanged: state.setShortcutLayout,
                 ),
               ),
               Hairline(),
-              ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                title: Text(tr('PERSONALIZAR BOTONES DE TECLADO'),
-                    style: AppText.label(9, color: AppColors.muted)),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                      tr('Arrastra para reordenar y activa/desactiva los atajos y botones del teclado inteligente.'),
-                      style: AppText.label(8.5,
-                          color: AppColors.faint, spacing: 0.3)),
+              // The panel paints its own background, so the tile needs a
+              // Material of its own or its ink splash is painted behind it.
+              Material(
+                type: MaterialType.transparency,
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  title: Text(tr('PERSONALIZAR BOTONES DE TECLADO'),
+                      style: AppText.label(9, color: AppColors.muted)),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                        tr('Arrastra para reordenar y activa/desactiva los atajos y botones del teclado inteligente.'),
+                        style: AppText.label(8.5,
+                            color: AppColors.faint, spacing: 0.3)),
+                  ),
+                  trailing:
+                      Icon(Icons.keyboard_arrow_right, color: AppColors.muted),
+                  onTap: () => ShortcutManagerSheet.show(context, state),
                 ),
-                trailing:
-                    Icon(Icons.keyboard_arrow_right, color: AppColors.muted),
-                onTap: () => ShortcutManagerSheet.show(context, state),
               ),
             ],
           ),

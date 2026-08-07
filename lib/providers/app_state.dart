@@ -19,6 +19,7 @@ import '../models/terminal_shortcut.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
+import '../services/git_service.dart';
 import '../services/known_hosts.dart';
 import '../services/server_controller.dart';
 import '../services/tunnel_manager.dart';
@@ -156,12 +157,84 @@ class TerminalSession {
 // resume.
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Navigation State
+
+  /// Tab indices that become side-by-side panes on the desktop shell
+  /// (terminal, explorer, editor).
+  static const Set<int> paneableTabs = {1, 2, 3};
+
   int _activeTabIndex = 0;
   int get activeTabIndex => _activeTabIndex;
 
-  void setActiveTabIndex(int index) {
+  /// Desktop only: which workspace pane owns the focus ring and the pane-scoped
+  /// shortcuts. Inert on the compact layout.
+  ///
+  /// Kept in sync by [_setTab], so every existing "go to tab N" call site keeps
+  /// meaning what it always meant: `openFile()` jumping to the editor becomes
+  /// "focus the editor pane" once the editor is already on screen, without any
+  /// of those call sites knowing about panes.
+  int _focusedPaneTab = 1;
+  int get focusedPaneTab => _focusedPaneTab;
+
+  /// Single writer for [_activeTabIndex]. Does not notify — callers that are
+  /// mid-mutation batch their own `notifyListeners()`.
+  void _setTab(int index) {
     _activeTabIndex = index;
+    if (paneableTabs.contains(index)) _focusedPaneTab = index;
+  }
+
+  void setActiveTabIndex(int index) {
+    _setTab(index);
     notifyListeners();
+  }
+
+  // ---- Desktop workspace ---------------------------------------------------
+  // Only read by the desktop shell; inert on the compact layout, which shows
+  // one screen at a time.
+
+  /// Share of the workspace width given to the side column (explorer / git).
+  double _splitSide = 0.24;
+  double get splitSide => _splitSide;
+
+  /// Share of the main column's height given to the editor, above the terminal.
+  double _splitEditorTerminal = 0.55;
+  double get splitEditorTerminal => _splitEditorTerminal;
+
+  bool _explorerPaneOpen = true;
+  bool get explorerPaneOpen => _explorerPaneOpen;
+
+  bool _gitPaneOpen = false;
+  bool get gitPaneOpen => _gitPaneOpen;
+
+  Future<void> setSplitSide(double value) async {
+    if (_splitSide == value) return;
+    _splitSide = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kSplitSide, value);
+  }
+
+  Future<void> setSplitEditorTerminal(double value) async {
+    if (_splitEditorTerminal == value) return;
+    _splitEditorTerminal = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kSplitEditorTerminal, value);
+  }
+
+  Future<void> setExplorerPaneOpen(bool value) async {
+    if (_explorerPaneOpen == value) return;
+    _explorerPaneOpen = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kExplorerPaneOpen, value);
+  }
+
+  Future<void> setGitPaneOpen(bool value) async {
+    if (_gitPaneOpen == value) return;
+    _gitPaneOpen = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kGitPaneOpen, value);
   }
 
   // Whether the terminal is in fullscreen mode. Lives here (not in TerminalTab)
@@ -231,6 +304,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Per-session throttle timers so a flood of output chunks costs at most one
   // buffer inspection every [_agentCheckThrottle].
   final Map<String, Timer> _sessionCheckTimers = {};
+  // Per-session trailing timers that coalesce PTY resizes — see [_scheduleResize].
+  final Map<String, Timer> _sessionResizeTimers = {};
 
   int _activeSessionIndex = -1;
   int get activeSessionIndex => _activeSessionIndex;
@@ -447,6 +522,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
   static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
+  // Desktop workspace: splitter positions and which side panes are open.
+  static const String _kSplitSide = 'settings_split_side';
+  static const String _kSplitEditorTerminal = 'settings_split_editor_terminal';
+  static const String _kExplorerPaneOpen = 'settings_explorer_pane_open';
+  static const String _kGitPaneOpen = 'settings_git_pane_open';
 
   /// Accent used out of the box (and for installs that never picked one).
   static const String defaultAccentColorHex = 'red';
@@ -759,7 +839,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final index = _sessions.indexWhere((s) => s.id == id);
     if (index < 0) return;
     switchSession(index);
-    _activeTabIndex = 1;
+    _setTab(1);
     notifyListeners();
   }
 
@@ -1524,6 +1604,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
     _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
 
+    // Desktop workspace. Clamped on read: a fraction stored from a much wider
+    // window must still leave both panes usable here.
+    _splitSide = (prefs.getDouble(_kSplitSide) ?? 0.24).clamp(0.12, 0.5);
+    _splitEditorTerminal =
+        (prefs.getDouble(_kSplitEditorTerminal) ?? 0.55).clamp(0.15, 0.85);
+    _explorerPaneOpen = prefs.getBool(_kExplorerPaneOpen) ?? true;
+    _gitPaneOpen = prefs.getBool(_kGitPaneOpen) ?? false;
+
     await _loadSnippets(prefs);
 
     _settingsLoaded = true;
@@ -2151,10 +2239,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         session.sshSession = await session.sshClient!.shell(pty: pty);
       }
 
-      // Forward later size changes to the remote PTY. xterm and
+      // Forward later size changes to the remote PTY, coalesced. xterm and
       // resizeTerminal both use (width=cols, height=rows) order.
       session.terminal.onResize = (width, height, pixelWidth, pixelHeight) {
-        session.sshSession?.resizeTerminal(width, height, pixelWidth, pixelHeight);
+        _scheduleResize(session, width, height, pixelWidth, pixelHeight);
       };
 
       // Ask the remote shell to report its cwd via OSC 7 on every prompt, so the
@@ -2270,7 +2358,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       initialCommand: initialCommand,
       sessionName: sessionName,
     );
-    _activeTabIndex = 1; // Switch to terminal tab
+    _setTab(1); // Switch to terminal tab
     notifyListeners();
   }
 
@@ -2300,7 +2388,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // No SSH sessions left: drop back to the connections tab. A new session
       // is created only when the user connects to a profile again.
       _activeSessionIndex = -1;
-      _activeTabIndex = 0;
+      _setTab(0);
       notifyListeners();
     } else {
       if (_activeSessionIndex >= _sessions.length) {
@@ -2337,9 +2425,32 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session._outputWriters.clear();
   }
 
+  /// Coalesce PTY resizes into one `window-change` per burst.
+  ///
+  /// Dragging a workspace splitter (or a window edge) walks the terminal
+  /// through many cell grids in a few hundred milliseconds. Sent straight
+  /// through, each step is an SSH packet and a full redraw, so a TUI like vim
+  /// or htop reflows continuously while the drag is in flight. A trailing
+  /// timer means the remote only ever sees the size the user settled on.
+  void _scheduleResize(
+    TerminalSession session,
+    int width,
+    int height,
+    int pixelWidth,
+    int pixelHeight,
+  ) {
+    _sessionResizeTimers[session.id]?.cancel();
+    _sessionResizeTimers[session.id] =
+        Timer(const Duration(milliseconds: 150), () {
+      _sessionResizeTimers.remove(session.id);
+      session.sshSession?.resizeTerminal(width, height, pixelWidth, pixelHeight);
+    });
+  }
+
   void _cleanupSession(TerminalSession session) {
     _sessionAlertTimers.remove(session.id)?.cancel();
     _sessionCheckTimers.remove(session.id)?.cancel();
+    _sessionResizeTimers.remove(session.id)?.cancel();
     _disposeWriters(session);
     tunnels.removeSession(session.id);
     session.sftpClient?.close();
@@ -3543,7 +3654,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     // Single-quote for the shell; embedded single quotes become '\''.
     final escaped = path.replaceAll("'", "'\\''");
     session.sshSession!.write(utf8.encode("cd '$escaped'\r"));
-    _activeTabIndex = 1;
+    _setTab(1);
     notifyListeners();
   }
 
@@ -3767,7 +3878,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _editingSshClient = sshClient;
       _isFileDirty = false;
 
-      _activeTabIndex = 3; // Navigate to Editor Tab
+      _setTab(3); // Navigate to Editor Tab
     } catch (e) {
       session.terminal.write('Error al abrir archivo: $e\r\n');
       session.sftpClient = null;
@@ -3856,7 +3967,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _viewingMediaPath = null;
     _isFileDirty = false;
     _editingSshClient = null;
-    _activeTabIndex = 2; // Go back to files tab
+    _setTab(2); // Go back to files tab
     notifyListeners();
   }
 
@@ -3913,107 +4024,63 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   // --- GIT STATUS WORKFLOW ---
 
-  Future<List<GitChangedFile>> getGitStatus() async {
+  /// A git client bound to the active session's working directory, or null
+  /// when there is nothing to run commands through (no session, or a remote
+  /// one whose connection dropped).
+  ///
+  /// A fresh instance per call is deliberate: it captures the session's SSH
+  /// client at that moment, so a panel that outlives a reconnect asks for a
+  /// new one instead of holding a dead channel.
+  GitService? createGitService() {
     final session = activeSession;
-    if (session == null) return [];
-
-    final currentDir = _workingDirFor(session);
-    String output = '';
-
+    if (session == null) return null;
+    final dir = _workingDirFor(session);
+    if (dir.isEmpty) return null;
     if (session.connectionStatus == ConnectionStatus.remote) {
-      if (session.sshClient == null) return [];
-      try {
-        final run = await session.sshClient!.execute('cd "$currentDir" && git status --porcelain');
-        final bytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
-        output = bytes;
-      } catch (e) {
-        debugPrint('Error running remote git status: $e');
-      }
-    } else {
-      try {
-        final res = await Process.run('git', ['status', '--porcelain'], workingDirectory: currentDir);
-        output = res.stdout as String;
-      } catch (e) {
-        debugPrint('Error running local git status: $e');
-      }
+      final client = session.sshClient;
+      if (client == null) return null;
+      return GitService.remote(client: client, workdir: dir);
     }
-
-    final List<GitChangedFile> files = [];
-    final lines = const LineSplitter().convert(output);
-    for (final line in lines) {
-      if (line.length < 4) continue;
-      final status = line.substring(0, 2).trim();
-      final relative = line.substring(3).trim();
-      final sanitizedRelative = relative.replaceAll('"', '');
-      final absPath = currentDir.endsWith('/') 
-          ? '$currentDir$sanitizedRelative' 
-          : '$currentDir/$sanitizedRelative';
-      
-      files.add(GitChangedFile(
-        status: status,
-        relativePath: sanitizedRelative,
-        absolutePath: absPath,
-      ));
-    }
-    return files;
+    return GitService.local(workdir: dir);
   }
 
-  void navigateToGitFile(GitChangedFile file) async {
-    final lastSlash = file.absolutePath.lastIndexOf('/');
-    final parentDir = lastSlash > 0 ? file.absolutePath.substring(0, lastSlash) : '/';
-    
+  /// Sends the explorer to a changed file's folder and opens it, which routes
+  /// PDFs/Markdown/images to their viewer and everything else to the editor.
+  /// A deleted path has nothing to open, so it only navigates.
+  Future<void> navigateToGitFile(String absolutePath,
+      {bool deleted = false}) async {
+    final lastSlash = absolutePath.lastIndexOf('/');
+    final parentDir = lastSlash > 0 ? absolutePath.substring(0, lastSlash) : '/';
+
     await changeDirectory(parentDir);
 
-    if (file.status != 'D') {
-      final fileName = file.relativePath.contains('/')
-          ? file.relativePath.substring(file.relativePath.lastIndexOf('/') + 1)
-          : file.relativePath;
-          
-      final fileEntity = FileSystemEntityInfo(
-        name: fileName,
-        path: file.absolutePath,
-        isDirectory: false,
-        size: 0,
-        modified: DateTime.now(),
-      );
-      await openFile(fileEntity);
-    } else {
+    if (deleted) {
       setActiveTabIndex(2);
+      return;
     }
+    final fileName =
+        lastSlash >= 0 ? absolutePath.substring(lastSlash + 1) : absolutePath;
+    await openFile(FileSystemEntityInfo(
+      name: fileName,
+      path: absolutePath,
+      isDirectory: false,
+      size: 0,
+      modified: DateTime.now(),
+    ));
   }
 
+  /// Repository root of the active session's working directory, falling back
+  /// to that directory itself when it isn't inside a repository.
   Future<String> getGitRoot() async {
     final session = activeSession;
     if (session == null) return '';
-
-    final currentDir = _workingDirFor(session);
-    if (session.connectionStatus == ConnectionStatus.remote) {
-      if (session.sshClient == null) return currentDir;
-      try {
-        final run = await session.sshClient!.execute('cd "$currentDir" && git rev-parse --show-toplevel');
-        final bytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
-        final path = bytes.trim();
-        if (path.isNotEmpty && !path.startsWith('fatal')) {
-          return path;
-        }
-      } catch (e) {
-        debugPrint('Error finding remote git root: $e');
-      }
-    } else {
-      try {
-        final res = await Process.run('git', ['rev-parse', '--show-toplevel'], workingDirectory: currentDir);
-        if (res.exitCode == 0) {
-          final path = (res.stdout as String).trim();
-          if (path.isNotEmpty) {
-            return path;
-          }
-        }
-      } catch (e) {
-        debugPrint('Error finding local git root: $e');
-      }
-    }
-    return currentDir;
+    final fallback = _workingDirFor(session);
+    return (await createGitService()?.repoRoot()) ?? fallback;
   }
+
+  /// Re-lists the active session's directory, e.g. after a commit or a
+  /// discard changed what is on disk.
+  Future<void> refreshFiles() => _loadFiles();
 
   Future<List<FileSystemEntityInfo>> listDirectoriesOf(String path) async {
     final session = activeSession;
@@ -4139,37 +4206,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
-  Future<String?> commitChanges(String message) async {
-    final session = activeSession;
-    if (session == null) return tr('Sin sesión activa');
-    if (message.trim().isEmpty) return tr('El mensaje de commit no puede estar vacío');
-
-    final currentDir = _workingDirFor(session);
-    try {
-      if (session.connectionStatus == ConnectionStatus.remote) {
-        if (session.sshClient == null) return tr('Desconectado');
-        final escapedMsg = message.replaceAll('"', '\\"');
-        final run = await session.sshClient!.execute('cd "$currentDir" && git add . && git commit -m "$escapedMsg"');
-        final errBytes = await run.stderr.cast<List<int>>().transform(utf8.decoder).join();
-        final outBytes = await run.stdout.cast<List<int>>().transform(utf8.decoder).join();
-        if (errBytes.isNotEmpty && !outBytes.contains('changed') && !outBytes.contains('insertion')) {
-          return errBytes;
-        }
-      } else {
-        final addRes = await Process.run('git', ['add', '.'], workingDirectory: currentDir);
-        if (addRes.exitCode != 0) return addRes.stderr as String;
-
-        final commitRes = await Process.run('git', ['commit', '-m', message], workingDirectory: currentDir);
-        if (commitRes.exitCode != 0) return commitRes.stderr as String;
-      }
-      await _loadFilesForSession(session);
-      notifyListeners();
-      return null;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -4263,17 +4299,5 @@ class FileSystemEntityInfo {
     required this.isDirectory,
     required this.size,
     required this.modified,
-  });
-}
-
-class GitChangedFile {
-  final String status;
-  final String relativePath;
-  final String absolutePath;
-
-  GitChangedFile({
-    required this.status,
-    required this.relativePath,
-    required this.absolutePath,
   });
 }

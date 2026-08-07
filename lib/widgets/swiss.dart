@@ -2,6 +2,43 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
+import '../theme/dimens.dart';
+
+/// A full-bleed background with its content clamped to a readable column.
+///
+/// Drop-in replacement for the `Container(color: AppColors.ink, child: …)` that
+/// every list-style screen used as its root: the colour still paints edge to
+/// edge, but the scrollable stops stretching 8pt labels across the full width
+/// of a desktop window. A no-op below [maxWidth], so the compact layout is
+/// unchanged.
+///
+/// Wraps the whole scrollable, header included — centring each panel on its own
+/// would leave a ragged left edge.
+class ContentColumn extends StatelessWidget {
+  /// Background, painted full width. Defaults to the app canvas.
+  final Color? color;
+  final double maxWidth;
+  final Widget child;
+
+  const ContentColumn({
+    super.key,
+    this.color,
+    this.maxWidth = Dim.contentMax,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: color ?? AppColors.ink,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: child,
+          ),
+        ),
+      );
+}
 
 /// 1px hairline divider.
 class Hairline extends StatelessWidget {
@@ -144,54 +181,68 @@ class LayerRow extends StatelessWidget {
     final fg = active ? AppColors.ink : AppColors.bone;
     final metaFg = active ? AppColors.ink : AppColors.muted;
 
-    return InkWell(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Container(
-        color: active ? AppColors.accent : Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(
-          children: [
-            IconTheme(
-              data: IconThemeData(color: fg, size: 16),
-              child: glyph,
+    // Material *outside* the InkWell, not a Container inside it: an opaque
+    // child painted over the ink swallows the hover and focus overlays, which
+    // is why rows never highlighted under a mouse. Material also gives the row
+    // a click cursor for free when onTap is set.
+    return Material(
+      color: active ? AppColors.accent : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: 12,
+            // Desktop trades touch target for density.
+            vertical: Dim.rowPadV(
+              Layout.maybeOf(context)?.widthClass ?? WidthClass.compact,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: AppText.body(13, color: fg, weight: FontWeight.w700),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  if (meta != null) ...[
-                    const SizedBox(height: 3),
-                    Text(meta!,
-                        style: AppText.mono(10, color: metaFg, spacing: 0.2),
+          ),
+          child: Row(
+            children: [
+              IconTheme(
+                data: IconThemeData(color: fg, size: 16),
+                child: glyph,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style:
+                            AppText.body(13, color: fg, weight: FontWeight.w700),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
+                    if (meta != null) ...[
+                      const SizedBox(height: 3),
+                      Text(meta!,
+                          style: AppText.mono(10, color: metaFg, spacing: 0.2),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ],
                   ],
-                ],
-              ),
-            ),
-            if (trailing != null) ...[
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: onTrailingTap,
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                  child: IconTheme(
-                    data: IconThemeData(
-                        color: active ? AppColors.ink : AppColors.muted,
-                        size: 16),
-                    child: trailing!,
-                  ),
                 ),
               ),
+              if (trailing != null) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: onTrailingTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    child: IconTheme(
+                      data: IconThemeData(
+                          color: active ? AppColors.ink : AppColors.muted,
+                          size: 16),
+                      child: trailing!,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

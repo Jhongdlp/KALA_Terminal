@@ -13,7 +13,7 @@ class AboutTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),

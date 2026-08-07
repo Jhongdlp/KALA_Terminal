@@ -4,10 +4,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
 import 'prompts_sheet.dart';
-import 'git_folder_explorer_sheet.dart';
+import 'git_panel_sheet.dart';
 import 'shortcut_manager_sheet.dart';
 import 'tunnel_editor_sheet.dart';
 import 'tunnels_tab.dart';
@@ -347,7 +349,16 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   /// Opens the Git changes / project panel as a full-height drawer that slides
   /// in from the left edge.
+  ///
+  /// On the desktop shell the panel is a real workspace pane, so this just
+  /// reveals it — pushing a route over an IDE layout that has room for the
+  /// panel would be strictly worse.
   void _showGitSlider(AppState state) {
+    if (Layout.maybeOf(context)?.isDesktop ?? false) {
+      state.setGitPaneOpen(true);
+      return;
+    }
+
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -365,7 +376,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             child: ScaffoldMessenger(
               child: Scaffold(
                 backgroundColor: AppColors.panel,
-                body: GitFolderExplorerSheet(
+                body: GitPanelSheet(
                   state: state,
                   // Shown after the panel closes, so it must go to the root
                   // messenger (over the terminal), not the panel's.
@@ -424,9 +435,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     }
     final recentFirst = urls.reversed.take(20).toList();
 
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 520,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -525,13 +537,12 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   /// shortcut to add one to the session's profile.
   void _showTunnelsSheet(
       BuildContext context, AppState state, String sessionId) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.8,
-      ),
+      heightFactor: 0.8,
+      maxWidth: 520,
       builder: (sheetCtx) {
         final manager = sheetCtx.watch<TunnelManager>();
         final tunnels = manager.forSession(sessionId);
@@ -695,10 +706,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   }
 
   void _showSessionsSheet(BuildContext context, AppState state) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
+      maxWidth: 460,
       builder: (sheetCtx) => Consumer<AppState>(
         builder: (ctx, s, _) => SafeArea(
           child: Column(
@@ -921,14 +933,19 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   }
 
   Widget _buildScrollableRow2(AppState state) {
+    final enabled = state.customShortcuts.where((s) => s.enabled).toList();
+    // The gear opens the shortcut manager, so it has to stay reachable even if
+    // the user disabled or deleted the AJUSTES shortcut — but only add it when
+    // that shortcut isn't already drawing one, or the row shows two gears.
+    final hasSettingsKey = enabled.any((s) => s.value == 'system:settings');
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          ...state.customShortcuts.where((s) => s.enabled).map((shortcut) {
-            return _buildShortcutKey(state, shortcut);
-          }),
-          _key('', () => ShortcutManagerSheet.show(context, state), icon: Icons.settings, width: 34),
+          ...enabled.map((shortcut) => _buildShortcutKey(state, shortcut)),
+          if (!hasSettingsKey)
+            _key('', () => ShortcutManagerSheet.show(context, state),
+                icon: Icons.settings, width: 34),
         ],
       ),
     );

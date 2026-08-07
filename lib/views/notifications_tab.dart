@@ -23,7 +23,7 @@ class NotificationsTab extends StatelessWidget {
         (s) => s.notificationPrefs);
     final state = context.read<AppState>();
 
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),

@@ -5,6 +5,7 @@ import '../models/connection_profile.dart';
 import '../models/ssh_tunnel.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import 'tunnel_editor_sheet.dart';
 import '../l10n/l10n.dart';
@@ -16,7 +17,7 @@ class ConnectionsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = Provider.of<AppState>(context);
 
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 32),
@@ -85,9 +86,10 @@ class ConnectionsTab extends StatelessWidget {
 
   void _showProfileActions(BuildContext context, AppState state,
       ConnectionProfile profile, bool isConnected) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 460,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -205,15 +207,11 @@ class ConnectionsTab extends StatelessWidget {
     var useTmux = profile?.useTmux ?? false;
     var useDeviceKey = profile?.useDeviceKey ?? false;
 
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       isScrollControlled: true,
       backgroundColor: AppColors.panel,
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height -
-            MediaQuery.of(context).padding.top -
-            12,
-      ),
+      heightFactor: 0.95,
       builder: (sheetCtx) => StatefulBuilder(
         builder: (sheetCtx, setSheetState) => Padding(
           padding: EdgeInsets.only(

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../models/terminal_shortcut.dart';
 import '../widgets/swiss.dart';
 import '../l10n/l10n.dart';
 
 class ShortcutManagerSheet {
   static void show(BuildContext context, AppState state) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
       builder: (sheetCtx) {
@@ -114,8 +115,11 @@ class ShortcutManagerSheet {
                               final isSystem =
                                   shortcut.value.startsWith('system:');
                               return ListTile(
-                                key: ValueKey(
-                                    shortcut.label + index.toString()),
+                                // Identity, not position: a key built from the
+                                // index travels with the slot instead of the
+                                // row, so after a drag the list shows the item
+                                // that used to be there.
+                                key: ObjectKey(shortcut),
                                 contentPadding: EdgeInsets.zero,
                                 leading: Checkbox(
                                   activeColor: AppColors.accent,

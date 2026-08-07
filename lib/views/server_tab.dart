@@ -9,6 +9,7 @@ import '../models/connection_profile.dart';
 import '../providers/app_state.dart';
 import '../services/server_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/docker_logo.dart';
 import '../widgets/swiss.dart';
 import '../widgets/swiss_gauge_chart.dart';
@@ -38,11 +39,10 @@ class _ServerTabState extends State<ServerTab>
   _ContainerFilter _containerFilter = _ContainerFilter.all;
 
   /// Drives the slide-in navigation rail: 0 = closed, 1 = fully open.
-  late final AnimationController _nav = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-    reverseDuration: const Duration(milliseconds: 180),
-  );
+  /// Created in [initState], not lazily: a tab that is disposed before the rail
+  /// was ever touched would otherwise build the controller from `dispose()`,
+  /// and creating a ticker needs a context that is still active.
+  late final AnimationController _nav;
 
   static const double _railWidth = 268;
 
@@ -67,6 +67,11 @@ class _ServerTabState extends State<ServerTab>
   @override
   void initState() {
     super.initState();
+    _nav = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+      reverseDuration: const Duration(milliseconds: 180),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // IndexedStack keeps every tab built, so gate on the tab actually being
@@ -246,9 +251,10 @@ class _ServerTabState extends State<ServerTab>
       BuildContext context, AppState state, ServerController server) {
     final remoteProfiles =
         state.profiles.where((p) => !p.isLocal).toList(growable: false);
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 460,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1409,10 +1415,11 @@ class _ServerTabState extends State<ServerTab>
   void _showContainerSheet(BuildContext context, AppState state,
       ServerController server, DockerContainer c) {
     final ports = c.publishedPorts;
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
+      maxWidth: 560,
       builder: (sheetCtx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -1543,20 +1550,23 @@ class _ServerTabState extends State<ServerTab>
 
   void _showDetailsSheet(
       BuildContext context, ServerController server, DockerContainer c) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
+      maxWidth: 720,
       builder: (_) => _DetailsSheet(server: server, container: c),
     );
   }
 
   void _showLogsSheet(
       BuildContext context, ServerController server, DockerContainer c) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
       isScrollControlled: true,
+      // Container logs are long unwrapped lines; give them diff-level width.
+      maxWidth: 1000,
       builder: (_) => _LogsSheet(server: server, container: c),
     );
   }
@@ -1635,9 +1645,10 @@ class _ServerTabState extends State<ServerTab>
 
   void _showImageSheet(
       BuildContext context, ServerController server, DockerImage img) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 560,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1784,9 +1795,10 @@ class _ServerTabState extends State<ServerTab>
 
   void _showComposeSheet(
       BuildContext context, ServerController server, ComposeProject p) {
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 560,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

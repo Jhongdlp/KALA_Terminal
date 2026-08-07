@@ -88,6 +88,7 @@ dependencies:
   # declared (same rationale as re_highlight above).
   pinenacl: ^0.6.0
   crypto: ^3.0.0
+  window_manager: ^0.5.2
 
 # Use a locally-vendored, patched copy of xterm (third_party/xterm) so the
 # terminal keyboard improvements survive `flutter pub get` on any machine:

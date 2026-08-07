@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/ssh_tunnel.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import '../l10n/l10n.dart';
 
@@ -12,15 +13,11 @@ import '../l10n/l10n.dart';
 /// if the user backed out.
 Future<SshTunnel?> showTunnelEditor(BuildContext context,
     {SshTunnel? initial}) {
-  return showModalBottomSheet<SshTunnel>(
-    context: context,
+  return showAdaptiveSheet<SshTunnel>(
+    context,
     isScrollControlled: true,
     backgroundColor: AppColors.panel,
-    constraints: BoxConstraints(
-      maxHeight: MediaQuery.of(context).size.height -
-          MediaQuery.of(context).padding.top -
-          12,
-    ),
+    heightFactor: 0.95,
     builder: (sheetCtx) => _TunnelEditor(initial: initial),
   );
 }

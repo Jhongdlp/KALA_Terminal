@@ -8,6 +8,7 @@ import '../models/ssh_tunnel.dart';
 import '../providers/app_state.dart';
 import '../services/tunnel_manager.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import 'tunnel_editor_sheet.dart';
 import '../l10n/l10n.dart';
@@ -24,7 +25,7 @@ class TunnelsTab extends StatelessWidget {
     final manager = context.watch<TunnelManager>();
     final groups = manager.overview;
 
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 32),
@@ -213,9 +214,10 @@ class TunnelRow extends StatelessWidget {
     final tunnel = runtime.config;
     final address = runtime.localAddress;
 
-    showModalBottomSheet(
-      context: context,
+    showAdaptiveSheet(
+      context,
       backgroundColor: AppColors.panel,
+      maxWidth: 460,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

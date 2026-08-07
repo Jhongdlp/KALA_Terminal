@@ -107,6 +107,16 @@ class AppColors {
   /// Constant across themes so it can still be used in `const` widgets.
   static const Color danger = Color(0xFFC0392B);
 
+  /// Version-control status colors, shared by the git panel and the diff
+  /// viewer. Kept apart from the accent (which the user repaints) because
+  /// added/modified/deleted have to stay recognizable whatever the accent is,
+  /// and constant across themes so they read the same in light and dark.
+  static const Color gitAdded = Color(0xFF3FB950);
+  static const Color gitModified = Color(0xFFD29922);
+  static const Color gitDeleted = Color(0xFFF85149);
+  static const Color gitRenamed = Color(0xFF58A6FF);
+  static const Color gitConflict = Color(0xFFDB6D28);
+
   static Brightness brightness = Brightness.dark;
 
   /// Whether the active palette is the true-black OLED variant. The terminal
@@ -566,6 +576,10 @@ class AppTheme {
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: AppColors.panel,
         surfaceTintColor: Colors.transparent,
+        // Safety net for sheets that haven't moved to showAdaptiveSheet yet:
+        // Flutter centers a constrained sheet instead of drawing a full-width
+        // strip across a desktop window.
+        constraints: const BoxConstraints(maxWidth: 640),
         shape: RoundedRectangleBorder(
           borderRadius: radius,
           side: BorderSide(color: AppColors.hairline, width: 1),
@@ -596,6 +610,28 @@ class AppTheme {
           side: BorderSide(color: AppColors.hairline, width: 1),
         ),
         behavior: SnackBarBehavior.floating,
+      ),
+      // Pointer affordances. These are deliberately limited to states a touch
+      // screen never enters (hover, keyboard focus, a scrollbar Material only
+      // shows on desktop), so the Android look stays byte-identical while a
+      // mouse finally gets feedback. Splash and highlight are left at their
+      // defaults for the same reason.
+      hoverColor: AppColors.bone.withValues(alpha: 0.06),
+      focusColor: AppColors.accent.withValues(alpha: 0.12),
+      tooltipTheme: TooltipThemeData(
+        // Long enough that a mouse crossing a toolbar doesn't trail tooltips.
+        waitDuration: const Duration(milliseconds: 400),
+        decoration: BoxDecoration(
+          color: AppColors.panelHi,
+          border: Border.all(color: AppColors.hairline, width: 1),
+        ),
+        textStyle: AppText.mono(10, color: AppColors.bone),
+      ),
+      scrollbarTheme: ScrollbarThemeData(
+        thumbColor: WidgetStatePropertyAll(AppColors.hairline),
+        thickness: const WidgetStatePropertyAll(6),
+        radius: Radius.zero,
+        interactive: true,
       ),
       useMaterial3: true,
     );

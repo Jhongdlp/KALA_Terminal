@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -117,7 +118,9 @@ class _FolderPickerDialogState extends State<_FolderPickerDialog> {
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
       child: SizedBox(
-        width: size.width,
+        // Cap the width: asking for the full window width made this a
+        // 1900px-wide picker on a desktop display.
+        width: math.min(size.width, 720),
         height: size.height * 0.7,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

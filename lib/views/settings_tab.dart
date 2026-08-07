@@ -25,7 +25,7 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.agentAlertsEnabled);
     final state = context.read<AppState>();
 
-    return Container(
+    return ContentColumn(
       color: AppColors.ink,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 40),

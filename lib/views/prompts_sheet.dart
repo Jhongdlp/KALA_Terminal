@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/prompt_snippet.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import '../l10n/l10n.dart';
 
@@ -26,10 +27,11 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
     onInserted?.call();
   }
 
-  showModalBottomSheet(
-    context: context,
+  showAdaptiveSheet(
+    context,
     backgroundColor: AppColors.panel,
     isScrollControlled: true,
+    maxWidth: 520,
     builder: (sheetCtx) => Consumer<AppState>(
       builder: (ctx, s, _) => SafeArea(
         child: Column(
@@ -163,15 +165,11 @@ void _showComposer(
   PromptSnippet? existing,
   required ValueChanged<String> onInsert,
 }) {
-  showModalBottomSheet(
-    context: context,
+  showAdaptiveSheet(
+    context,
     backgroundColor: AppColors.panel,
     isScrollControlled: true,
-    constraints: BoxConstraints(
-      maxHeight: MediaQuery.of(context).size.height -
-          MediaQuery.of(context).padding.top -
-          12,
-    ),
+    heightFactor: 0.95,
     builder: (composerCtx) => _PromptComposer(
       state: state,
       existing: existing,
