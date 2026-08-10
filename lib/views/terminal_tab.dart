@@ -27,7 +27,7 @@ class TerminalTab extends StatefulWidget {
 
 class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final FocusNode _terminalFocusNode = FocusNode();
-  double? _dragStartX;
+  Offset? _dragStartOffset;
 
   @override
   void initState() {
@@ -168,29 +168,41 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   _reconnectBanner(state),
                 Expanded(
                   child: GestureDetector(
-                    onHorizontalDragStart: (details) {
+                    onPanStart: (details) {
                       if (_terminalController.selection == null) {
-                        _dragStartX = details.globalPosition.dx;
+                        _dragStartOffset = details.globalPosition;
                       } else {
-                        _dragStartX = null;
+                        _dragStartOffset = null;
                       }
                     },
-                    onHorizontalDragUpdate: (details) {
-                      if (_dragStartX == null) return;
-                      final dx = details.globalPosition.dx - _dragStartX!;
-                      // Threshold for cursor movement (12.0 pixels per character/move)
-                      const threshold = 12.0;
-                      if (dx.abs() >= threshold) {
-                        if (dx > 0) {
-                          _sendTerminalKey(state, '\x1b[C'); // Right Arrow
+                    onPanUpdate: (details) {
+                      if (_dragStartOffset == null) return;
+                      final dx = details.globalPosition.dx - _dragStartOffset!.dx;
+                      final dy = details.globalPosition.dy - _dragStartOffset!.dy;
+                      // Threshold for cursor movement
+                      const threshold = 18.0;
+                      
+                      if (dx.abs() > threshold || dy.abs() > threshold) {
+                        if (dx.abs() > dy.abs()) {
+                          // Horizontal movement
+                          if (dx > 0) {
+                            _sendTerminalKey(state, '\x1b[C'); // Right Arrow
+                          } else {
+                            _sendTerminalKey(state, '\x1b[D'); // Left Arrow
+                          }
                         } else {
-                          _sendTerminalKey(state, '\x1b[D'); // Left Arrow
+                          // Vertical movement
+                          if (dy > 0) {
+                            _sendTerminalKey(state, '\x1b[B'); // Down Arrow
+                          } else {
+                            _sendTerminalKey(state, '\x1b[A'); // Up Arrow
+                          }
                         }
-                        _dragStartX = details.globalPosition.dx;
+                        _dragStartOffset = details.globalPosition;
                       }
                     },
-                    onHorizontalDragEnd: (_) {
-                      _dragStartX = null;
+                    onPanEnd: (_) {
+                      _dragStartOffset = null;
                     },
                     child: _PinchFontZoom(
                       state: state,
