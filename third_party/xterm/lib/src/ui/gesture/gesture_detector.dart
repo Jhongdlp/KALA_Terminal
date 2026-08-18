@@ -63,10 +63,14 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
   // True if a second tap down of a double tap is detected. Used to discard
   // subsequent tap up / tap hold of the same tap.
   bool _isDoubleTap = false;
+  bool _isLongPress = false;
 
   // The down handler is force-run on success of a single tap and optimistically
   // run before a long press success.
   void _handleTapDown(TapDownDetails details) {
+    // A long press that wins the arena never reaches _handleTapUp, so the flag
+    // has to be cleared where every new sequence starts instead.
+    _isLongPress = false;
     widget.onTapDown?.call(details);
 
     if (_doubleTapTimer != null &&
@@ -82,12 +86,13 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
   }
 
   void _handleTapUp(TapUpDetails details) {
-    if (!_isDoubleTap) {
+    if (!_isDoubleTap && !_isLongPress) {
       widget.onSingleTapUp?.call(details);
       _lastTapOffset = details.globalPosition;
       _doubleTapTimer = Timer(kDoubleTapTimeout, _doubleTapTimeout);
     }
     _isDoubleTap = false;
+    _isLongPress = false;
   }
 
   void _doubleTapTimeout() {
@@ -133,9 +138,15 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
       ),
       (LongPressGestureRecognizer instance) {
         instance
-          ..onLongPressStart = widget.onLongPressStart
+          ..onLongPressStart = (details) {
+            _isLongPress = true;
+            widget.onLongPressStart?.call(details);
+          }
           ..onLongPressMoveUpdate = widget.onLongPressMoveUpdate
-          ..onLongPressUp = widget.onLongPressUp;
+          ..onLongPressUp = () {
+            _isLongPress = false;
+            widget.onLongPressUp?.call();
+          };
       },
     );
 

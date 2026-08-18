@@ -10,6 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two dependencies are vendored under `third_party/` and wired through `dependency_overrides` in `pubspec.yaml`: the patched `xterm`, and `dartssh2` — whose patch fixes an upstream bug where a channel's receive window is never replenished once exhausted, deadlocking any transfer over ~6 MB through a tunnel. Re-apply both patches if either package is upgraded.
 
+The `xterm` patches worth knowing about, beyond Gboard inline image paste: `TerminalMouseButton` reports wheel buttons as `64 + 0…3`, not upstream's `64 + 4…7` (which sets bit 2 — the Shift modifier — so every wheel event reached the remote as Shift+Wheel, and tmux leaves `S-WheelUpPane` unbound, i.e. scrolling a tmux session did nothing); `TerminalScrollGestureHandler` was rewritten around the gesture arena (see Terminal touch gestures); and touch taps are no longer forwarded to the application as mouse clicks, only real mouse taps are.
+
 The Flutter SDK is vendored inside this repo at `sdk/flutter` (a full flutter/flutter checkout used as the project's Dart/Flutter SDK — it is not part of the app's own source and generally doesn't need to be touched). If `flutter` is not on `PATH`, use `sdk/flutter/bin/flutter`.
 
 - Install dependencies: `flutter pub get`
@@ -17,11 +19,11 @@ The Flutter SDK is vendored inside this repo at `sdk/flutter` (a full flutter/fl
 - Run the app (Android): `flutter run -d <android-device-id>`
 - Static analysis / lints: `flutter analyze`
 - Run all tests: `flutter test`
-- Run a single test file: `flutter test test/widget_test.dart`
+- Run a single test file: `flutter test test/l10n_test.dart`
 - Build Linux release: `flutter build linux`
 - Build Android APK: `flutter build apk`
 
-Note: `test/widget_test.dart` is still the default Flutter counter-app template and does not match `MyApp` (no counter UI exists), so `flutter test` currently fails. Replace or rewrite this test before relying on it.
+Note: one pre-existing failure in `test/git_service_test.dart` ("push without a remote fails with git's own message") is a wording assertion against git's output that newer git versions no longer match — it is not a regression in the app.
 
 ## Architecture
 
@@ -35,6 +37,32 @@ All app state is centralized in a single `ChangeNotifier`, `AppState` (`lib/prov
 - Only one session is "active" at a time (`_activeSessionIndex`). Most getters (`terminal`, `connectionStatus`, `currentPath`, `files`, etc.) are convenience delegates to `activeSession`.
 - Connecting to a saved profile (`connectToSSH`) creates a *new* session and connects it via `_connectSessionToSSH`, then switches the active tab to the terminal.
 - `disconnect` / session loss tears down the session's SSH connection and marks it as disconnected.
+
+### Terminal touch gestures
+
+Four touch gestures share the same pixels, and they are resolved by the **gesture arena**, not by ordering `if`s. The failure mode is silent: one recogniser starts winning and another simply stops working, so `test/terminal_gestures_test.dart` pins down who wins for each gesture shape. Run it after touching anything below.
+
+| Gesture | Winner | Effect |
+| --- | --- | --- |
+| tap | xterm `TapGestureRecognizer` | focus / soft keyboard, or dismiss a selection |
+| swipe | the buffer's scroll recogniser | normal buffer: local scrollback. Alt buffer: wheel events to the app (+ fling) |
+| still hold ≥200ms, then drag | `JoystickGestureRecognizer` | arrow keys, speed ramped by pull distance |
+| still hold ≥500ms | xterm `LongPressGestureRecognizer` | select word, then `TerminalSelectionArea`'s handles |
+| two fingers | `_PinchFontZoom` (a `Listener`, outside the arena) | font size |
+
+`JoystickGestureRecognizer` (`lib/widgets/joystick_recognizer.dart`) is the one that can starve the others, so it never claims the arena up front: it rejects itself on any movement past `stillSlop` before the hold qualifies (that's a swipe), on a second finger (that's a pinch), on pointer-up without a drag (that's a tap), and at `armWindowEnd` — deliberately just under `kLongPressTimeout`, so a resting finger that drifts can no longer steal a selection. `stillSlop + dragThreshold` is kept **under `kTouchSlop`**: the scrollable that hosts the terminal is deeper in the tree, so its drag recogniser sees every move event first and would win any event that crosses both thresholds at once.
+
+Alt-buffer scrolling (tmux, and any TUI agent running under it) lives in the vendored `TerminalScrollGestureHandler`. Upstream wrapped the terminal in a second `Scrollable` that swallowed the drag before xterm's own recognisers saw it; it now runs a plain `VerticalDragGestureRecognizer` that competes fairly, so a long press still selects instead of scrolling. Its fling is gated on `terminal.mouseMode.reportScroll` — without mouse reporting `_sendScrollEvent` falls back to arrow keys, and a fling would dump a hundred of them into whatever holds the prompt.
+
+### Soft keyboard, dictation and the IME
+
+The terminal has no text field of its own, so xterm attaches the IME to `CustomTextEdit` (`third_party/xterm/lib/src/ui/custom_text_edit.dart`): a hidden buffer holding the four-space sentinel `'  |  '`, whose middle is whatever the keyboard has typed. On each `updateEditingValue` the typed region is diffed against `_pendingSent` — the mirror of what has already been forwarded — and the difference goes to the shell as backspaces plus a tail.
+
+The diff is what makes keyboard-side edits work at all: swipe typing replacing a word, autocorrect, and Gboard's fix-the-last-word all arrive as a *rewrite* of text already sent, never as an append.
+
+**Do not wipe the buffer after forwarding.** Upstream called `setEditingState` after every committed character; on Android that restarts the input connection, which ends any running voice-typing session (dictation kept cutting out mid-sentence) and leaves the keyboard with no context to predict from. The mirror is cleared on Enter (`performAction`), on an injected key (`reset()`, from `TerminalTab._sendTerminalKey`), when the connection opens or closes, and past `_maxPendingLength`. `test/terminal_ime_test.dart` pins this down, including that ordinary typing still yields exactly the right bytes.
+
+Even so, the raw path can only ever offer the keyboard one command line of context. For dictation proper there is `TerminalComposeBar` (`lib/views/terminal_compose_bar.dart`), toggled from the terminal toolbar: a real `TextField` where the words stay put until sent, so the suggestion strip, continuous dictation and autocorrect behave normally. It sends through `AppState.insertPromptText` (a paste, so a TUI agent sees one insert rather than a burst of keystrokes) plus an optional `\r`.
 
 ### Connection profiles
 

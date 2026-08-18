@@ -24,6 +24,8 @@ class PersonalizationTab extends StatelessWidget {
         context.select<AppState, String>((s) => s.terminalScheme);
     final accentColorHex =
         context.select<AppState, String>((s) => s.accentColorHex);
+    final terminalGestureDeadzone =
+        context.select<AppState, double>((s) => s.terminalGestureDeadzone);
     // Selected as a joined string: `customAccentColors` hands back a fresh list
     // every call, so a List selector would never compare equal.
     final customAccentJoined = context
@@ -149,6 +151,39 @@ class PersonalizationTab extends StatelessWidget {
                   tr(r'user@kala:~$ echo "Hola"'),
                   style: AppText.mono(terminalFontSize,
                       color: AppColors.bone),
+                ),
+              ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(tr('SENSIBILIDAD GESTOS (ZONA MUERTA)'),
+                          style: AppText.label(9, color: AppColors.muted)),
+                    ),
+                    Text('${terminalGestureDeadzone.toStringAsFixed(0)} PX',
+                        style: AppText.mono(12, color: AppColors.bone)),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Slider(
+                        value: terminalGestureDeadzone,
+                        min: 10,
+                        max: 150,
+                        divisions: 140,
+                        activeColor: AppColors.bone,
+                        inactiveColor: AppColors.hairline,
+                        thumbColor: AppColors.bone,
+                        onChanged: state.setTerminalGestureDeadzone,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               Hairline(),

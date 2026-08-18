@@ -257,7 +257,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void selectWord(Offset from, [Offset? to]) {
     final fromOffset = getCellOffset(from);
     final fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
-    if (fromBoundary == null) return;
+    if (fromBoundary == null) {
+      selectCharacters(from, to);
+      return;
+    }
     if (to == null) {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(fromBoundary.begin),
@@ -267,7 +270,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     } else {
       final toOffset = getCellOffset(to);
       final toBoundary = _terminal.buffer.getWordBoundary(toOffset);
-      if (toBoundary == null) return;
+      if (toBoundary == null) {
+        selectCharacters(from, to);
+        return;
+      }
       final range = fromBoundary.merge(toBoundary);
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(range.begin),

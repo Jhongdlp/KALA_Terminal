@@ -137,8 +137,17 @@ class TerminalPainter {
     );
   }
 
+  /// Reused across every background rect of a frame; a fresh [Paint] per cell
+  /// was thousands of allocations per repaint.
+  final _backgroundPaint = Paint();
+
   /// Paints [line] to [canvas] at [offset]. The x offset of [offset] is usually
   /// 0, and the y offset is the top of the line.
+  ///
+  /// Backgrounds go first, in one pass that merges neighbouring cells sharing a
+  /// colour into a single rect — a filled TUI panel used to cost one
+  /// [Canvas.drawRect] per character cell. Glyphs follow in a second pass, so a
+  /// merged rect can never land on top of an already-drawn character.
   void paintLine(
     Canvas canvas,
     Offset offset,
@@ -146,19 +155,59 @@ class TerminalPainter {
   ) {
     final cellData = CellData.empty();
     final cellWidth = _cellSize.width;
+    final length = line.length;
 
-    for (var i = 0; i < line.length; i++) {
-      line.getCellData(i, cellData);
+    Color? runColor;
+    var runStart = 0;
+    var runCells = 0;
 
-      final charWidth = cellData.content >> CellContent.widthShift;
-      final cellOffset = offset.translate(i * cellWidth, 0);
-
-      paintCell(canvas, cellOffset, cellData);
-
-      if (charWidth == 2) {
-        i++;
-      }
+    void flushRun() {
+      final color = runColor;
+      if (color == null || runCells == 0) return;
+      _backgroundPaint.color = color;
+      canvas.drawRect(
+        offset.translate(runStart * cellWidth, 0) &
+            Size(runCells * cellWidth + 1, _cellSize.height),
+        _backgroundPaint,
+      );
     }
+
+    for (var i = 0; i < length; i++) {
+      line.getCellData(i, cellData);
+      final width = cellData.content >> CellContent.widthShift == 2 ? 2 : 1;
+      final color = _backgroundColorOf(cellData);
+
+      if (color == runColor) {
+        runCells += width;
+      } else {
+        flushRun();
+        runColor = color;
+        runStart = i;
+        runCells = width;
+      }
+
+      if (width == 2) i++;
+    }
+    flushRun();
+
+    for (var i = 0; i < length; i++) {
+      line.getCellData(i, cellData);
+      paintCellForeground(canvas, offset.translate(i * cellWidth, 0), cellData);
+      if (cellData.content >> CellContent.widthShift == 2) i++;
+    }
+  }
+
+  /// The colour this cell's background should be filled with, or null when
+  /// nothing has to be drawn (the default background shows through).
+  @pragma('vm:prefer-inline')
+  Color? _backgroundColorOf(CellData cellData) {
+    if (cellData.flags & CellFlags.inverse != 0) {
+      return resolveForegroundColor(cellData.foreground);
+    }
+    if (cellData.background & CellColor.typeMask == CellColor.normal) {
+      return null;
+    }
+    return resolveBackgroundColor(cellData.background);
   }
 
   @pragma('vm:prefer-inline')
@@ -221,18 +270,10 @@ class TerminalPainter {
   /// [offset].
   @pragma('vm:prefer-inline')
   void paintCellBackground(Canvas canvas, Offset offset, CellData cellData) {
-    late Color color;
-    final colorType = cellData.background & CellColor.typeMask;
+    final color = _backgroundColorOf(cellData);
+    if (color == null) return;
 
-    if (cellData.flags & CellFlags.inverse != 0) {
-      color = resolveForegroundColor(cellData.foreground);
-    } else if (colorType == CellColor.normal) {
-      return;
-    } else {
-      color = resolveBackgroundColor(cellData.background);
-    }
-
-    final paint = Paint()..color = color;
+    final paint = _backgroundPaint..color = color;
     final doubleWidth = cellData.content >> CellContent.widthShift == 2;
     final widthScale = doubleWidth ? 2 : 1;
     final size = Size(_cellSize.width * widthScale + 1, _cellSize.height);

@@ -50,6 +50,7 @@ class TerminalView extends StatefulWidget {
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
+    this.forceLocalMode = false,
   });
 
   /// The underlying terminal that this widget renders.
@@ -148,6 +149,8 @@ class TerminalView extends StatefulWidget {
   /// keys to the application. This is standard behavior for most terminal
   /// emulators. True by default.
   final bool simulateScroll;
+
+  final bool forceLocalMode;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -255,7 +258,13 @@ class TerminalViewState extends State<TerminalView> {
     child = TerminalScrollGestureHandler(
       terminal: widget.terminal,
       simulateScroll: widget.simulateScroll,
-      getCellOffset: (offset) => renderTerminal.getCellOffset(offset),
+      forceLocalMode: widget.forceLocalMode,
+      // Global -> local: the handler only ever has global pointer positions,
+      // and RenderTerminal.getCellOffset expects its own local coordinates.
+      // Feeding it globals put the reported wheel event several rows off,
+      // which made tmux route it to the wrong pane (or clamp it away).
+      getCellOffset: (offset) =>
+          renderTerminal.getCellOffset(renderTerminal.globalToLocal(offset)),
       getLineHeight: () => renderTerminal.lineHeight,
       child: child,
     );
@@ -326,6 +335,7 @@ class TerminalViewState extends State<TerminalView> {
       onSecondaryTapUp:
           widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
       readOnly: widget.readOnly,
+      forceLocalMode: widget.forceLocalMode,
       child: child,
     );
 

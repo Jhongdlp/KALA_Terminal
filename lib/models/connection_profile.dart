@@ -68,6 +68,7 @@ class ConnectionProfile {
   final String? password;
   final String? privateKey;
   final bool isLocal;
+  final String? groupId;
 
   /// Port forwards (`-L`/`-D`/`-R`) declared on this profile. Started by
   /// `TunnelManager` when a session using this profile connects.
@@ -91,6 +92,7 @@ class ConnectionProfile {
     this.password,
     this.privateKey,
     this.isLocal = false,
+    this.groupId,
     this.tunnels = const [],
     this.useTmux = false,
     this.useDeviceKey = false,
@@ -115,6 +117,7 @@ class ConnectionProfile {
       'password': password,
       'privateKey': privateKey,
       'isLocal': isLocal,
+      'groupId': groupId,
       'tunnels': tunnels.map((t) => t.toMap()).toList(),
       // Legacy mirror of the local tunnels, so an older build (or a downgrade)
       // still finds its `-L` forwards where it expects them.
@@ -147,6 +150,7 @@ class ConnectionProfile {
     String? password,
     String? privateKey,
     List<SshTunnel>? tunnels,
+    String? groupId,
   }) {
     return ConnectionProfile(
       id: id,
@@ -157,6 +161,7 @@ class ConnectionProfile {
       password: password ?? this.password,
       privateKey: privateKey ?? this.privateKey,
       isLocal: isLocal,
+      groupId: groupId ?? this.groupId,
       tunnels: tunnels ?? this.tunnels,
       useTmux: useTmux,
       useDeviceKey: useDeviceKey,
@@ -173,6 +178,7 @@ class ConnectionProfile {
       password: map['password'],
       privateKey: map['privateKey'],
       isLocal: map['isLocal'] ?? false,
+      groupId: map['groupId'],
       tunnels: _tunnelsFromMap(map),
       useTmux: map['useTmux'] ?? false,
       useDeviceKey: map['useDeviceKey'] ?? false,

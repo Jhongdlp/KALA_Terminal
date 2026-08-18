@@ -522,6 +522,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
   static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
+  static const String _kTerminalGestureDeadzone = 'settings_terminal_gesture_deadzone';
   // Desktop workspace: splitter positions and which side panes are open.
   static const String _kSplitSide = 'settings_split_side';
   static const String _kSplitEditorTerminal = 'settings_split_editor_terminal';
@@ -557,6 +558,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Code editor font size, adjusted by the +/- buttons in the editor header.
   double _editorFontSize = 13;
   double get editorFontSize => _editorFontSize;
+
+  double _terminalGestureDeadzone = 60.0; // Default deadzone for gestures
+  double get terminalGestureDeadzone => _terminalGestureDeadzone;
 
   // Terminal color scheme id ('auto' follows the app theme; otherwise one of
   // AppTerminalTheme.schemes). The terminal view resolves it via
@@ -1271,9 +1275,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// Hash of the visible tail with redraw noise stripped: two screens with the
   /// same signature show the same *meaningful* content, even if a spinner or
   /// an elapsed-seconds counter differs.
-  int _screenSignature(TerminalSession session) => _terminalTail(session, _watchTailLines)
-      .replaceAll(_watchNoiseRegex, '')
-      .hashCode;
+  int _screenSignature(TerminalSession session) =>
+      _signatureOf(_terminalTail(session, _watchTailLines));
+
+  /// [_screenSignature] for an already-captured tail.
+  int _signatureOf(String tail) =>
+      tail.replaceAll(_watchNoiseRegex, '').hashCode;
 
   /// Hash of the visible tail *as-is*. Differs from [_screenSignature] exactly
   /// when the only thing that moved was redraw noise — which is how a spinning
@@ -1295,8 +1302,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// idle deadline accordingly.
   void _evaluateAgentActivity(TerminalSession session) {
     if (!agentAlertsEnabled) return;
-    final sig = _screenSignature(session);
-    session.rawWatchSignature = _rawScreenSignature(session);
+    // Both signatures come from the same snapshot: reading the tail twice
+    // rebuilt a ~3000-character string from the buffer for nothing, several
+    // times a second for as long as output kept flowing.
+    final tail = _terminalTail(session, _watchTailLines);
+    final sig = _signatureOf(tail);
+    session.rawWatchSignature = tail.hashCode;
 
     if (sig != session.watchSignature) {
       // Genuinely new content: a new idle period starts, so this session is
@@ -1484,6 +1495,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (fontSize != null) {
       _terminalFontSize =
           fontSize.clamp(minTerminalFontSize, maxTerminalFontSize);
+    }
+
+    final deadzone = prefs.getDouble(_kTerminalGestureDeadzone);
+    if (deadzone != null) {
+      _terminalGestureDeadzone = deadzone;
     }
 
     final editorFontSize = prefs.getDouble(_kEditorFontSize);
@@ -1793,6 +1809,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (!persist) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kTerminalFontSize, clamped);
+  }
+  Future<void> setTerminalGestureDeadzone(double deadzone) async {
+    if (deadzone == _terminalGestureDeadzone) return;
+    _terminalGestureDeadzone = deadzone;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kTerminalGestureDeadzone, deadzone);
   }
 
   Future<void> setTerminalScheme(String id) async {
@@ -4243,21 +4266,35 @@ class _TerminalWriter {
     _decoder = utf8.decoder.startChunkedConversion(_StringBufferSink(_buffer));
   }
 
+  /// Shortest gap between two writes to the terminal. One frame: bursts still
+  /// coalesce, but a lone keystroke echo is never held back.
+  static const _minFlushGap = Duration(milliseconds: 16);
+
+  var _lastFlush = DateTime.fromMillisecondsSinceEpoch(0);
+
   void add(List<int> data) {
     if (_disposed) return;
     _decoder.add(data);
-    
+
     if (!isInForeground()) {
       _flush();
+      return;
+    }
+    if (_flushTimer != null) return;
+    // A flat debounce made every echoed keystroke wait out the full window,
+    // which is what made typing feel mushy. Flush straight away when the last
+    // write is already a frame old, and only coalesce inside that window.
+    final since = DateTime.now().difference(_lastFlush);
+    if (since >= _minFlushGap) {
+      _flush();
     } else {
-      // Debounce to the next frame interval; cheap no-op if one is already armed.
-      // Increased to 30ms to prevent UI stuttering during high-speed prints.
-      _flushTimer ??= Timer(const Duration(milliseconds: 30), _flush);
+      _flushTimer = Timer(_minFlushGap - since, _flush);
     }
   }
 
   void _flush() {
     _flushTimer = null;
+    _lastFlush = DateTime.now();
     if (_buffer.isEmpty) return;
     final text = _buffer.toString();
     _buffer.clear();

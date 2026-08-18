@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -123,6 +125,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void setEditingState(TextEditingValue value) {
+    _pendingSent = '';
     _currentEditingState = value;
     _connection?.setEditingState(value);
   }
@@ -197,6 +200,10 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
       // setEditableRect(Rect.zero, Rect.zero);
 
+      // A fresh connection starts from the sentinel buffer, so the mirror of
+      // what has already been forwarded has to start empty with it.
+      _pendingSent = '';
+      _currentEditingState = _initEditingState;
       _connection!.setEditingState(_initEditingState);
     }
   }
@@ -206,9 +213,11 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
       _connection!.close();
       _connection = null;
     }
+    _pendingSent = '';
   }
 
   void reset() {
+    _pendingSent = '';
     _currentEditingState = _initEditingState;
     _connection?.setEditingState(_initEditingState);
     widget.onComposing(null);
@@ -226,6 +235,16 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   late var _currentEditingState = _initEditingState.copyWith();
 
+  /// The characters currently sitting in the IME's buffer that have already
+  /// been forwarded to the terminal. Kept in step with the field's typed
+  /// region at all times, so what we send is always the *difference*.
+  var _pendingSent = '';
+
+  /// How long the mirror is allowed to grow before it is cleared. One command
+  /// line is far below this; the cap only exists so a session that never sends
+  /// an Enter can't grow without bound.
+  static const _maxPendingLength = 1024;
+
   @override
   TextEditingValue? get currentTextEditingValue {
     return _currentEditingState;
@@ -236,73 +255,103 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     return null;
   }
 
+  /// Where the typed text sits inside the sentinel buffer.
+  int get _prefixLength => _initEditingState.selection.baseOffset;
+  int get _suffixLength => _initEditingState.text.length - _prefixLength;
+
+  /// The part of [value] the user actually typed, with the sentinel padding
+  /// [_initEditingState] wraps it in stripped off.
+  String _typedRegion(String text) =>
+      text.substring(_prefixLength, text.length - _suffixLength);
+
+  /// Sends the terminal whatever changed between [_pendingSent] and [typed]:
+  /// backspaces over the characters that no longer match, then the new tail.
+  ///
+  /// Working from a diff rather than from "text got longer" is what makes the
+  /// keyboard's own edits land correctly — swipe typing replacing a word,
+  /// autocorrect rewriting one, or Gboard's fix-the-last-word all arrive as a
+  /// rewrite of text that was already sent, not as an append.
+  void _forwardDiff(String typed) {
+    final sent = _pendingSent;
+    if (typed == sent) return;
+
+    var common = 0;
+    final limit = min(sent.length, typed.length);
+    while (common < limit && sent.codeUnitAt(common) == typed.codeUnitAt(common)) {
+      common++;
+    }
+    // Never split a surrogate pair, or an emoji would be cut in half.
+    if (common > 0 &&
+        common < sent.length &&
+        _isHighSurrogate(sent.codeUnitAt(common - 1))) {
+      common--;
+    }
+
+    for (var i = sent.length - common; i > 0; i--) {
+      widget.onDelete();
+    }
+    final added = typed.substring(common);
+    if (added.isNotEmpty) {
+      widget.onInsert(added);
+    }
+    _pendingSent = typed;
+  }
+
+  static bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
+
   @override
   void updateEditingValue(TextEditingValue value) {
+    final previous = _currentEditingState;
     _currentEditingState = value;
 
-    // Get input after composing is done
-    if (!_currentEditingState.composing.isCollapsed) {
-      final text = _currentEditingState.text;
-      final composingText = _currentEditingState.composing.textInside(text);
-      widget.onComposing(composingText);
+    // Still composing — swipe typing, an IME candidate, or a dictation phrase
+    // in progress. Report it and wait.
+    if (!value.composing.isCollapsed) {
+      widget.onComposing(value.composing.textInside(value.text));
       return;
     }
 
     widget.onComposing(null);
 
-    if (_currentEditingState.text.length < _initEditingState.text.length) {
+    // The IME ate into the sentinel padding: a backspace with nothing left to
+    // delete on this side.
+    if (value.text.length < _initEditingState.text.length) {
       widget.onDelete();
-      _connection?.setEditingState(_initEditingState);
-      _currentEditingState = _initEditingState;
+      reset();
       return;
     }
 
-    if (_currentEditingState.text.length > _initEditingState.text.length) {
-      final prefixLength = _initEditingState.selection.baseOffset;
-      final suffixLength = _initEditingState.text.length - prefixLength;
-      final textDelta = _currentEditingState.text.substring(
-        prefixLength,
-        _currentEditingState.text.length - suffixLength,
-      );
-      widget.onInsert(textDelta);
-      _connection?.setEditingState(_initEditingState);
-      _currentEditingState = _initEditingState;
+    final typed = _typedRegion(value.text);
+
+    if (typed != _pendingSent) {
+      _forwardDiff(typed);
+      // The mirror is deliberately *not* wiped after forwarding. Wiping it
+      // meant calling setEditingState on every committed character, and on
+      // Android that restarts the input connection — which ends any running
+      // voice-typing session (dictation kept cutting out mid-sentence) and
+      // left the keyboard with no text to predict from or autocorrect
+      // against. It is cleared on Enter instead, so the keyboard sees one
+      // command line at a time. See [performAction] and [reset].
+      if (_pendingSent.length > _maxPendingLength) reset();
       return;
     }
 
-    // Text length is the same, check if selection moved (e.g. Gboard spacebar cursor slide)
-    if (_initEditingState.selection.isCollapsed &&
-        _currentEditingState.selection.isCollapsed) {
-      final oldOffset = _initEditingState.selection.baseOffset;
-      final newOffset = _currentEditingState.selection.baseOffset;
-      if (newOffset != oldOffset) {
-        final diff = newOffset - oldOffset;
-        if (diff < 0) {
-          for (int i = 0; i < diff.abs(); i++) {
-            widget.onArrowLeft?.call();
-          }
-        } else if (diff > 0) {
-          for (int i = 0; i < diff; i++) {
-            widget.onArrowRight?.call();
-          }
-        }
-        _connection?.setEditingState(_initEditingState);
-        _currentEditingState = _initEditingState;
-        return;
+    // Same text: a bare cursor move, e.g. Gboard's spacebar cursor slide.
+    if (previous.selection.isCollapsed && value.selection.isCollapsed) {
+      final diff = value.selection.baseOffset - previous.selection.baseOffset;
+      for (var i = 0; i < diff.abs(); i++) {
+        diff < 0 ? widget.onArrowLeft?.call() : widget.onArrowRight?.call();
       }
-    }
-
-    // Fallback: reset if text is different from init
-    if (_currentEditingState.text != _initEditingState.text) {
-      _connection?.setEditingState(_initEditingState);
-      _currentEditingState = _initEditingState;
     }
   }
 
   @override
   void performAction(TextInputAction action) {
-    // print('performAction $action');
     widget.onAction(action);
+    // Enter ends the shell's line, so it ends the mirror's too: the keyboard
+    // starts the next command with a clean buffer instead of predicting from
+    // everything typed so far.
+    reset();
   }
 
   @override
@@ -317,7 +366,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   @override
   void connectionClosed() {
-    // print('connectionClosed');
+    _pendingSent = '';
   }
 
   @override

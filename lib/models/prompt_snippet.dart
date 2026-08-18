@@ -30,4 +30,10 @@ class PromptSnippet {
 
   factory PromptSnippet.fromJson(String source) =>
       PromptSnippet.fromMap(json.decode(source));
+
+  /// Returns a list of unique variable names enclosed in `${...}` in the snippet text.
+  List<String> getVariables() {
+    final regex = RegExp(r'\$\{([^}]+)\}');
+    return regex.allMatches(text).map((m) => m.group(1)!).toSet().toList();
+  }
 }

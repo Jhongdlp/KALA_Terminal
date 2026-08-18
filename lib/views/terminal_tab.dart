@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
@@ -9,6 +11,7 @@ import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import '../widgets/terminal_selection.dart';
 import 'prompts_sheet.dart';
+import 'terminal_compose_bar.dart';
 import 'git_panel_sheet.dart';
 import 'shortcut_manager_sheet.dart';
 import 'tunnel_editor_sheet.dart';
@@ -16,6 +19,7 @@ import 'tunnels_tab.dart';
 import '../models/connection_profile.dart';
 import '../models/terminal_shortcut.dart';
 import '../services/tunnel_manager.dart';
+import '../widgets/joystick_recognizer.dart';
 import '../l10n/l10n.dart';
 
 class TerminalTab extends StatefulWidget {
@@ -27,28 +31,123 @@ class TerminalTab extends StatefulWidget {
 
 class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final FocusNode _terminalFocusNode = FocusNode();
-  Offset? _dragStartOffset;
+  Offset? _pointerStart;
+  Offset? _pointerCurrent;
+  Timer? _springTimer;
+  String? _springDirection;
+  bool _isAccelerated = false;
+  Duration _currentSpringInterval = const Duration(milliseconds: 300);
+
+  void _fireSpringTick(AppState state) {
+    if (_pointerStart == null || _springDirection == null) return;
+    
+    // Send the key
+    switch (_springDirection) {
+      case 'up': _sendTerminalKey(state, '\x1b[A'); break;
+      case 'down': _sendTerminalKey(state, '\x1b[B'); break;
+      case 'right': _sendTerminalKey(state, '\x1b[C'); break;
+      case 'left': _sendTerminalKey(state, '\x1b[D'); break;
+    }
+    
+    // Schedule next tick
+    _springTimer?.cancel();
+    _springTimer = Timer(_currentSpringInterval, () {
+      if (mounted) _fireSpringTick(state);
+    });
+  }
+
+  void _updateSpring(AppState state) {
+    if (_pointerStart == null || _pointerCurrent == null) return;
+    
+    final dx = _pointerCurrent!.dx - _pointerStart!.dx;
+    final dy = _pointerCurrent!.dy - _pointerStart!.dy;
+    
+    final absX = dx.abs();
+    final absY = dy.abs();
+    
+    final deadzone = state.terminalGestureDeadzone;
+    
+    // Deadzone
+    if (absX < deadzone && absY < deadzone) {
+      _springTimer?.cancel();
+      _springTimer = null;
+      if (_springDirection != null || _isAccelerated) {
+        setState(() {
+          _springDirection = null;
+          _isAccelerated = false;
+        });
+      }
+      return;
+    }
+    
+    String newDir;
+    double pullDistance;
+    
+    if (absX > absY) {
+      newDir = dx > 0 ? 'right' : 'left';
+      pullDistance = absX;
+    } else {
+      newDir = dy > 0 ? 'down' : 'up';
+      pullDistance = absY;
+    }
+    
+    // Calculate speed based on pull distance (spring tension)
+    // deadzone -> 300ms, deadzone + 160px -> 30ms
+    final speedRatio = ((pullDistance - deadzone) / 160).clamp(0.0, 1.0);
+    final intervalMs = 300 - (270 * speedRatio).toInt();
+    _currentSpringInterval = Duration(milliseconds: intervalMs);
+    
+    // Trigger acceleration (double arrows) when pulling beyond ~35% of max stretch
+    final newAccelerated = speedRatio >= 0.35;
+    
+    // Haptic tick when transitioning into accelerated speed
+    if (!_isAccelerated && newAccelerated) {
+      HapticFeedback.selectionClick();
+    }
+    
+    if (_springDirection != newDir || _isAccelerated != newAccelerated) {
+      setState(() {
+        _springDirection = newDir;
+        _isAccelerated = newAccelerated;
+      });
+    }
+    
+    if (_springTimer == null || !_springTimer!.isActive) {
+      _fireSpringTick(state);
+    }
+  }
+
+  void _handleJoystickStart(Offset pos, AppState state) {
+    if (_terminalController.selection != null) return;
+    _pointerStart = pos;
+    _pointerCurrent = pos;
+    HapticFeedback.selectionClick();
+  }
+
+  void _handleJoystickMove(Offset pos, AppState state) {
+    if (_pointerStart == null) return;
+    _pointerCurrent = pos;
+    _updateSpring(state);
+  }
+
+  void _handleJoystickEnd() {
+    _pointerStart = null;
+    _pointerCurrent = null;
+    _springTimer?.cancel();
+    _springTimer = null;
+    if (_springDirection != null || _isAccelerated) {
+      setState(() {
+        _springDirection = null;
+        _isAccelerated = false;
+      });
+    }
+  }
+
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeMetrics() {
-    super.didChangeMetrics();
-    if (_terminalFocusNode.hasFocus) {
-      // Run a series of delayed scrolls to keep the scroll position at the bottom
-      // during the keyboard slide animation without doing it on every single frame.
-      for (final ms in [50, 150, 250, 350]) {
-        Future.delayed(Duration(milliseconds: ms), () {
-          if (mounted && _terminalScrollController.hasClients) {
-            _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
-          }
-        });
-      }
-    }
   }
 
   // Holds the current text selection of the active terminal so the "Copiar"
@@ -64,6 +163,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   bool _showKeys = true;
 
+  // Dictation / compose bar (see [TerminalComposeBar]). Off by default: it
+  // takes vertical space and only earns it when the soft keyboard is doing the
+  // typing.
+  bool _showComposeBar = false;
+
   // Tracks whether the active terminal is in the alternate screen buffer (a
   // full-screen TUI like vim/htop/claude is running). The smart command bar is
   // a line-based input that makes no sense — and looks like a duplicate input
@@ -71,6 +175,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   // raw terminal takes all keystrokes. We observe the Terminal directly because
   // its alt-buffer changes don't flow through AppState's notifications.
   Terminal? _observedTerminal;
+
+  // Last alt-buffer state seen, so the focus grab below runs on the transition
+  // rather than on every output batch.
+  bool _observedAltBuffer = false;
 
   @override
   void dispose() {
@@ -93,6 +201,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     if (identical(_observedTerminal, terminal)) return;
     _observedTerminal?.removeListener(_onTerminalChanged);
     _observedTerminal = terminal;
+    _observedAltBuffer = terminal.isUsingAltBuffer;
     terminal.addListener(_onTerminalChanged);
     // Selection anchors belong to the previous terminal's buffer; drop them so
     // "Copiar" never reads a stale selection after a session switch.
@@ -100,7 +209,12 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   }
 
   void _onTerminalChanged() {
+    // This fires on every batch of remote output. Only the *transition* into
+    // the alternate buffer is interesting — asking for focus on every batch
+    // walked the focus tree dozens of times a second while a TUI redrew.
     final alt = _observedTerminal?.isUsingAltBuffer ?? false;
+    if (alt == _observedAltBuffer) return;
+    _observedAltBuffer = alt;
     // Entering a full-screen app: hand keyboard focus to the terminal so it
     // receives keys without the user having to tap it first.
     if (alt) _terminalFocusNode.requestFocus();
@@ -167,103 +281,143 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                     state.activeSession?.activeProfile != null)
                   _reconnectBanner(state),
                 Expanded(
-                  child: GestureDetector(
-                    onPanStart: (details) {
-                      if (_terminalController.selection == null) {
-                        _dragStartOffset = details.globalPosition;
-                      } else {
-                        _dragStartOffset = null;
-                      }
-                    },
-                    onPanUpdate: (details) {
-                      if (_dragStartOffset == null) return;
-                      final dx = details.globalPosition.dx - _dragStartOffset!.dx;
-                      final dy = details.globalPosition.dy - _dragStartOffset!.dy;
-                      // Threshold for cursor movement
-                      const threshold = 18.0;
-                      
-                      if (dx.abs() > threshold || dy.abs() > threshold) {
-                        if (dx.abs() > dy.abs()) {
-                          // Horizontal movement
-                          if (dx > 0) {
-                            _sendTerminalKey(state, '\x1b[C'); // Right Arrow
-                          } else {
-                            _sendTerminalKey(state, '\x1b[D'); // Left Arrow
-                          }
-                        } else {
-                          // Vertical movement
-                          if (dy > 0) {
-                            _sendTerminalKey(state, '\x1b[B'); // Down Arrow
-                          } else {
-                            _sendTerminalKey(state, '\x1b[A'); // Up Arrow
-                          }
-                        }
-                        _dragStartOffset = details.globalPosition;
-                      }
-                    },
-                    onPanEnd: (_) {
-                      _dragStartOffset = null;
+                  child: RawGestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    gestures: <Type, GestureRecognizerFactory>{
+                      JoystickGestureRecognizer: GestureRecognizerFactoryWithHandlers<JoystickGestureRecognizer>(
+                        () => JoystickGestureRecognizer(
+                          onJoystickStart: (pos) => _handleJoystickStart(pos, state),
+                          onJoystickMove: (pos) => _handleJoystickMove(pos, state),
+                          onJoystickEnd: _handleJoystickEnd,
+                          isSelectionActive: () =>
+                              _terminalController.selection != null,
+                        ),
+                        (JoystickGestureRecognizer instance) {
+                          instance.onJoystickStart = (pos) => _handleJoystickStart(pos, state);
+                          instance.onJoystickMove = (pos) => _handleJoystickMove(pos, state);
+                          instance.onJoystickEnd = _handleJoystickEnd;
+                          instance.isSelectionActive = () =>
+                              _terminalController.selection != null;
+                        },
+                      ),
                     },
                     child: _PinchFontZoom(
                       state: state,
                       child: TerminalSelectionArea(
-                        terminal: state.terminal,
+                      terminal: state.terminal,
+                      controller: _terminalController,
+                      terminalViewKey: _terminalViewKey,
+                      scrollController: _terminalScrollController,
+                      onSendInput: (text) {
+                        state.insertPromptText(text);
+                        _terminalFocusNode.requestFocus();
+                      },
+                      onToast: _toast,
+                      child: TerminalView(
+                        state.terminal,
+                        key: _terminalViewKey,
                         controller: _terminalController,
-                        terminalViewKey: _terminalViewKey,
                         scrollController: _terminalScrollController,
-                        onSendInput: (text) {
-                          state.insertPromptText(text);
-                          _terminalFocusNode.requestFocus();
+                        focusNode: _terminalFocusNode,
+                        autofocus: true,
+                        deleteDetection: true,
+                        theme: AppTerminalTheme.byId(state.terminalScheme,
+                            Theme.of(context).brightness,
+                            accentColor: AppColors.accent),
+                        cursorType: TerminalCursorType.block,
+                        backgroundOpacity: 1,
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                        textStyle: TerminalStyle(
+                          fontSize: state.terminalFontSize,
+                          height: 1.3,
+                          fontFamily: state.monoFontFamily,
+                          fontFamilyFallback: const ['monospace'],
+                        ),
+                        // Gboard inline image paste
+                        onInsertContent: (content) async {
+                          if (content.data != null) {
+                            final mime = content.mimeType.toLowerCase();
+                            final ext = mime.contains('gif')
+                                ? 'gif'
+                                : mime.contains('webp')
+                                    ? 'webp'
+                                    : mime.contains('jpg') ||
+                                            mime.contains('jpeg')
+                                        ? 'jpg'
+                                        : 'png';
+                            await state.pasteImageBytes(content.data!,
+                                ext: ext);
+                          }
                         },
-                        onToast: _toast,
-                        child: TerminalView(
-                          state.terminal,
-                          key: _terminalViewKey,
-                          controller: _terminalController,
-                          scrollController: _terminalScrollController,
-                          focusNode: _terminalFocusNode,
-                          autofocus: true,
-                          deleteDetection: true,
-                          theme: AppTerminalTheme.byId(state.terminalScheme,
-                              Theme.of(context).brightness,
-                              accentColor: AppColors.accent),
-                          cursorType: TerminalCursorType.block,
-                          backgroundOpacity: 1,
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                          textStyle: TerminalStyle(
-                            fontSize: state.terminalFontSize,
-                            height: 1.3,
-                            fontFamily: state.monoFontFamily,
-                            fontFamilyFallback: const ['monospace'],
+                      ),
+                    ),
+                  ),
+                ),
+                ),
+                // The compose bar sits between the terminal and the quick
+                // keys, where the soft keyboard pushes it into view.
+                if (_showComposeBar)
+                  TerminalComposeBar(
+                    state: state,
+                    onClose: () => setState(() => _showComposeBar = false),
+                  ),
+                // Quick-access keys stay available even in fullscreen.
+                if (_showKeys) _buildKeys(state),
+              ],
+            ),
+            // Fleeting gesture feedback HUD (Spring Mode)
+            if (_springDirection != null)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: AnimatedOpacity(
+                      opacity: _springDirection != null ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 100),
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.ink.withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: _isAccelerated
+                                ? AppColors.accent.withOpacity(0.8)
+                                : AppColors.hairline.withOpacity(0.4),
+                            width: _isAccelerated ? 1.5 : 1.0,
                           ),
-                          // Gboard inline image paste: the soft keyboard hands
-                          // us the image bytes directly (no need to hit "PEGAR").
-                          // Enabled by the vendored, patched xterm in
-                          // third_party/xterm (see pubspec dependency_overrides).
-                          onInsertContent: (content) async {
-                            if (content.data != null) {
-                              final mime = content.mimeType.toLowerCase();
-                              final ext = mime.contains('gif')
-                                  ? 'gif'
-                                  : mime.contains('webp')
-                                      ? 'webp'
-                                      : mime.contains('jpg') ||
-                                              mime.contains('jpeg')
-                                          ? 'jpg'
-                                          : 'png';
-                              await state.pasteImageBytes(content.data!,
-                                  ext: ext);
-                            }
-                          },
+                          boxShadow: _isAccelerated
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.accent.withOpacity(0.3),
+                                    blurRadius: 18,
+                                    spreadRadius: 2,
+                                  )
+                                ]
+                              : null,
+                        ),
+                        child: Icon(
+                          _springDirection == 'up'
+                              ? (_isAccelerated
+                                  ? Icons.keyboard_double_arrow_up
+                                  : Icons.keyboard_arrow_up)
+                              : _springDirection == 'down'
+                                  ? (_isAccelerated
+                                      ? Icons.keyboard_double_arrow_down
+                                      : Icons.keyboard_arrow_down)
+                                  : _springDirection == 'left'
+                                      ? (_isAccelerated
+                                          ? Icons.keyboard_double_arrow_left
+                                          : Icons.keyboard_arrow_left)
+                                      : (_isAccelerated
+                                          ? Icons.keyboard_double_arrow_right
+                                          : Icons.keyboard_arrow_right),
+                          size: _isAccelerated ? 44 : 40,
+                          color: _isAccelerated ? AppColors.accent : AppColors.bone,
                         ),
                       ),
                     ),
                   ),
                 ),
-                // Quick-access keys stay available even in fullscreen.
-                if (_showKeys) _buildKeys(state),
-              ],
-            ),
+              ),
             if (fullscreen)
               Positioned(
                 right: 14,
@@ -342,6 +496,12 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
             _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
             tr('Teclas rápidas'),
             () => setState(() => _showKeys = !_showKeys),
+          ),
+          _toolbarIcon(
+            Icons.mic_none_outlined,
+            tr('Barra de dictado'),
+            () => setState(() => _showComposeBar = !_showComposeBar),
+            active: _showComposeBar,
           ),
           _tunnelsButton(context, state),
           _toolbarIcon(Icons.open_in_full, tr('Expandir terminal'),
@@ -626,10 +786,12 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         profile.copyWith(tunnels: [...profile.tunnels, created]));
   }
 
-  Widget _toolbarIcon(IconData icon, String tip, VoidCallback onTap) {
+  Widget _toolbarIcon(IconData icon, String tip, VoidCallback onTap,
+      {bool active = false}) {
     final sz = (16 * context.read<AppState>().uiIconFactor).roundToDouble();
     return IconButton(
-      icon: Icon(icon, color: AppColors.muted, size: sz),
+      icon: Icon(icon,
+          color: active ? AppColors.accent : AppColors.muted, size: sz),
       onPressed: onTap,
       tooltip: tip,
       visualDensity: VisualDensity.compact,
@@ -1239,6 +1401,10 @@ class _PinchFontZoomState extends State<_PinchFontZoom> {
     _pointers[e.pointer] = e.position;
     final start = _startDistance;
     if (_pointers.length != 2 || start == null || start <= 0) return;
+    // Scrolling the alternate buffer used to live here as a two-finger swipe.
+    // It now rides on the same one-finger drag as the normal buffer (see the
+    // patched TerminalScrollGestureHandler), so doing it here as well would
+    // scroll twice — once per finger.
     _pinched = true;
     widget.state
         .setTerminalFontSize(_startFontSize * (_distance / start), persist: false);

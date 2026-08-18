@@ -22,6 +22,7 @@ class TerminalGestureHandler extends StatefulWidget {
     this.onTertiaryTapDown,
     this.onTertiaryTapUp,
     this.readOnly = false,
+    this.forceLocalMode = false,
   });
 
   final TerminalViewState terminalView;
@@ -45,6 +46,8 @@ class TerminalGestureHandler extends StatefulWidget {
   final GestureTapUpCallback? onTertiaryTapUp;
 
   final bool readOnly;
+
+  final bool forceLocalMode;
 
   @override
   State<TerminalGestureHandler> createState() => _TerminalGestureHandlerState();
@@ -81,6 +84,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   bool get _shouldSendTapEvent =>
       !widget.readOnly &&
+      !widget.forceLocalMode &&
       widget.terminalController.shouldSendPointerInput(PointerInput.tap);
 
   void _tapDown(
@@ -91,7 +95,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }) {
     // Check if the terminal should and can handle the tap down event.
     var handled = false;
-    if (_shouldSendTapEvent) {
+    if (_shouldSendTapEvent && details.kind == PointerDeviceKind.mouse) {
       handled = renderTerminal.mouseEvent(
         button,
         TerminalMouseButtonState.down,
@@ -112,7 +116,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }) {
     // Check if the terminal should and can handle the tap up event.
     var handled = false;
-    if (_shouldSendTapEvent) {
+    if (_shouldSendTapEvent && details.kind == PointerDeviceKind.mouse) {
       handled = renderTerminal.mouseEvent(
         button,
         TerminalMouseButtonState.up,

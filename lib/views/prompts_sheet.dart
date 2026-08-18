@@ -21,8 +21,38 @@ import '../l10n/l10n.dart';
 void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
   final state = Provider.of<AppState>(context, listen: false);
 
-  void insert(BuildContext sheetCtx, String text) {
-    state.insertPromptText(text);
+  void insert(BuildContext sheetCtx, PromptSnippet snippet, [String? directText]) async {
+    if (directText != null) {
+      state.insertPromptText(directText);
+      Navigator.of(sheetCtx).pop();
+      onInserted?.call();
+      return;
+    }
+
+    final vars = snippet.getVariables();
+    if (vars.isEmpty) {
+      state.insertPromptText(snippet.text);
+      Navigator.of(sheetCtx).pop();
+      onInserted?.call();
+      return;
+    }
+
+    final values = await showDialog<Map<String, String>>(
+      context: sheetCtx,
+      builder: (ctx) => _PromptVariablesDialog(variables: vars),
+    );
+
+    if (values == null) return;
+    // The dialog is awaited, so the sheet underneath may be gone by now
+    // (a back gesture, or a reconnect closing it). Popping a dead context
+    // would throw.
+    if (!sheetCtx.mounted) return;
+
+    var resolved = snippet.text;
+    for (final v in vars) {
+      resolved = resolved.replaceAll('\${$v}', values[v] ?? '');
+    }
+    state.insertPromptText(resolved);
     Navigator.of(sheetCtx).pop();
     onInserted?.call();
   }
@@ -57,7 +87,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
               onTap: () => _showComposer(
                 sheetCtx,
                 state,
-                onInsert: (text) => insert(sheetCtx, text),
+                onInsert: (text) => insert(sheetCtx, PromptSnippet(id: '', title: '', text: ''), text),
               ),
               child: Padding(
                 padding:
@@ -92,7 +122,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
                   itemBuilder: (_, i) {
                     final snippet = s.snippets[i];
                     return InkWell(
-                      onTap: () => insert(sheetCtx, snippet.text),
+                      onTap: () => insert(sheetCtx, snippet),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),
@@ -126,7 +156,7 @@ void showPromptsSheet(BuildContext context, {VoidCallback? onInserted}) {
                                 sheetCtx,
                                 state,
                                 existing: snippet,
-                                onInsert: (text) => insert(sheetCtx, text),
+                                onInsert: (text) => insert(sheetCtx, snippet, text),
                               ),
                               behavior: HitTestBehavior.opaque,
                               child: Padding(
@@ -406,6 +436,79 @@ class _PromptComposerState extends State<_PromptComposer> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PromptVariablesDialog extends StatefulWidget {
+  final List<String> variables;
+
+  const _PromptVariablesDialog({required this.variables});
+
+  @override
+  State<_PromptVariablesDialog> createState() => _PromptVariablesDialogState();
+}
+
+class _PromptVariablesDialogState extends State<_PromptVariablesDialog> {
+  final Map<String, TextEditingController> _controllers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    for (final v in widget.variables) {
+      _controllers[v] = TextEditingController();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.panel,
+      title: Text(tr('Variables del snippet'),
+          style: AppText.label(12, color: AppColors.bone)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: widget.variables.map((v) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12.0),
+              child: TextField(
+                controller: _controllers[v],
+                style: AppText.body(13, color: AppColors.bone),
+                decoration: InputDecoration(
+                  labelText: v,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(tr('Cancelar'),
+              style: AppText.label(11, color: AppColors.muted)),
+        ),
+        TextButton(
+          onPressed: () {
+            final result = <String, String>{};
+            for (final v in widget.variables) {
+              result[v] = _controllers[v]!.text;
+            }
+            Navigator.of(context).pop(result);
+          },
+          child: Text(tr('Insertar'),
+              style: AppText.label(11, color: AppColors.accent)),
+        ),
+      ],
     );
   }
 }
