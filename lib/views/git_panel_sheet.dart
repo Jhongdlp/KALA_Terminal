@@ -5,10 +5,63 @@ import '../models/git_status.dart';
 import '../providers/app_state.dart';
 import '../services/git_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
 import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
 import 'git_diff_sheet.dart';
 import 'git_project_tree.dart';
+
+
+/// Opens the Git panel from anywhere.
+///
+/// On the desktop shell the panel is a real workspace pane, so this just
+/// reveals it — pushing a route over an IDE layout that has room for the panel
+/// would be strictly worse. On the compact layout it slides in from the left
+/// edge as a full-height drawer.
+///
+/// Lives here rather than in TerminalTab because the keyboard shortcut and the
+/// command palette need it too, and a second copy of this route is a second
+/// place for its transition and its ScaffoldMessenger wiring to drift.
+void showGitPanel(BuildContext context, AppState state,
+    {void Function(String message)? onToast}) {
+  if (Layout.maybeOf(context)?.isDesktop ?? false) {
+    state.setGitPaneOpen(true);
+    return;
+  }
+
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: tr('Cerrar'),
+    barrierColor: Colors.black.withValues(alpha: 0.5),
+    transitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (dialogCtx, _, _) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: MediaQuery.of(dialogCtx).size.width * 0.86,
+          height: double.infinity,
+          // Own ScaffoldMessenger so the panel's SnackBars render in front of
+          // the slide instead of behind it on the root Scaffold.
+          child: ScaffoldMessenger(
+            child: Scaffold(
+              backgroundColor: AppColors.panel,
+              body: GitPanelSheet(state: state, onToast: onToast),
+            ),
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (_, anim, _, child) {
+      final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return SlideTransition(
+        position: Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
+            .animate(curved),
+        child: child,
+      );
+    },
+  );
+}
 
 /// Source-control panel: the staged / unstaged split, per-file stage, unstage
 /// and discard, a diff viewer, the commit box and branch sync — the git client

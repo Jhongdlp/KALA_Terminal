@@ -1,23 +1,29 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
+import '../models/connection_error.dart';
 import '../providers/app_state.dart';
+import '../services/terminal_search.dart';
 import '../theme/app_theme.dart';
-import '../theme/breakpoints.dart';
 import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
+import '../widgets/tap_target.dart';
 import '../widgets/terminal_selection.dart';
+import 'command_history_sheet.dart';
 import 'prompts_sheet.dart';
+import 'shortcuts_help_sheet.dart';
 import 'terminal_compose_bar.dart';
 import 'git_panel_sheet.dart';
-import 'shortcut_manager_sheet.dart';
+import 'terminal_quick_keys.dart';
 import 'tunnel_editor_sheet.dart';
 import 'tunnels_tab.dart';
 import '../models/connection_profile.dart';
-import '../models/terminal_shortcut.dart';
 import '../services/tunnel_manager.dart';
 import '../widgets/joystick_recognizer.dart';
 import '../l10n/l10n.dart';
@@ -148,6 +154,18 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _terminalScrollController.addListener(_onScrollChanged);
+  }
+
+  /// Flips [_scrolledUp] when the viewport leaves (or returns to) the bottom.
+  /// Guarded on the value actually changing: this fires on every scroll pixel.
+  void _onScrollChanged() {
+    if (!_terminalScrollController.hasClients) return;
+    final position = _terminalScrollController.position;
+    // A couple of lines of slack: xterm's stick-to-bottom already sits a
+    // fraction of a pixel off the extent while output is streaming.
+    final up = position.pixels < position.maxScrollExtent - 40;
+    if (up != _scrolledUp) setState(() => _scrolledUp = up);
   }
 
   // Holds the current text selection of the active terminal so the "Copiar"
@@ -161,12 +179,24 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       GlobalKey<TerminalViewState>();
   final ScrollController _terminalScrollController = ScrollController();
 
-  bool _showKeys = true;
+  // Whether the quick keyboard and the dictation bar are up lives in AppState:
+  // the toolbar, the keyboard shortcuts and the command palette all toggle the
+  // same thing, and two copies of that flag drift apart the first time one of
+  // them is used.
 
-  // Dictation / compose bar (see [TerminalComposeBar]). Off by default: it
-  // takes vertical space and only earns it when the soft keyboard is doing the
-  // typing.
-  bool _showComposeBar = false;
+  // ---- Scrollback search ---------------------------------------------------
+  // Matches are a snapshot taken when the query was typed. Their line indices
+  // can drift if enough new output pushes lines out of the 10k buffer, but the
+  // *selection* is anchor-based, so the highlight follows the text either way.
+  final TextEditingController _searchController = TextEditingController();
+  List<TerminalMatch> _matches = const [];
+  int _matchIndex = 0;
+
+  // Whether the view is scrolled off the bottom, which is what puts the
+  // "jump to the prompt" button on screen. Reading it from the controller on
+  // every build would be cheaper than a listener, but the button has to appear
+  // the moment the user drags — not on the next unrelated rebuild.
+  bool _scrolledUp = false;
 
   // Tracks whether the active terminal is in the alternate screen buffer (a
   // full-screen TUI like vim/htop/claude is running). The smart command bar is
@@ -186,6 +216,8 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
     _terminalController.dispose();
+    _searchController.dispose();
+    _terminalScrollController.removeListener(_onScrollChanged);
     _terminalScrollController.dispose();
     super.dispose();
   }
@@ -280,6 +312,9 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                         ConnectionStatus.disconnected &&
                     state.activeSession?.activeProfile != null)
                   _reconnectBanner(state),
+                // Scrollback search. Under the chrome, never over the buffer:
+                // an overlay would cover the output being searched.
+                if (state.terminalSearchOpen) _searchBar(state),
                 Expanded(
                   child: RawGestureDetector(
                     behavior: HitTestBehavior.translucent,
@@ -356,13 +391,21 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 ),
                 // The compose bar sits between the terminal and the quick
                 // keys, where the soft keyboard pushes it into view.
-                if (_showComposeBar)
+                if (state.composeBarVisible)
                   TerminalComposeBar(
                     state: state,
-                    onClose: () => setState(() => _showComposeBar = false),
+                    onClose: () => state.setComposeBarVisible(false),
                   ),
                 // Quick-access keys stay available even in fullscreen.
-                if (_showKeys) _buildKeys(state),
+                if (state.quickKeysVisible)
+                  TerminalQuickKeys(
+                    state: state,
+                    onSend: (data) => _sendTerminalKey(state, data),
+                    onAction: (action) => _runKeyAction(state, action),
+                    banner: state.isAttaching
+                        ? _buildUploadBanner(state)
+                        : null,
+                  ),
               ],
             ),
             // Fleeting gesture feedback HUD (Spring Mode)
@@ -418,6 +461,22 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   ),
                 ),
               ),
+            // Reading back through the scrollback used to be a one-way trip:
+            // the only way back to the prompt was dragging until the buffer
+            // ran out. Only shown while actually scrolled up.
+            if (_scrolledUp)
+              Positioned(
+                right: 14,
+                bottom: fullscreen ? 70 : 14,
+                child: _FloatingControl(
+                  icon: Icons.keyboard_double_arrow_down,
+                  onTap: () {
+                    if (!_terminalScrollController.hasClients) return;
+                    _terminalScrollController.jumpTo(
+                        _terminalScrollController.position.maxScrollExtent);
+                  },
+                ),
+              ),
             if (fullscreen)
               Positioned(
                 right: 14,
@@ -435,12 +494,194 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   );
 }
 
+
+  // ---- Scrollback search -----------------------------------------------------
+
+  /// Runs [query] over the whole buffer and jumps to the **last** hit.
+  ///
+  /// Last, not first: the scrollback grows downwards and the interesting
+  /// occurrence of an error is almost always the most recent one. Starting at
+  /// the top would make the user press "next" thirty times to reach it.
+  void _runSearch(String query, Terminal terminal) {
+    final matches = TerminalSearch.find(terminal, query);
+    setState(() {
+      _matches = matches;
+      _matchIndex = matches.isEmpty ? 0 : matches.length - 1;
+    });
+    if (matches.isNotEmpty) _revealMatch(terminal);
+  }
+
+  void _stepMatch(int delta, Terminal terminal) {
+    if (_matches.isEmpty) return;
+    setState(() {
+      // Wraps, so "next" at the end goes back to the top instead of dead-ending.
+      _matchIndex = (_matchIndex + delta) % _matches.length;
+      if (_matchIndex < 0) _matchIndex += _matches.length;
+    });
+    _revealMatch(terminal);
+  }
+
+  /// Scrolls the current match into view and selects it, so the existing
+  /// selection painting *is* the highlight — no second highlight mechanism to
+  /// keep in sync with the theme.
+  void _revealMatch(Terminal terminal) {
+    if (_matches.isEmpty) return;
+    final match = _matches[_matchIndex];
+    final render = _terminalViewKey.currentState?.renderTerminal;
+    if (render == null || !_terminalScrollController.hasClients) return;
+
+    final position = _terminalScrollController.position;
+    // A third of the way down rather than at the very top: the lines *around*
+    // an error are most of why you were looking for it.
+    final target =
+        match.line * render.lineHeight - position.viewportDimension / 3;
+    _terminalScrollController
+        .jumpTo(target.clamp(0.0, position.maxScrollExtent));
+
+    final buffer = terminal.buffer;
+    _terminalController.setSelection(
+      buffer.createAnchorFromOffset(CellOffset(match.start, match.line)),
+      buffer.createAnchorFromOffset(CellOffset(match.end, match.line)),
+    );
+  }
+
+  void _closeSearch(AppState state) {
+    state.setTerminalSearchOpen(false);
+    _searchController.clear();
+    _terminalController.clearSelection();
+    setState(() {
+      _matches = const [];
+      _matchIndex = 0;
+    });
+    _terminalFocusNode.requestFocus();
+  }
+
+  /// The search bar. Sits under the toolbar rather than floating over the
+  /// buffer: an overlay would cover the very output being searched.
+  Widget _searchBar(AppState state) {
+    final terminal = state.terminal;
+    final hasQuery = _searchController.text.isNotEmpty;
+    final count = _matches.length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        border: Border(bottom: BorderSide(color: AppColors.hairline, width: 1)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          Icon(Icons.search, size: 15, color: AppColors.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              style: AppText.mono(12, color: AppColors.bone),
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: tr('Buscar en la salida…'),
+                hintStyle: AppText.body(12, color: AppColors.faint),
+              ),
+              onChanged: (q) => _runSearch(q, terminal),
+              onSubmitted: (_) => _stepMatch(1, terminal),
+            ),
+          ),
+          if (hasQuery)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                count == 0
+                    ? tr('sin resultados')
+                    : '${_matchIndex + 1}/$count'
+                        '${count >= TerminalSearch.maxMatches ? '+' : ''}',
+                style: AppText.mono(10, color: AppColors.muted),
+              ),
+            ),
+          IconTapTarget(
+            icon: Icons.keyboard_arrow_up,
+            label: tr('Coincidencia anterior'),
+            min: 38,
+            color: count == 0 ? AppColors.hairline : AppColors.muted,
+            onTap: count == 0 ? null : () => _stepMatch(-1, terminal),
+          ),
+          IconTapTarget(
+            icon: Icons.keyboard_arrow_down,
+            label: tr('Coincidencia siguiente'),
+            min: 38,
+            color: count == 0 ? AppColors.hairline : AppColors.muted,
+            onTap: count == 0 ? null : () => _stepMatch(1, terminal),
+          ),
+          IconTapTarget(
+            icon: Icons.close,
+            label: tr('Cerrar búsqueda'),
+            min: 38,
+            color: AppColors.muted,
+            onTap: () => _closeSearch(state),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Copies the whole scrollback to the clipboard.
+  Future<void> _copyBuffer(AppState state) async {
+    final buffer = state.terminal.buffer;
+    final text = buffer.getText(BufferRangeLine(
+      const CellOffset(0, 0),
+      CellOffset(buffer.viewWidth - 1, buffer.lines.length - 1),
+    ));
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    _toast(tr('Salida copiada ({0} líneas)', [buffer.lines.length]));
+  }
+
+  /// Writes the scrollback to a file next to the app's downloads, so a long
+  /// session can be attached to a bug report instead of screenshotted.
+  Future<void> _saveBuffer(AppState state) async {
+    final buffer = state.terminal.buffer;
+    final text = buffer.getText(BufferRangeLine(
+      const CellOffset(0, 0),
+      CellOffset(buffer.viewWidth - 1, buffer.lines.length - 1),
+    ));
+    try {
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .split('.')
+          .first;
+      final name =
+          '${state.activeSession?.name ?? 'sesion'}-$stamp.log'.replaceAll(
+              RegExp(r'[^A-Za-z0-9._-]'), '_');
+      String dir;
+      if (Platform.isAndroid &&
+          await Directory('/storage/emulated/0/Download').exists()) {
+        dir = '/storage/emulated/0/Download/KAMMEL';
+      } else {
+        dir = (await getApplicationDocumentsDirectory()).path;
+      }
+      await Directory(dir).create(recursive: true);
+      final file = File('$dir/$name');
+      await file.writeAsString(text);
+      if (!mounted) return;
+      _toast(tr('Guardado en {0}', [file.path]));
+    } catch (e) {
+      if (!mounted) return;
+      _toast(tr('No se pudo guardar: {0}', [e]));
+    }
+  }
+
   // ---- Reconnect banner ------------------------------------------------------
 
-  /// Thin strip shown while the active session's SSH connection is down: one
-  /// tap re-establishes it (see [AppState.reconnectSession]).
+  /// Thin strip shown while the active session's SSH connection is down: it
+  /// names the reason (classified in [ConnectionError], not the raw dartssh2
+  /// text) and one tap re-establishes the connection.
   Widget _reconnectBanner(AppState state) {
     final session = state.activeSession!;
+    final failure = session.lastError;
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.panel,
@@ -450,11 +691,32 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       child: Row(
         children: [
-          Icon(Icons.link_off, size: 14, color: AppColors.muted),
+          Icon(Icons.link_off,
+              size: 14,
+              color: failure == null ? AppColors.muted : AppColors.danger),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(tr('CONEXIÓN PERDIDA'),
-                style: AppText.label(9, color: AppColors.muted, spacing: 1.2)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(failure?.title ?? tr('CONEXIÓN PERDIDA'),
+                    style: failure == null
+                        ? AppText.label(9, color: AppColors.muted, spacing: 1.2)
+                        : AppText.body(11, color: AppColors.bone),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                if (failure != null)
+                  InkWell(
+                    onTap: () => _showFailureDetails(state, session, failure),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(tr('Ver qué hacer'),
+                          style: AppText.label(8,
+                              color: AppColors.accent, spacing: 1.0)),
+                    ),
+                  ),
+              ],
+            ),
           ),
           session.reconnecting
               ? SizedBox(
@@ -474,8 +736,105 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     );
   }
 
+  /// The full story behind a failed connection: what happened, what to do, the
+  /// action that most likely fixes it, and the original error text folded away
+  /// for whoever wants it.
+  void _showFailureDetails(
+      AppState state, TerminalSession session, ConnectionError failure) {
+    showAdaptiveSheet(
+      context,
+      backgroundColor: AppColors.panel,
+      isScrollControlled: true,
+      maxWidth: 520,
+      builder: (sheetCtx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.error_outline,
+                        size: 16, color: AppColors.danger),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(failure.title.toUpperCase(),
+                          style: AppText.label(11,
+                              color: AppColors.bone, spacing: 1.2)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (failure.hint != null)
+                  Text(failure.hint!,
+                      style: AppText.body(12, color: AppColors.muted)),
+                const SizedBox(height: 16),
+                InvertedButton(
+                  label: failure.primaryActionLabel,
+                  expand: true,
+                  onPressed: () {
+                    Navigator.of(sheetCtx).pop();
+                    if (failure.suggestsKnownHosts) {
+                      state.setActiveTabIndex(5); // Ajustes → servidores conocidos
+                    } else if (failure.suggestsEditingProfile) {
+                      state.setActiveTabIndex(0); // Conexiones, para editarlo
+                    } else {
+                      state.reconnectSession(session);
+                    }
+                  },
+                ),
+                if (!failure.suggestsKnownHosts) ...[
+                  const SizedBox(height: 10),
+                  GhostButton(
+                    label: tr('Reintentar ahora'),
+                    icon: Icons.refresh,
+                    dense: true,
+                    onPressed: () {
+                      Navigator.of(sheetCtx).pop();
+                      state.reconnectSession(session);
+                    },
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Hairline(),
+                const SizedBox(height: 12),
+                Text(tr('DETALLE TÉCNICO'),
+                    style:
+                        AppText.label(9, color: AppColors.muted, spacing: 1.4)),
+                const SizedBox(height: 6),
+                SelectableText(failure.detail,
+                    style: AppText.mono(10, color: AppColors.faint)),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: GhostButton(
+                    label: tr('Copiar detalle'),
+                    icon: Icons.copy_outlined,
+                    dense: true,
+                    onPressed: () => Clipboard.setData(
+                        ClipboardData(text: failure.detail)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ---- Toolbar (sessions + actions) ----------------------------------------
 
+  /// The terminal's own chrome.
+  ///
+  /// It is width-aware rather than fixed: at 46px tall every icon is a real
+  /// tap target, and on a 360px phone seven of them plus the session name do
+  /// not fit. So the bar keeps the three controls that are used constantly —
+  /// the session switcher, search and the quick keyboard — and everything else
+  /// moves into "más", which is one tap and is *labelled*, unlike a row of
+  /// glyphs a new user has to decode.
   Widget _buildToolbar(BuildContext context, AppState state) {
     return Container(
       height: 46,
@@ -484,30 +843,129 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         border:
             Border(bottom: BorderSide(color: AppColors.hairline, width: 1)),
       ),
-      child: Row(
-        children: [
-          Expanded(child: _sessionSelector(context, state)),
-          Container(width: 1, height: 46, color: AppColors.hairline),
-          _toolbarIcon(Icons.text_decrease, tr('Reducir letra'),
-              () => state.bumpTerminalFontSize(-1)),
-          _toolbarIcon(Icons.text_increase, tr('Aumentar letra'),
-              () => state.bumpTerminalFontSize(1)),
-          _toolbarIcon(
-            _showKeys ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined,
-            tr('Teclas rápidas'),
-            () => setState(() => _showKeys = !_showKeys),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Below this the secondary icons crowd the session name out; the
+          // exact number is where the selector stops being able to show a
+          // profile name at all.
+          final wide = constraints.maxWidth >= 520;
+          return Row(
+            children: [
+              Expanded(child: _sessionSelector(context, state)),
+              Container(width: 1, height: 46, color: AppColors.hairline),
+              if (wide) ...[
+                _toolbarIcon(Icons.text_decrease, tr('Reducir letra'),
+                    () => state.bumpTerminalFontSize(-1)),
+                _toolbarIcon(Icons.text_increase, tr('Aumentar letra'),
+                    () => state.bumpTerminalFontSize(1)),
+              ],
+              _toolbarIcon(
+                Icons.search,
+                tr('Buscar en la salida'),
+                () => state.setTerminalSearchOpen(!state.terminalSearchOpen),
+                active: state.terminalSearchOpen,
+              ),
+              _toolbarIcon(
+                state.quickKeysVisible
+                    ? Icons.keyboard_hide_outlined
+                    : Icons.keyboard_outlined,
+                tr('Teclas rápidas'),
+                state.toggleQuickKeys,
+              ),
+              if (wide) ...[
+                _toolbarIcon(
+                  Icons.mic_none_outlined,
+                  tr('Barra de dictado'),
+                  state.toggleComposeBar,
+                  active: state.composeBarVisible,
+                ),
+                _tunnelsButton(context, state),
+                _toolbarIcon(Icons.open_in_full, tr('Expandir terminal'),
+                    () => state.setTerminalFullscreen(true)),
+              ],
+              _toolbarIcon(Icons.more_vert, tr('Más acciones'),
+                  () => _showMoreSheet(context, state)),
+              const SizedBox(width: 4),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Everything the toolbar can't fit, with words instead of glyphs.
+  ///
+  /// This is also where features that had no entry point at all now live —
+  /// scrollback export, the command history, the shortcut/gesture reference —
+  /// so they stop being things only their author knows about.
+  void _showMoreSheet(BuildContext context, AppState state) {
+    final tunnelCount = state.tunnels.activeCount(state.activeSession?.id);
+
+    showAdaptiveSheet(
+      context,
+      backgroundColor: AppColors.panel,
+      isScrollControlled: true,
+      maxWidth: 480,
+      builder: (sheetCtx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(tr('TERMINAL'),
+                    style: AppText.label(11,
+                        color: AppColors.bone, spacing: 1.4)),
+              ),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.search, tr('BUSCAR EN LA SALIDA'),
+                  () => state.setTerminalSearchOpen(true)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.history, tr('HISTORIAL DE COMANDOS'),
+                  () => showCommandHistorySheet(context,
+                      onInserted: _terminalFocusNode.requestFocus)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.bookmark_border, tr('PROMPTS GUARDADOS'),
+                  () => _showPrompts(state)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.difference_outlined, tr('PANEL DE GIT'),
+                  () => _showGitSlider(state)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.link, tr('ENLACES DETECTADOS'),
+                  () => _showLinksSheet(state)),
+              Hairline(),
+              _menuTile(
+                  sheetCtx,
+                  Icons.mic_none_outlined,
+                  state.composeBarVisible
+                      ? tr('OCULTAR BARRA DE DICTADO')
+                      : tr('BARRA DE DICTADO'),
+                  state.toggleComposeBar),
+              Hairline(),
+              _menuTile(
+                  sheetCtx,
+                  Icons.swap_horiz,
+                  tunnelCount > 0
+                      ? tr('TÚNELES · {0} ACTIVO(S)', [tunnelCount])
+                      : tr('TÚNELES'),
+                  () => _showTunnelsSheet(
+                      context, state, state.activeSession?.id ?? '')),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.open_in_full, tr('PANTALLA COMPLETA'),
+                  () => state.setTerminalFullscreen(true)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.copy_all_outlined,
+                  tr('COPIAR TODA LA SALIDA'), () => _copyBuffer(state)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.save_alt, tr('GUARDAR SALIDA EN ARCHIVO'),
+                  () => _saveBuffer(state)),
+              Hairline(),
+              _menuTile(sheetCtx, Icons.help_outline, tr('ATAJOS Y GESTOS'),
+                  () => showShortcutsHelpSheet(context)),
+            ],
           ),
-          _toolbarIcon(
-            Icons.mic_none_outlined,
-            tr('Barra de dictado'),
-            () => setState(() => _showComposeBar = !_showComposeBar),
-            active: _showComposeBar,
-          ),
-          _tunnelsButton(context, state),
-          _toolbarIcon(Icons.open_in_full, tr('Expandir terminal'),
-              () => state.setTerminalFullscreen(true)),
-          const SizedBox(width: 4),
-        ],
+        ),
       ),
     );
   }
@@ -519,59 +977,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
         onInserted: () => _terminalFocusNode.requestFocus());
   }
 
-  /// Opens the Git changes / project panel as a full-height drawer that slides
-  /// in from the left edge.
-  ///
-  /// On the desktop shell the panel is a real workspace pane, so this just
-  /// reveals it — pushing a route over an IDE layout that has room for the
-  /// panel would be strictly worse.
-  void _showGitSlider(AppState state) {
-    if (Layout.maybeOf(context)?.isDesktop ?? false) {
-      state.setGitPaneOpen(true);
-      return;
-    }
-
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: tr('Cerrar'),
-      barrierColor: Colors.black.withValues(alpha: 0.5),
-      transitionDuration: const Duration(milliseconds: 240),
-      pageBuilder: (dialogCtx, _, _) {
-        return Align(
-          alignment: Alignment.centerLeft,
-          child: SizedBox(
-            width: MediaQuery.of(dialogCtx).size.width * 0.86,
-            height: double.infinity,
-            // Own ScaffoldMessenger so the panel's SnackBars render in front of
-            // the slide instead of behind it on the root Scaffold.
-            child: ScaffoldMessenger(
-              child: Scaffold(
-                backgroundColor: AppColors.panel,
-                body: GitPanelSheet(
-                  state: state,
-                  // Shown after the panel closes, so it must go to the root
-                  // messenger (over the terminal), not the panel's.
-                  onToast: _toast,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-      transitionBuilder: (_, anim, _, child) {
-        final curved =
-            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(-1, 0),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        );
-      },
-    );
-  }
+  /// Opens the Git changes / project panel (see [showGitPanel]). The toast goes
+  /// to the root messenger, over the terminal, not the panel's own.
+  void _showGitSlider(AppState state) =>
+      showGitPanel(context, state, onToast: _toast);
 
   /// Lets the user pick a file/image; it's uploaded to the server over SFTP and
   /// its remote path inserted into the prompt for a TUI agent (Claude Code) to
@@ -973,27 +1382,37 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              GestureDetector(
+              // 15px glyphs with 6px of padding are a 27px target: closing a
+              // live SSH session by mis-tap is expensive, so the hit area is
+              // grown to the touch minimum without changing how it looks.
+              IconTapTarget(
+                icon: Icons.edit_outlined,
+                label: tr('Renombrar sesión'),
+                size: 15,
+                color: isActive ? AppColors.ink : AppColors.muted,
                 onTap: () =>
                     _showRenameDialog(sheetCtx, state, index, session.name),
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(Icons.edit_outlined,
-                      size: 15,
-                      color: isActive ? AppColors.ink : AppColors.muted),
-                ),
               ),
-              const SizedBox(width: 2),
-              GestureDetector(
-                onTap: () => state.closeSession(index),
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(Icons.close,
-                      size: 15,
-                      color: isActive ? AppColors.ink : AppColors.muted),
-                ),
+              IconTapTarget(
+                icon: Icons.close,
+                label: tr('Cerrar sesión'),
+                size: 15,
+                color: isActive ? AppColors.ink : AppColors.muted,
+                onTap: () {
+                  final profile = session.activeProfile;
+                  state.closeSession(index);
+                  ScaffoldMessenger.of(sheetCtx)
+                    ..hideCurrentSnackBar()
+                    ..showSnackBar(SnackBar(
+                      content: Text(tr('Sesión "{0}" cerrada', [session.name])),
+                      action: profile == null
+                          ? null
+                          : SnackBarAction(
+                              label: tr('Reconectar'),
+                              onPressed: () => state.connectToSSH(profile),
+                            ),
+                    ));
+                },
               ),
             ],
           ),
@@ -1041,225 +1460,48 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
 
   Widget _menuTile(
       BuildContext sheetCtx, IconData icon, String label, VoidCallback action) {
-    return InkWell(
-      onTap: () {
-        Navigator.of(sheetCtx).pop();
-        action();
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: AppColors.bone),
-            const SizedBox(width: 12),
-            Text(label,
-                style: AppText.label(10, color: AppColors.bone, spacing: 1.0)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ---- Smart keyboard (extra keys, Termux-style) ---------------------------
-
-  Widget _buildDpad(AppState state) {
-    final h = state.shortcutKeyHeight;
-    final totalH = h * 2 + 5;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _key('←', () => _sendTerminalKey(state, '\x1b[D'), width: 34, height: totalH),
-        const SizedBox(width: 4),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _key('↑', () => _sendTerminalKey(state, '\x1b[A'), width: 34, height: h),
-            const SizedBox(height: 5),
-            _key('↓', () => _sendTerminalKey(state, '\x1b[B'), width: 34, height: h),
-          ],
-        ),
-        const SizedBox(width: 4),
-        _key('→', () => _sendTerminalKey(state, '\x1b[C'), width: 34, height: totalH),
-      ],
-    );
-  }
-
-  Widget _buildScrollableRow1(AppState state) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _key('CTRL', state.toggleCtrl, armed: state.ctrlArmed, width: 44),
-          _key('SHIFT', state.toggleShift, armed: state.shiftArmed, width: 48),
-          _key('ESC', () => _sendTerminalKey(state, '\x1b'), width: 36),
-          _key('TAB', () => _sendTerminalKey(state, '\t'), width: 36),
-          _key('S-Tab', () => _sendTerminalKey(state, '\x1b[Z'), width: 44),
-          _key('ALT', () => _sendTerminalKey(state, '\x1b'), width: 36),
-          _key('^C', () => _sendTerminalKey(state, '\x03'), inverted: true, width: 32),
-          _key('^D', () => _sendTerminalKey(state, '\x04'), width: 32),
-          _key('^DEL', () => _sendTerminalKey(state, '\x1b[3;5~'), width: 44),
-          _key('^W', () => _sendTerminalKey(state, '\x17'), width: 32),
-          _key('^U', () => _sendTerminalKey(state, '\x15'), width: 32),
-          _key('^R', () => _sendTerminalKey(state, '\x12'), width: 32),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScrollableRow2(AppState state) {
-    final enabled = state.customShortcuts.where((s) => s.enabled).toList();
-    // The gear opens the shortcut manager, so it has to stay reachable even if
-    // the user disabled or deleted the AJUSTES shortcut — but only add it when
-    // that shortcut isn't already drawing one, or the row shows two gears.
-    final hasSettingsKey = enabled.any((s) => s.value == 'system:settings');
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          ...enabled.map((shortcut) => _buildShortcutKey(state, shortcut)),
-          if (!hasSettingsKey)
-            _key('', () => ShortcutManagerSheet.show(context, state),
-                icon: Icons.settings, width: 34),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildKeys(AppState state) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.ink,
-        border: Border(top: BorderSide(color: AppColors.hairline, width: 1)),
-      ),
-      padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            if (state.isAttaching) _buildUploadBanner(state),
-            if (state.shortcutLayout == TerminalShortcutLayout.dpadLeft) ...[
-              Row(
-                children: [
-                  _buildDpad(state),
-                  const SizedBox(width: 6),
-                  Container(width: 1, height: 61, color: AppColors.hairline),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildScrollableRow1(state),
-                        const SizedBox(height: 5),
-                        _buildScrollableRow2(state),
-                      ],
-                    ),
-                  ),
-                ],
-              )
-            ] else if (state.shortcutLayout == TerminalShortcutLayout.dpadRight) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildScrollableRow1(state),
-                        const SizedBox(height: 5),
-                        _buildScrollableRow2(state),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Container(width: 1, height: 61, color: AppColors.hairline),
-                  const SizedBox(width: 6),
-                  _buildDpad(state),
-                ],
-              )
-            ] else ...[
-              // Classic double row layout.
-              // Row 1 — modifiers + signals (Expanded to fit screen width evenly)
-              _buildScrollableRow1(state),
-              const SizedBox(height: 5),
-              // Row 2 — Horizontally scrollable row of custom shortcuts.
-              _buildScrollableRow2(state),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-
-  Widget _buildShortcutKey(AppState state, TerminalShortcut shortcut) {
-    if (shortcut.value.startsWith('system:')) {
-      final action = shortcut.value.substring(7);
-      switch (action) {
-        case 'attach':
-          return _attachKey(state);
-        case 'prompts':
-          return _key(tr('PROMPTS'), () => _showPrompts(state), icon: Icons.bolt_outlined, width: 76);
-        case 'commit':
-          return _key(tr('COMMIT'), () => _showGitSlider(state), icon: Icons.commit_outlined, width: 76);
-        case 'links':
-          return _key(tr('ENLACES'), () => _showLinksSheet(state), icon: Icons.link, width: 76);
-        case 'settings':
-          return _key('', () => ShortcutManagerSheet.show(context, state), icon: Icons.settings, width: 34);
-        default:
-          return const SizedBox.shrink();
-      }
-    } else {
-      return _key(
-        tr(shortcut.label),
-        () => _sendTerminalKey(state, shortcut.parsedValue),
-      );
-    }
-  }
-
-  /// The ADJUNTAR key. While the picked file is uploading over SFTP it turns
-  /// into a live progress ring: the upload happens *before* anything lands in
-  /// the prompt, so on a slow link an inert key just reads as a frozen app.
-  Widget _attachKey(AppState state) {
-    if (!state.isAttaching) {
-      return _key(tr('ADJUNTAR'), () => _attach(state),
-          icon: Icons.attach_file, width: 76);
-    }
-    final progress = state.attachProgress;
-    return SizedBox(
-      width: 76,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Container(
-          height: state.shortcutKeyHeight,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.hairline, width: 1),
-          ),
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(sheetCtx).pop();
+          action();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 1.6,
-                  color: AppColors.bone,
-                  backgroundColor: AppColors.hairline,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                progress == null ? '···' : '${(progress * 100).round()}%',
-                style: AppText.mono(10.5,
-                    color: AppColors.bone,
-                    weight: FontWeight.w500,
-                    spacing: 0.2),
+              Icon(icon, size: 16, color: AppColors.bone),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(label,
+                    style:
+                        AppText.label(10, color: AppColors.bone, spacing: 1.0)),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// Runs a named action key from the quick keyboard's ACCIONES layer.
+  void _runKeyAction(AppState state, String action) {
+    switch (action) {
+      case 'attach':
+        _attach(state);
+        break;
+      case 'prompts':
+        _showPrompts(state);
+        break;
+      case 'commit':
+        _showGitSlider(state);
+        break;
+      case 'links':
+        _showLinksSheet(state);
+        break;
+    }
   }
 
   /// Thin banner over the shortcut rows while a file is being uploaded to the
@@ -1307,59 +1549,6 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     );
   }
 
-  Widget _key(
-    String label,
-    VoidCallback onPressed, {
-    bool inverted = false,
-    bool armed = false,
-    IconData? icon,
-    double? width,
-    double? height,
-  }) {
-    final state = Provider.of<AppState>(context, listen: false);
-    final keyHeight = height ?? state.shortcutKeyHeight;
-    // `armed` (the live CTRL toggle) wins over the static `inverted` accent.
-    final highlighted = armed || inverted;
-    final bg = highlighted ? AppColors.bone : Colors.transparent;
-    final fg = highlighted ? AppColors.ink : AppColors.bone;
-
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: Material(
-        color: bg,
-        child: InkWell(
-          onTap: onPressed,
-          child: Container(
-            height: keyHeight,
-            width: width ?? state.shortcutKeyWidth,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: highlighted ? Colors.transparent : AppColors.hairline,
-                width: 1,
-              ),
-            ),
-            child: icon != null
-                ? Icon(icon, size: 14, color: fg)
-                : Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    style: AppText.mono(10.5,
-                        color: fg,
-                        weight:
-                            highlighted ? FontWeight.w700 : FontWeight.w500,
-                        spacing: 0.2),
-                  ),
-          ),
-        ),
-      ),
-    );
-
-    if (width != null) {
-      return SizedBox(width: width, child: content);
-    }
-    return Expanded(child: content);
-  }
 }
 
 /// Two-finger pinch on the terminal adjusts the font size (Termux-style).

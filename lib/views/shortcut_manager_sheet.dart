@@ -3,6 +3,7 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/adaptive_sheet.dart';
 import '../models/terminal_shortcut.dart';
+import '../models/terminal_key_layer.dart';
 import '../widgets/swiss.dart';
 import '../l10n/l10n.dart';
 
@@ -64,31 +65,44 @@ class ShortcutManagerSheet {
                     ],
                   ),
                   const SizedBox(height: 6),
+                  // Rows, not key width: the grid derives its columns from
+                  // this, so the choice is "how tall may the bar be" and the
+                  // keys are sized to fit whatever that leaves.
                   Row(
                     children: [
-                      Text(tr('ANCHO TECLAS'),
+                      Text(tr('FILAS'),
                           style: AppText.mono(9, color: AppColors.muted)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Slider(
-                          value: state.shortcutKeyWidth,
-                          min: 20.0,
-                          max: 120.0,
-                          divisions: 100,
-                          label: '${state.shortcutKeyWidth.round()}px',
-                          activeColor: AppColors.accent,
-                          inactiveColor: AppColors.hairline,
-                          onChanged: (val) {
-                            state.setShortcutKeyWidth(val);
-                            setSheetState(() {});
-                          },
+                      const SizedBox(width: 12),
+                      for (final n in const [1, 2, 3])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: _MiniToggle(
+                            label: '$n',
+                            selected: state.shortcutRows == n,
+                            onTap: () {
+                              state.setShortcutRows(n);
+                              setSheetState(() {});
+                            },
+                          ),
                         ),
+                      const Spacer(),
+                      Text(
+                        state.shortcutRows == 1
+                            ? tr('teclas más pequeñas')
+                            : tr('teclas más grandes'),
+                        style: AppText.mono(8.5, color: AppColors.muted),
                       ),
-                      Text('${state.shortcutKeyWidth.round()}px',
-                          style: AppText.mono(9, color: AppColors.bone)),
                     ],
                   ),
                   const SizedBox(height: 12),
+                  _LayersSection(
+                    state: state,
+                    onChanged: () => setSheetState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(tr('MIS ATAJOS'),
+                      style: AppText.mono(9, color: AppColors.muted)),
+                  const SizedBox(height: 6),
                   ConstrainedBox(
                     constraints: BoxConstraints(
                       maxHeight: MediaQuery.of(dialogCtx).size.height * 0.45,
@@ -191,6 +205,9 @@ class ShortcutManagerSheet {
                         dense: true,
                         onPressed: () {
                           state.setCustomShortcuts(state.getDefaultShortcuts());
+                          state.setShortcutLayers(
+                              List.of(QuickKeyLayer.values));
+                          state.setShortcutRows(1);
                           setSheetState(() {});
                         },
                       ),
@@ -340,6 +357,161 @@ class ShortcutManagerSheet {
           label,
           style: AppText.mono(8.5, color: AppColors.bone),
         ),
+      ),
+    );
+  }
+}
+
+/// Small square toggle used for the row-count picker.
+class _MiniToggle extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MiniToggle({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        width: 30,
+        height: 26,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.bone : Colors.transparent,
+          border: Border.all(
+            color: selected ? Colors.transparent : AppColors.hairline,
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppText.mono(11,
+              color: selected ? AppColors.ink : AppColors.bone,
+              weight: selected ? FontWeight.w700 : FontWeight.w500),
+        ),
+      ),
+    );
+  }
+}
+
+/// Which layer tabs the keyboard shows, and in what order.
+///
+/// Collapsed by default: it is a setup-once control, and the sheet's main job
+/// is still editing the user's own shortcuts.
+class _LayersSection extends StatelessWidget {
+  final AppState state;
+  final VoidCallback onChanged;
+
+  const _LayersSection({required this.state, required this.onChanged});
+
+  /// Short "what's in it" line, so hiding a layer is an informed choice.
+  String _hint(QuickKeyLayer layer) {
+    switch (layer) {
+      case QuickKeyLayer.control:
+        return tr('Códigos de control (^A, ^R, ^Z…)');
+      case QuickKeyLayer.nav:
+        return tr('Flechas, Inicio/Fin, páginas, Supr');
+      case QuickKeyLayer.fn:
+        return tr('Teclas F1 – F12');
+      case QuickKeyLayer.actions:
+        return tr('Adjuntar, prompts, commit, enlaces');
+      case QuickKeyLayer.mine:
+        return tr('Tus atajos personalizados');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = state.shortcutLayers;
+    // Hidden layers are listed after the visible ones so the order shown here
+    // matches the tab strip exactly for everything that is on screen.
+    final hidden = QuickKeyLayer.values.where((l) => !visible.contains(l));
+    final ordered = [...visible, ...hidden];
+
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        iconColor: AppColors.bone,
+        collapsedIconColor: AppColors.muted,
+        title: Text(tr('CAPAS DEL TECLADO'),
+            style: AppText.mono(9, color: AppColors.muted)),
+        subtitle: Text(
+          visible.map((l) => tr(l.label)).join(' · '),
+          style: AppText.mono(9, color: AppColors.bone),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        children: [
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: ordered.length,
+            // ignore: deprecated_member_use
+            onReorder: (oldIndex, newIndex) {
+              if (oldIndex < newIndex) newIndex -= 1;
+              final next = List.of(ordered);
+              final moved = next.removeAt(oldIndex);
+              next.insert(newIndex, moved);
+              // Dragging a hidden layer into the list is also how you show it:
+              // the new order defines what is visible, minus what is still
+              // unchecked below.
+              state.setShortcutLayers(
+                  next.where(visible.contains).toList());
+              onChanged();
+            },
+            itemBuilder: (ctx, i) {
+              final layer = ordered[i];
+              final on = visible.contains(layer);
+              return Row(
+                key: ValueKey(layer),
+                children: [
+                  Checkbox(
+                    activeColor: AppColors.accent,
+                    checkColor: AppColors.ink,
+                    side: BorderSide(color: AppColors.muted),
+                    value: on,
+                    onChanged: (val) {
+                      state.toggleShortcutLayer(layer, val ?? false);
+                      onChanged();
+                    },
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tr(layer.label),
+                            style: AppText.mono(11,
+                                color: on ? AppColors.bone : AppColors.muted,
+                                weight: FontWeight.w600)),
+                        Text(_hint(layer),
+                            style: AppText.mono(8.5, color: AppColors.muted),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                  ReorderableDragStartListener(
+                    index: i,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Icon(Icons.drag_handle,
+                          size: 18, color: AppColors.muted),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }

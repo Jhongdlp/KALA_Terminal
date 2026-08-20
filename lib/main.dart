@@ -145,16 +145,52 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         // every route — dialogs and sheets render below it, which is what the
         // native bar did too. Rebuilt with MaterialApp on a language change,
         // so its tooltips follow the language like everything else.
-        builder: isDesktopPlatform
-            ? (context, child) => Column(
-                  children: [
-                    const WindowTitleBar(),
-                    Expanded(child: child ?? const SizedBox()),
-                  ],
-                )
-            : null,
+        // Text scaling and, on desktop, the custom title bar. The scaler wraps
+        // *everything* including routes, which is the only place it can go: a
+        // MediaQuery override inside HomeView would leave dialogs and sheets
+        // (their own routes, siblings of the shell) unscaled.
+        builder: (context, child) {
+          final scaled = _TextScaleGate(child: child ?? const SizedBox());
+          if (!isDesktopPlatform) return scaled;
+          return Column(
+            children: [
+              const WindowTitleBar(),
+              Expanded(child: scaled),
+            ],
+          );
+        },
         home: const _LockGate(),
       ),
+    );
+  }
+}
+
+
+/// Applies the app's own text-size preference on top of the system's, and caps
+/// the product.
+///
+/// The cap is not paternalism: the shell is built from fixed-height bars (46px
+/// terminal toolbar, 42px explorer path bar, 30px panel titles) whose labels
+/// simply stop fitting past it. Growing text until the controls it labels are
+/// unreadable helps nobody, so it stops there — and the app multiplier means a
+/// user who wants bigger text still gets it without touching the system.
+class _TextScaleGate extends StatelessWidget {
+  final Widget child;
+  const _TextScaleGate({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final appScale = context.select<AppState, double>((s) => s.textScale);
+    final media = MediaQuery.of(context);
+    // TextScaler is non-linear on newer Androids, so ask it what it does to a
+    // reference size rather than assuming a factor.
+    final systemScale = media.textScaler.scale(14) / 14;
+    final effective =
+        (systemScale * appScale).clamp(0.8, AppState.maxEffectiveTextScale);
+
+    return MediaQuery(
+      data: media.copyWith(textScaler: TextScaler.linear(effective)),
+      child: child,
     );
   }
 }

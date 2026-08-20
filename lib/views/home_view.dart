@@ -7,6 +7,9 @@ import '../theme/app_theme.dart';
 import '../theme/breakpoints.dart';
 import '../services/update_service.dart';
 import '../widgets/menu_drawer.dart';
+import 'command_palette.dart';
+import 'onboarding_sheet.dart';
+import 'shell/app_commands.dart';
 import 'shell/app_screen.dart';
 import 'shell/desktop_shell.dart';
 import 'shell/git_pane.dart';
@@ -95,6 +98,12 @@ class _HomeViewState extends State<HomeView> {
       _updateChecked = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
     }
+    // First run: the three-card introduction. Guarded by its own persisted
+    // flag (written before the sheet opens), so the language remount can't
+    // show it twice.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeShowOnboarding(context);
+    });
   }
 
   Future<void> _checkForUpdate() async {
@@ -153,6 +162,33 @@ class _HomeViewState extends State<HomeView> {
     // than dart:io Platform, so widget tests can override it.
     final hasSystemBack = defaultTargetPlatform == TargetPlatform.android;
 
+    // Keyboard shortcuts for the whole app. They sit *above* the focused
+    // widget, so the terminal still sees every key first — which is exactly why
+    // every binding uses Ctrl+Shift (or Alt+digit, or a function key): xterm's
+    // Ctrl handler bows out when Shift is held, so nothing here can swallow a
+    // Ctrl+C on its way to the shell. See app_commands.dart.
+    return CallbackShortcuts(
+      bindings: appShortcutBindings(
+        context,
+        context.read<AppState>(),
+        overrides: {
+          // The palette owns a route, which the registry (pure data) can't.
+          'app.palette': () => showCommandPalette(context),
+        },
+      ),
+      child: Focus(
+        autofocus: true,
+        // Never take focus away from a text field or the terminal: this node
+        // only exists so key events have somewhere to bubble up to.
+        canRequestFocus: false,
+        child: _buildShell(context, activeTabIndex, isFileDirty, hideTopNav,
+            hasSystemBack),
+      ),
+    );
+  }
+
+  Widget _buildShell(BuildContext context, int activeTabIndex, bool isFileDirty,
+      bool hideTopNav, bool hasSystemBack) {
     return PopScope(
       // Never let the system pop (= close) the activity directly; _onBackPressed
       // walks the in-app hierarchy and exits via SystemNavigator only on a

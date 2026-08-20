@@ -146,25 +146,35 @@ class ConnectionProfile {
 
   String toJsonPublic() => json.encode(toMapPublic());
 
+  /// [clearGroupId] is what moves a profile *out* of every group: a null
+  /// `groupId` argument can only ever mean "keep what it had", so without an
+  /// explicit flag there is no way to express "ungrouped".
   ConnectionProfile copyWith({
+    String? name,
+    String? host,
+    int? port,
+    String? username,
     String? password,
     String? privateKey,
     List<SshTunnel>? tunnels,
     String? groupId,
+    bool clearGroupId = false,
+    bool? useTmux,
+    bool? useDeviceKey,
   }) {
     return ConnectionProfile(
       id: id,
-      name: name,
-      host: host,
-      port: port,
-      username: username,
+      name: name ?? this.name,
+      host: host ?? this.host,
+      port: port ?? this.port,
+      username: username ?? this.username,
       password: password ?? this.password,
       privateKey: privateKey ?? this.privateKey,
       isLocal: isLocal,
-      groupId: groupId ?? this.groupId,
+      groupId: clearGroupId ? null : (groupId ?? this.groupId),
       tunnels: tunnels ?? this.tunnels,
-      useTmux: useTmux,
-      useDeviceKey: useDeviceKey,
+      useTmux: useTmux ?? this.useTmux,
+      useDeviceKey: useDeviceKey ?? this.useDeviceKey,
     );
   }
 

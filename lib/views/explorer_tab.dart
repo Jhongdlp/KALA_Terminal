@@ -4,7 +4,10 @@ import 'dart:io';
 
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_sheet.dart';
 import '../widgets/swiss.dart';
+import '../widgets/edge_dock.dart';
+import '../widgets/tap_target.dart';
 import 'folder_picker_dialog.dart';
 import '../l10n/l10n.dart';
 
@@ -66,6 +69,10 @@ class _ExplorerTabState extends State<ExplorerTab> {
         context.select<AppState, bool>((s) => s.canNavigateBack);
     final downloadPhase =
         context.select<AppState, DownloadPhase>((s) => s.downloadPhase);
+    context.select<AppState, FileSortKey>((s) => s.fileSortKey);
+    context.select<AppState, bool>((s) => s.fileSortAscending);
+    final dockLeft = context.select<AppState, bool>((s) => s.explorerDockLeft);
+    final dockY = context.select<AppState, double>((s) => s.explorerDockY);
     _onDownloadPhaseChanged(context, downloadPhase);
     // AppColors is a global, mutable palette swapped on theme change; depend on
     // themeChoice so this isolated tab rebuilds and re-reads the new colors.
@@ -78,12 +85,12 @@ class _ExplorerTabState extends State<ExplorerTab> {
     }
 
     final query = searchQuery.toLowerCase();
-    final visible = files.where((f) {
+    final visible = context.read<AppState>().sortFiles(files.where((f) {
       if (!showHidden && f.name.startsWith('.')) return false;
       if (typeFilter == FileTypeFilter.folders && !f.isDirectory) return false;
       if (typeFilter == FileTypeFilter.filesOnly && f.isDirectory) return false;
       return query.isEmpty || f.name.toLowerCase().contains(query);
-    }).toList();
+    }).toList());
 
     return Container(
       color: AppColors.ink,
@@ -113,12 +120,12 @@ class _ExplorerTabState extends State<ExplorerTab> {
                       context, isLoadingFiles, files, visible, selected)),
             ],
           ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child:
-                Center(child: _buildSideDock(context, visible, selected, clipboardCount)),
+          EdgeDock(
+            left: dockLeft,
+            y: dockY,
+            onMoved: context.read<AppState>().setExplorerDock,
+            builder: (context, left) => _buildSideDock(
+                context, visible, selected, clipboardCount, left),
           ),
         ],
       ),
@@ -140,6 +147,213 @@ class _ExplorerTabState extends State<ExplorerTab> {
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
       visualDensity: VisualDensity.compact,
+    );
+  }
+
+
+  // ---- Breadcrumb, sorting and bookmarks --------------------------------------
+
+  /// The current path as tappable segments.
+  ///
+  /// It used to be a `Text` inside a horizontal scroll view: the path was
+  /// *information*, and climbing out of `/var/www/html/app/config` meant four
+  /// presses of "subir un nivel". Each segment now jumps straight to its own
+  /// directory, and the row still scrolls (reversed, so the deepest — most
+  /// relevant — end stays visible).
+  Widget _buildBreadcrumb(BuildContext context, String currentPath) {
+    final path = currentPath.isEmpty ? '~' : currentPath;
+    final absolute = path.startsWith('/');
+    final parts = path.split('/').where((p) => p.isNotEmpty).toList();
+
+    // Rebuild each segment's own absolute path as we go.
+    final crumbs = <({String label, String path})>[];
+    if (absolute) crumbs.add((label: '/', path: '/'));
+    var accumulated = absolute ? '' : '.';
+    for (final part in parts) {
+      accumulated = absolute ? '$accumulated/$part' : '$accumulated/$part';
+      crumbs.add((label: part, path: accumulated));
+    }
+    if (crumbs.isEmpty) crumbs.add((label: path, path: path));
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      reverse: true,
+      child: Row(
+        children: [
+          for (int i = 0; i < crumbs.length; i++) ...[
+            if (i > 0 && crumbs[i - 1].label != '/')
+              Text('/', style: AppText.mono(11, color: AppColors.faint)),
+            InkWell(
+              // The last crumb is where we already are: tapping it refreshes,
+              // which is the only sensible reading of "go here" from here.
+              onTap: () => context
+                  .read<AppState>()
+                  .changeDirectory(crumbs[i].path),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+                child: Text(
+                  crumbs[i].label,
+                  style: AppText.mono(11,
+                      color: i == crumbs.length - 1
+                          ? AppColors.bone
+                          : AppColors.muted),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Pin / unpin the current folder.
+  Widget _buildBookmarkButton(BuildContext context, String currentPath) {
+    final pinned =
+        context.select<AppState, bool>((s) => s.isBookmarked(currentPath));
+    return _barIcon(
+      pinned ? Icons.bookmark : Icons.bookmark_border,
+      tooltip: pinned ? tr('Quitar de fijadas') : tr('Fijar esta carpeta'),
+      active: pinned,
+      onTap: () => _toggleBookmark(context, currentPath),
+    );
+  }
+
+  Future<void> _toggleBookmark(BuildContext context, String path) async {
+    final state = context.read<AppState>();
+    final added = await state.toggleBookmark(path);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(added
+            ? tr('Carpeta fijada. La verás en Ir a…')
+            : tr('Carpeta quitada de las fijadas')),
+        action: SnackBarAction(
+          label: tr('Deshacer'),
+          onPressed: () => state.toggleBookmark(path),
+        ),
+      ));
+  }
+
+  /// Sorting and the pinned-folder list share one sheet: both answer "show me
+  /// this directory differently", and neither earns a permanent control in a
+  /// 42px bar that already holds seven.
+  void _showSortSheet(BuildContext context) {
+    final state = context.read<AppState>();
+
+    showAdaptiveSheet(
+      context,
+      backgroundColor: AppColors.panel,
+      isScrollControlled: true,
+      maxWidth: 460,
+      builder: (sheetCtx) => Consumer<AppState>(
+        builder: (ctx, s, _) => SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(tr('ORDENAR POR'),
+                      style: AppText.label(11,
+                          color: AppColors.bone, spacing: 1.4)),
+                ),
+                Hairline(),
+                for (final entry in const [
+                  (FileSortKey.name, 'Nombre'),
+                  (FileSortKey.modified, 'Fecha de modificación'),
+                  (FileSortKey.size, 'Tamaño'),
+                  (FileSortKey.extension, 'Tipo de archivo'),
+                ]) ...[
+                  _sortRow(ctx, s, entry.$1, tr(entry.$2)),
+                  Hairline(),
+                ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                  child: Text(tr('CARPETAS FIJADAS'),
+                      style: AppText.label(11,
+                          color: AppColors.bone, spacing: 1.4)),
+                ),
+                if (s.explorerBookmarks.isEmpty)
+                  Padding(
+                    padding:
+                        const EdgeInsets.fromLTRB(16, 6, 16, 18),
+                    child: Text(
+                        tr('Ninguna. Usa el marcador de la barra para fijar la carpeta en la que estés.'),
+                        style: AppText.body(11, color: AppColors.muted)),
+                  )
+                else
+                  for (final path in s.explorerBookmarks)
+                    InkWell(
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        state.changeDirectory(path);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
+                        child: Row(
+                          children: [
+                            Icon(Icons.bookmark,
+                                size: 14, color: AppColors.accent),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(path,
+                                  style: AppText.mono(11,
+                                      color: AppColors.bone),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                            IconTapTarget(
+                              icon: Icons.close,
+                              label: tr('Quitar de fijadas'),
+                              size: 14,
+                              min: 40,
+                              color: AppColors.muted,
+                              onTap: () => s.toggleBookmark(path),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sortRow(
+      BuildContext ctx, AppState state, FileSortKey key, String label) {
+    final active = state.fileSortKey == key;
+    return InkWell(
+      onTap: () => state.setFileSort(key),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(active ? Icons.check : Icons.check_box_outline_blank,
+                size: 15,
+                color: active ? AppColors.accent : AppColors.hairline),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(label,
+                  style: AppText.body(12,
+                      color: active ? AppColors.bone : AppColors.muted)),
+            ),
+            if (active)
+              Text(
+                  state.fileSortAscending
+                      ? tr('ASCENDENTE')
+                      : tr('DESCENDENTE'),
+                  style:
+                      AppText.label(8, color: AppColors.muted, spacing: 1.2)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -171,16 +385,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
           _barIcon(Icons.arrow_upward,
               tooltip: tr('Subir un nivel'),
               onTap: () => context.read<AppState>().navigateUp()),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              reverse: true,
-              child: Text(
-                currentPath.isEmpty ? '~' : currentPath,
-                style: AppText.mono(11, color: AppColors.bone),
-              ),
-            ),
-          ),
+          Expanded(child: _buildBreadcrumb(context, currentPath)),
           _barIcon(Icons.terminal,
               tooltip: tr('Abrir terminal aquí'),
               onTap: () =>
@@ -196,6 +401,10 @@ class _ExplorerTabState extends State<ExplorerTab> {
               active: showHidden,
               onTap: () => context.read<AppState>().setShowHidden(!showHidden)),
           _buildFilterButton(context, typeFilter),
+          _barIcon(Icons.sort,
+              tooltip: tr('Ordenar'),
+              onTap: () => _showSortSheet(context)),
+          _buildBookmarkButton(context, currentPath),
           _barIcon(Icons.refresh,
               tooltip: tr('Actualizar'),
               onTap: () =>
@@ -242,14 +451,20 @@ class _ExplorerTabState extends State<ExplorerTab> {
     );
   }
 
-  /// A narrow tab always pinned to the left edge of the screen. Tapping it
-  /// slides out a small panel with the file actions (upload, select all,
-  /// copy, paste) that used to live in the path bar's dropdown.
+  /// A narrow tab pinned to one edge of the screen. Tapping it slides out a
+  /// small panel with the file actions (upload, select all, copy, paste) that
+  /// used to live in the path bar's dropdown; a long press picks the whole
+  /// dock up and moves it (see [EdgeDock]).
+  ///
+  /// [left] is which edge it is currently on — the rounded corners and the
+  /// chevron both have to face away from that edge, or the tab reads as
+  /// pointing into the wall it is stuck to.
   Widget _buildSideDock(
       BuildContext context,
       List<FileSystemEntityInfo> visible,
       Set<String> selected,
-      int clipboardCount) {
+      int clipboardCount,
+      bool left) {
     final state = context.read<AppState>();
 
     Future<void> handleUpload() async {
@@ -287,9 +502,9 @@ class _ExplorerTabState extends State<ExplorerTab> {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: AppColors.panelHi,
-          borderRadius: const BorderRadius.only(
-            topRight: Radius.circular(8),
-            bottomRight: Radius.circular(8),
+          borderRadius: BorderRadius.horizontal(
+            left: left ? Radius.zero : const Radius.circular(8),
+            right: left ? const Radius.circular(8) : Radius.zero,
           ),
           border: Border.all(color: AppColors.hairline, width: 1),
         ),
@@ -302,7 +517,9 @@ class _ExplorerTabState extends State<ExplorerTab> {
                 width: 26,
                 height: 46,
                 child: Icon(
-                  _sideDockOpen ? Icons.chevron_left : Icons.chevron_right,
+                  _sideDockOpen == left
+                      ? Icons.chevron_left
+                      : Icons.chevron_right,
                   size: 16,
                   color: AppColors.muted,
                 ),
@@ -340,7 +557,10 @@ class _ExplorerTabState extends State<ExplorerTab> {
                   tooltip: tr('Pegar aquí'),
                   onTap: clipboardCount == 0
                       ? null
-                      : () => state.pasteClipboard()),
+                      : () async {
+                          final result = await state.pasteClipboard();
+                          if (context.mounted) _report(context, result);
+                        }),
               const SizedBox(height: 4),
             ],
           ],
@@ -436,7 +656,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
           _barIcon(Icons.delete_outline,
               tooltip: tr('Eliminar'),
               color: AppColors.danger,
-              onTap: () => _confirmDelete(context, selected.length)),
+              onTap: () => _confirmDelete(context, selected, visible)),
           _barIcon(Icons.close,
               tooltip: tr('Cancelar selección'), onTap: state.clearSelection),
         ],
@@ -657,7 +877,10 @@ class _ExplorerTabState extends State<ExplorerTab> {
           InvertedButton(
             label: tr('Pegar aquí'),
             dense: true,
-            onPressed: () => context.read<AppState>().pasteClipboard(),
+            onPressed: () async {
+              final result = await context.read<AppState>().pasteClipboard();
+              if (context.mounted) _report(context, result);
+            },
           ),
           _barIcon(Icons.close,
               tooltip: tr('Descartar'),
@@ -763,11 +986,63 @@ class _ExplorerTabState extends State<ExplorerTab> {
       ),
     );
     if (name == null || name.isEmpty) return;
-    if (isFolder) {
-      await state.createFolder(name);
-    } else {
-      await state.createFile(name);
-    }
+    final result = isFolder
+        ? await state.createFolder(name)
+        : await state.createFile(name);
+    if (context.mounted) _report(context, result);
+  }
+
+  /// Reports a finished file operation **where the user is standing**.
+  ///
+  /// These five operations used to write their errors into the terminal
+  /// buffer, a screen nobody is looking at while working in the explorer — so
+  /// a delete that failed on permissions looked exactly like nothing
+  /// happening. The friendly sentence goes in the snackbar; the raw exception
+  /// stays one tap away rather than being thrown out.
+  void _report(BuildContext context, FileOpResult result) {
+    if (!context.mounted || result.isSilent) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(result.message,
+            style: AppText.mono(11, color: AppColors.bone)),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: result.ok ? 3 : 6),
+        action: result.detail == null
+            ? null
+            : SnackBarAction(
+                label: tr('DETALLE'),
+                textColor: AppColors.accent,
+                onPressed: () => _showErrorDetail(context, result),
+              ),
+      ));
+  }
+
+  void _showErrorDetail(BuildContext context, FileOpResult result) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(4))),
+        title: Text(result.message,
+            style: AppText.mono(11, color: AppColors.bone)),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            result.detail ?? '',
+            style: AppText.mono(11, color: AppColors.muted),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('CERRAR'),
+                style: AppText.mono(10, color: AppColors.bone, spacing: 1.0)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _promptRename(
@@ -801,19 +1076,56 @@ class _ExplorerTabState extends State<ExplorerTab> {
       ),
     );
     if (name == null || name.isEmpty || name == entry.name) return;
-    await state.renameEntry(entry, name);
-    if (context.mounted) state.clearSelection();
+    final result = await state.renameEntry(entry, name);
+    if (!context.mounted) return;
+    state.clearSelection();
+    _report(context, result);
   }
 
-  Future<void> _confirmDelete(BuildContext context, int count) async {
+  /// Confirms a delete by **naming what will go**.
+  ///
+  /// "¿Eliminar 3 elemento(s)?" asks the user to trust a count they can no
+  /// longer see — the selection bar covers the list. Over SFTP there is no
+  /// trash and no undo, so the only protection is showing the names.
+  Future<void> _confirmDelete(BuildContext context, Set<String> selected,
+      List<FileSystemEntityInfo> visible) async {
+    final entries =
+        visible.where((f) => selected.contains(f.path)).toList();
+    final names = entries.isEmpty
+        ? selected.map((p) => p.split('/').last).toList()
+        : entries.map((f) => f.isDirectory ? '${f.name}/' : f.name).toList();
+    // Enough to recognise a mistake, not so many the dialog becomes a list.
+    const shown = 8;
+    final preview = names.take(shown).join('\n');
+    final rest = names.length - shown;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(tr('ELIMINAR'),
             style: AppText.label(12, color: AppColors.bone, spacing: 1.5)),
-        content: Text(
-            tr('¿Eliminar {0} elemento(s)? Las carpetas se borran con todo su contenido. Esta acción no se puede deshacer.', [count]),
-            style: AppText.body(13, color: AppColors.bone)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+                tr('Se eliminarán {0} elemento(s). Las carpetas se borran con todo su contenido, y esto no se puede deshacer.',
+                    [names.length]),
+                style: AppText.body(13, color: AppColors.bone)),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.hairline, width: 1)),
+              child: Text(
+                  rest > 0
+                      ? '$preview\n${tr('… y {0} más', [rest])}'
+                      : preview,
+                  style: AppText.mono(11, color: AppColors.muted)),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -830,7 +1142,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      context.read<AppState>().deleteSelection();
+      final result = await context.read<AppState>().deleteSelection();
+      if (context.mounted) _report(context, result);
     }
   }
 

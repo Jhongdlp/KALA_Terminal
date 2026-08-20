@@ -18,6 +18,7 @@ class PersonalizationTab extends StatelessWidget {
         context.select<AppState, AppThemeChoice>((s) => s.themeChoice);
     final iconScale =
         context.select<AppState, AppIconScale>((s) => s.iconScale);
+    final textScale = context.select<AppState, double>((s) => s.textScale);
     final terminalFontSize =
         context.select<AppState, double>((s) => s.terminalFontSize);
     final terminalScheme =
@@ -76,6 +77,62 @@ class PersonalizationTab extends StatelessWidget {
                   onChanged: state.setIconScale,
                 ),
               ),
+              Hairline(),
+              // The interface is full of 8–10px labels; this is the lever for
+              // anyone who can't read them. It multiplies whatever the system
+              // font setting already does, and the product is capped in
+              // main.dart so the fixed-height bars keep containing their text.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(tr('TAMAÑO DEL TEXTO'),
+                          style: AppText.label(9, color: AppColors.muted)),
+                    ),
+                    Text('${(textScale * 100).round()} %',
+                        style: AppText.mono(12, color: AppColors.bone)),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Text(
+                    tr('Se multiplica por el tamaño de letra del sistema. La terminal tiene el suyo propio, más abajo.'),
+                    style:
+                        AppText.label(8.5, color: AppColors.faint, spacing: 0.3)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    _StepButton(
+                      icon: Icons.remove,
+                      onTap: () => state.setTextScale(textScale - 0.05),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: textScale,
+                        min: AppState.minTextScale,
+                        max: AppState.maxTextScale,
+                        divisions: ((AppState.maxTextScale -
+                                    AppState.minTextScale) *
+                                20)
+                            .round(),
+                        activeColor: AppColors.bone,
+                        inactiveColor: AppColors.hairline,
+                        thumbColor: AppColors.bone,
+                        onChanged: state.setTextScale,
+                      ),
+                    ),
+                    _StepButton(
+                      icon: Icons.add,
+                      onTap: () => state.setTextScale(textScale + 0.05),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
@@ -215,7 +272,7 @@ class PersonalizationTab extends StatelessWidget {
               Hairline(),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
-                child: Text(tr('DISTRIBUCIÓN DE ATAJOS'),
+                child: Text(tr('FLECHAS DEL TECLADO RÁPIDO'),
                     style: AppText.label(9, color: AppColors.muted)),
               ),
               Padding(
@@ -223,6 +280,13 @@ class PersonalizationTab extends StatelessWidget {
                 child: _ShortcutLayoutSelector(
                   value: shortcutLayout,
                   onChanged: state.setShortcutLayout,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: Text(
+                  tr('Las capas del teclado (CTRL, NAV, FN…) se configuran desde el engranaje del propio teclado.'),
+                  style: AppText.mono(9, color: AppColors.muted),
                 ),
               ),
               Hairline(),
@@ -731,8 +795,12 @@ class _ShortcutLayoutSelector extends StatelessWidget {
           style: AppText.mono(11, color: AppColors.bone),
           items: [
             DropdownMenuItem(
+              value: TerminalShortcutLayout.inline,
+              child: Text(tr('FLECHAS EN LÍNEA')),
+            ),
+            DropdownMenuItem(
               value: TerminalShortcutLayout.classic,
-              child: Text(tr('CLÁSICO (DOBLE FILA)')),
+              child: Text(tr('SIN FLECHAS (SOLO EN NAV)')),
             ),
             DropdownMenuItem(
               value: TerminalShortcutLayout.dpadLeft,

@@ -12,10 +12,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 import 'package:uuid/uuid.dart';
 import 'package:open_filex/open_filex.dart';
+import '../models/connection_error.dart';
+import '../models/connection_group.dart';
 import '../models/connection_profile.dart';
 import '../models/notification_prefs.dart';
 import '../models/prompt_snippet.dart';
 import '../models/terminal_shortcut.dart';
+import '../models/terminal_key_layer.dart';
+import '../services/file_error.dart';
 import '../theme/app_theme.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
@@ -32,9 +36,47 @@ enum ConnectionStatus { disconnected, connecting, remote }
 /// Type filter applied by the explorer's filter button.
 enum FileTypeFilter { all, folders, filesOnly }
 
+/// How the explorer orders a directory listing.
+///
+/// Directories always come first whatever the key: mixing them into a
+/// size-sorted list buries every folder among the files, and "go into a
+/// folder" is the explorer's most common action by far.
+enum FileSortKey { name, modified, size, extension }
+
 /// Lifecycle of a file download. [done] and [error] are terminal states that
 /// stay on screen (as the explorer's result bar) until the user dismisses them.
 enum DownloadPhase { idle, scanning, transferring, done, error }
+
+/// What a file operation did, in words the user can read.
+///
+/// These operations used to report by writing into the *terminal* buffer — a
+/// screen the user is not looking at while they work in the explorer, so a
+/// failed delete looked exactly like nothing happening. The result travels
+/// back to the caller instead, and the view that started the operation is the
+/// one that reports it.
+///
+/// [detail] keeps the original exception text for a "ver detalle" affordance:
+/// the friendly sentence is for acting on, the raw one for debugging.
+class FileOpResult {
+  final bool ok;
+  final String message;
+  final String? detail;
+
+  const FileOpResult._(this.ok, this.message, this.detail);
+
+  const FileOpResult.ok(String message) : this._(true, message, null);
+
+  /// [what] names the operation ("No se pudo eliminar"); the cause is appended
+  /// from [describeFileError], so the user gets both the action and the reason
+  /// in one line.
+  factory FileOpResult.failed(String what, Object error) {
+    return FileOpResult._(
+        false, '$what: ${describeFileError(error)}', rawDetail(error));
+  }
+
+  /// Nothing to report — the operation was a no-op.
+  bool get isSilent => message.isEmpty;
+}
 
 /// One unit of work in a download plan: a directory to create, or a file to
 /// stream from [srcPath] (remote or local) to [destPath] on the device.
@@ -132,6 +174,10 @@ class TerminalSession {
   // True while a reconnect attempt is in flight, so the banner button and the
   // on-resume sweep can't double-connect the same session.
   bool reconnecting = false;
+  // Why the last connection attempt failed (or why the live connection
+  // dropped), classified for the UI. Cleared as soon as a connection succeeds,
+  // so a banner can never show a stale reason. See [ConnectionError].
+  ConnectionError? lastError;
   // Batched, frame-coalesced writers that feed PTY/SSH bytes into [terminal].
   // One per byte stream (local PTY, or SSH stdout/stderr). See [_TerminalWriter].
   final List<_TerminalWriter> _outputWriters = [];
@@ -522,6 +568,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
   static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
+  static const String _kShortcutRows = 'settings_shortcut_rows';
+  static const String _kShortcutLayers = 'settings_shortcut_layers';
+  static const String _kShortcutLayer = 'settings_shortcut_active_layer';
+  static const String _kDockLeft = 'settings_explorer_dock_left';
+  static const String _kDockY = 'settings_explorer_dock_y';
   static const String _kTerminalGestureDeadzone = 'settings_terminal_gesture_deadzone';
   // Desktop workspace: splitter positions and which side panes are open.
   static const String _kSplitSide = 'settings_split_side';
@@ -622,6 +673,52 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   double _shortcutKeyWidth = 36.0;
   double get shortcutKeyWidth => _shortcutKeyWidth;
+
+  /// How many rows the quick-keyboard grid gets. Columns are *derived* from
+  /// this (see `TerminalQuickKeys`), which is what guarantees every key fits
+  /// on screen: there is no horizontal scroll to hide the overflow in.
+  ///
+  /// One by default. Layers are what hold the key count now, so a second row
+  /// only buys bigger keys — and it costs 33px of terminal on every screen,
+  /// which is most of what the layered bar could have added over the old one.
+  int _shortcutRows = 1;
+  int get shortcutRows => _shortcutRows;
+
+  /// Visible layers, in tab order. Persisted by id so reordering the enum
+  /// can't scramble a user's setup.
+  List<QuickKeyLayer> _shortcutLayers = List.of(QuickKeyLayer.values);
+  List<QuickKeyLayer> get shortcutLayers => List.unmodifiable(_shortcutLayers);
+
+  /// The layer whose grid is on screen. Index into [shortcutLayers]; clamped
+  /// on read because a layer can be hidden while it is the active one.
+  int _shortcutLayerIndex = 0;
+  int get shortcutLayerIndex {
+    if (_shortcutLayers.isEmpty) return 0;
+    return _shortcutLayerIndex.clamp(0, _shortcutLayers.length - 1);
+  }
+
+  QuickKeyLayer? get activeShortcutLayer =>
+      _shortcutLayers.isEmpty ? null : _shortcutLayers[shortcutLayerIndex];
+
+  /// Where the explorer's floating action dock rests. The user drags it with a
+  /// long press; it always snaps back to one screen edge, so only the side and
+  /// a vertical [Alignment] y (-1 top … 1 bottom) need storing.
+  bool _explorerDockLeft = true;
+  bool get explorerDockLeft => _explorerDockLeft;
+
+  double _explorerDockY = 0;
+  double get explorerDockY => _explorerDockY;
+
+  Future<void> setExplorerDock(bool left, double y) async {
+    final clamped = y.clamp(-1.0, 1.0);
+    if (_explorerDockLeft == left && _explorerDockY == clamped) return;
+    _explorerDockLeft = left;
+    _explorerDockY = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kDockLeft, left);
+    await prefs.setDouble(_kDockY, clamped);
+  }
 
   String get monoFontFamily => AppText.resolveMonoFontFamily(_monoFontChoice);
 
@@ -991,6 +1088,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       if (rune == 0x0D || rune == 0x0A) {
         // Enter: the line has been submitted.
         _classifyCommandLine(session, session.inputLine);
+        _recordCommand(session, session.inputLine);
         session.inputLine = '';
       } else if (rune == 0x03 || rune == 0x1B || rune == 0x15) {
         // Ctrl+C / ESC / Ctrl+U abandon the line being typed.
@@ -1526,6 +1624,23 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _iconScale = AppIconScale.values[iconScaleIdx];
     }
 
+    final sortKeyIdx = prefs.getInt(_kFileSortKey);
+    if (sortKeyIdx != null &&
+        sortKeyIdx >= 0 &&
+        sortKeyIdx < FileSortKey.values.length) {
+      _fileSortKey = FileSortKey.values[sortKeyIdx];
+    }
+    _fileSortAscending = prefs.getBool(_kFileSortAsc) ?? true;
+
+    _textScale = (prefs.getDouble(_kTextScale) ?? 1.0)
+        .clamp(minTextScale, maxTextScale);
+    _onboardingSeen = prefs.getBool(_kOnboardingSeen) ?? false;
+    _quickKeysVisible = prefs.getBool(_kQuickKeysVisible) ?? true;
+    _commandHistoryEnabled = prefs.getBool(_kCommandHistoryEnabled) ?? true;
+    _commandHistory = _commandHistoryEnabled
+        ? (prefs.getStringList(_kCommandHistory) ?? [])
+        : [];
+
     _backGestureNavigatesFolders =
         prefs.getBool(_kBackGestureFolders) ?? false;
 
@@ -1560,6 +1675,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         shortcutLayoutIdx >= 0 &&
         shortcutLayoutIdx < TerminalShortcutLayout.values.length) {
       _shortcutLayout = TerminalShortcutLayout.values[shortcutLayoutIdx];
+    } else {
+      // Fresh install: arrows inline on the fixed row. Existing users keep
+      // whatever they picked (`classic` had no arrows at all, and now reaches
+      // them through the NAV layer instead).
+      _shortcutLayout = TerminalShortcutLayout.inline;
     }
     _monoFontChoice = prefs.getString(_kMonoFontChoice) ?? 'cascadia';
 
@@ -1617,8 +1737,46 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setBool('settings_shortcuts_migrated_v4', true);
     }
 
+    // Migration v5: the layered keyboard ships ^A/^E/^K/^L (and the rest of
+    // the control codes) as a built-in layer, so the copies that used to live
+    // in the user's own row are now duplicates. Only entries still identical
+    // to the old default are dropped — anything renamed or retyped is theirs.
+    const supersededDefaults = {
+      '^A': r'\x01',
+      '^E': r'\x05',
+      '^L': r'\x0c',
+      '^K': r'\x0b',
+    };
+    final migratedV5 = prefs.getBool('settings_shortcuts_migrated_v5') ?? false;
+    if (!migratedV5) {
+      final before = _customShortcuts.length;
+      _customShortcuts.removeWhere(
+          (s) => supersededDefaults[s.label] == s.value);
+      if (_customShortcuts.length != before) {
+        await prefs.setString(_kCustomShortcuts,
+            json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      }
+      await prefs.setBool('settings_shortcuts_migrated_v5', true);
+    }
+
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
     _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
+    _shortcutRows = (prefs.getInt(_kShortcutRows) ?? 1).clamp(1, 3);
+
+    final layerIds = prefs.getStringList(_kShortcutLayers);
+    if (layerIds != null) {
+      final restored = layerIds
+          .map(QuickKeyLayerInfo.fromId)
+          .whereType<QuickKeyLayer>()
+          .toList();
+      // An empty list would leave the bar with no grid at all; treat a corrupt
+      // or fully-emptied setting as "everything visible".
+      if (restored.isNotEmpty) _shortcutLayers = restored;
+    }
+    _shortcutLayerIndex = prefs.getInt(_kShortcutLayer) ?? 0;
+
+    _explorerDockLeft = prefs.getBool(_kDockLeft) ?? true;
+    _explorerDockY = (prefs.getDouble(_kDockY) ?? 0).clamp(-1.0, 1.0);
 
     // Desktop workspace. Clamped on read: a fraction stored from a much wider
     // window must still leave both panes usable here.
@@ -1629,8 +1787,24 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _gitPaneOpen = prefs.getBool(_kGitPaneOpen) ?? false;
 
     await _loadSnippets(prefs);
+    _loadExplorerBookmarks(prefs);
 
     _settingsLoaded = true;
+    notifyListeners();
+  }
+
+  /// Re-reads everything from prefs and secure storage, as if the app had just
+  /// started. Called after a backup restore: the file has already replaced the
+  /// stored values, and this is what makes the running app show them without a
+  /// relaunch.
+  ///
+  /// Live terminal sessions are deliberately untouched — a restore changes
+  /// settings and saved profiles, not what is currently connected.
+  Future<void> reloadFromDisk() async {
+    await _loadSettings();
+    await _loadProfiles();
+    // The accent/theme are applied by the widget tree from these values, so a
+    // single notify at the end is enough.
     notifyListeners();
   }
 
@@ -1710,6 +1884,68 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setDouble(_kShortcutKeyWidth, value);
   }
 
+  Future<void> setShortcutRows(int value) async {
+    final v = value.clamp(1, 3);
+    if (_shortcutRows == v) return;
+    _shortcutRows = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kShortcutRows, v);
+  }
+
+  /// Switches the visible layer. Not persisted through [setShortcutLayers] —
+  /// it is written on its own so a swipe doesn't rewrite the layer list.
+  void setShortcutLayerIndex(int index) {
+    if (_shortcutLayers.isEmpty) return;
+    final v = index.clamp(0, _shortcutLayers.length - 1);
+    if (_shortcutLayerIndex == v) return;
+    _shortcutLayerIndex = v;
+    notifyListeners();
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setInt(_kShortcutLayer, v));
+  }
+
+  void showShortcutLayer(QuickKeyLayer layer) {
+    final i = _shortcutLayers.indexOf(layer);
+    if (i >= 0) setShortcutLayerIndex(i);
+  }
+
+  Future<void> setShortcutLayers(List<QuickKeyLayer> layers) async {
+    // Keep the same layer on screen across a reorder: the index means nothing
+    // to the user, the tab they were looking at does.
+    final current = activeShortcutLayer;
+    _shortcutLayers = List.of(layers);
+    final moved = current == null ? -1 : _shortcutLayers.indexOf(current);
+    _shortcutLayerIndex = moved >= 0 ? moved : 0;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        _kShortcutLayers, _shortcutLayers.map((l) => l.id).toList());
+    await prefs.setInt(_kShortcutLayer, _shortcutLayerIndex);
+  }
+
+  Future<void> toggleShortcutLayer(QuickKeyLayer layer, bool visible) async {
+    final next = List.of(_shortcutLayers);
+    if (visible) {
+      if (next.contains(layer)) return;
+      // Re-inserted where it sits in the canonical order, not appended, so a
+      // toggle round-trip leaves the strip looking the way it started.
+      final target = QuickKeyLayer.values.indexOf(layer);
+      var at = next.length;
+      for (var i = 0; i < next.length; i++) {
+        if (QuickKeyLayer.values.indexOf(next[i]) > target) {
+          at = i;
+          break;
+        }
+      }
+      next.insert(at, layer);
+    } else {
+      if (!next.contains(layer)) return;
+      next.remove(layer);
+    }
+    await setShortcutLayers(next);
+  }
+
   List<TerminalShortcut> getDefaultShortcuts() {
     return [
       TerminalShortcut(label: 'ADJUNTAR', value: 'system:attach'),
@@ -1717,14 +1953,29 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
       TerminalShortcut(label: 'ENLACES', value: 'system:links'),
       TerminalShortcut(label: 'AJUSTES', value: 'system:settings'),
+      // The control codes that used to be here are built into the CTRL layer
+      // now (see `terminal_key_layer.dart`); this list is only what the user
+      // owns and can edit.
       TerminalShortcut(label: 'clear', value: 'clear\n'),
-      TerminalShortcut(label: '^A', value: r'\x01'),
-      TerminalShortcut(label: '^E', value: r'\x05'),
-      TerminalShortcut(label: '^L', value: r'\x0c'),
-      TerminalShortcut(label: '^K', value: r'\x0b'),
       TerminalShortcut(label: 'exit', value: 'exit\n'),
     ];
   }
+
+  /// The user's own keys — the MIS layer. `system:` entries are drawn on the
+  /// ACCIONES layer instead, so they are filtered out here.
+  List<TerminalShortcut> get myShortcuts => _customShortcuts
+      .where((s) => s.enabled && !s.value.startsWith('system:'))
+      .toList();
+
+  /// Enabled `system:` shortcuts, in the user's order — the ACCIONES layer.
+  /// `system:settings` is excluded: the gear lives on the tab strip, always
+  /// reachable, so a copy in the grid would just be a second gear.
+  List<TerminalShortcut> get actionShortcuts => _customShortcuts
+      .where((s) =>
+          s.enabled &&
+          s.value.startsWith('system:') &&
+          s.value != 'system:settings')
+      .toList();
 
   Future<void> _saveCustomShortcuts() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1848,6 +2099,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     required ConnectionProfile profile,
     String? initialCommand,
     String? sessionName,
+    // Restored tabs come back without a connection (see [_restoreSessions]).
+    bool connect = true,
   }) {
     final String id = const Uuid().v4();
     // `late` because the terminal's callbacks below capture the session that
@@ -1899,10 +2152,85 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     _sessions.add(session);
     _activeSessionIndex = _sessions.length - 1;
+    _persistOpenSessions();
     notifyListeners();
 
-    _connectSessionToSSH(session, profile, initialCommand: initialCommand);
+    if (connect) {
+      _connectSessionToSSH(session, profile, initialCommand: initialCommand);
+    }
   }
+
+  // ---- Session restore ------------------------------------------------------
+  // Which sessions were open when the app was last used, so closing KAMMEL (or
+  // Android killing it in the background) doesn't lose the set of servers being
+  // worked on. Only the profile and the tab name are stored — a terminal buffer
+  // is not something to persist, and the server's own state is what tmux is for.
+  //
+  // Restored sessions come back **disconnected**, with the "Reconectar" banner
+  // ready. Reconnecting on launch by itself would open SSH connections (and
+  // burn mobile data) without anyone asking for them.
+
+  static const String _kOpenSessions = 'open_sessions';
+  static const String _kRestoreSessions = 'settings_restore_sessions';
+
+  bool _restoreSessionsEnabled = true;
+  bool get restoreSessionsEnabled => _restoreSessionsEnabled;
+
+  Future<void> setRestoreSessionsEnabled(bool value) async {
+    if (_restoreSessionsEnabled == value) return;
+    _restoreSessionsEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kRestoreSessions, value);
+    if (!value) await prefs.remove(_kOpenSessions);
+  }
+
+  /// Snapshot of the open tabs. Fire-and-forget: it runs on every session
+  /// open/close/rename and must never make those wait on disk.
+  void _persistOpenSessions() {
+    if (!_restoreSessionsEnabled) return;
+    final entries = _sessions
+        .where((s) => s.activeProfile != null)
+        .map((s) => json.encode({
+              'profileId': s.activeProfile!.id,
+              'name': s.name,
+            }))
+        .toList();
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setStringList(_kOpenSessions, entries));
+  }
+
+  /// Recreates the tabs from the last run. Called once, right after profiles
+  /// load — a session whose profile has since been deleted is dropped.
+  Future<void> _restoreSessions(SharedPreferences prefs) async {
+    // Read the switch straight from prefs: _loadSettings and _loadProfiles run
+    // concurrently from the constructor, so the field may not be filled yet.
+    _restoreSessionsEnabled = prefs.getBool(_kRestoreSessions) ?? true;
+    if (!_restoreSessionsEnabled) return;
+    if (_sessions.isNotEmpty) return; // Already connected to something.
+
+    final raw = prefs.getStringList(_kOpenSessions) ?? const <String>[];
+    for (final entry in raw) {
+      try {
+        final map = json.decode(entry) as Map<String, dynamic>;
+        final profile =
+            _profiles.where((p) => p.id == map['profileId']).firstOrNull;
+        if (profile == null) continue;
+        createNewSession(
+          profile: profile,
+          sessionName: map['name'] as String?,
+          connect: false,
+        );
+      } catch (_) {
+        // A malformed entry costs one tab, not the restore.
+      }
+    }
+    if (_sessions.isNotEmpty) {
+      _activeSessionIndex = 0;
+      notifyListeners();
+    }
+  }
+
 
   /// Ask for the legacy storage permission (the app targets SDK 28, so the
   /// classic READ_EXTERNAL_STORAGE dialog still grants /sdcard access). Used by
@@ -1957,6 +2285,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }));
 
     _profiles = loaded;
+    _loadConnectionOrganisation(prefs);
+    await _restoreSessions(prefs);
 
     // Rewrite prefs without secrets if we migrated any (or just to strip them).
     if (needsMigration) {
@@ -2003,10 +2333,164 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> deleteProfile(String id) async {
     _profiles.removeWhere((p) => p.id == id);
+    _favoriteProfiles.remove(id);
+    _profileLastUsed.remove(id);
     await SecureStore.instance.deleteSecrets(id);
     final prefs = await SharedPreferences.getInstance();
     await _persistProfiles(prefs);
     notifyListeners();
+  }
+
+  // ---- Connection organisation ---------------------------------------------
+  // Groups, favourites and "last used" are *about* profiles rather than part
+  // of them: they change from the list (a swipe, a long press) far more often
+  // than the profile itself, and rewriting the whole `ssh_profiles` blob — with
+  // its secure-storage round trip per profile — on every connect would be
+  // wasteful. They live in their own small prefs entries, keyed by profile id.
+
+  static const String _kConnectionGroups = 'connection_groups';
+  static const String _kProfileFavorites = 'profile_favorites';
+  static const String _kProfileLastUsed = 'profile_last_used';
+
+  List<ConnectionGroup> _groups = [];
+  List<ConnectionGroup> get groups => List.unmodifiable(_groups);
+
+  Set<String> _favoriteProfiles = {};
+  Map<String, DateTime> _profileLastUsed = {};
+
+  void _loadConnectionOrganisation(SharedPreferences prefs) {
+    _groups = (prefs.getStringList(_kConnectionGroups) ?? [])
+        .map((raw) {
+          try {
+            return ConnectionGroup.fromJson(raw);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<ConnectionGroup>()
+        .toList();
+
+    _favoriteProfiles = (prefs.getStringList(_kProfileFavorites) ?? []).toSet();
+
+    final rawUsed = prefs.getString(_kProfileLastUsed);
+    if (rawUsed != null) {
+      try {
+        final decoded = json.decode(rawUsed) as Map<String, dynamic>;
+        _profileLastUsed = {
+          for (final entry in decoded.entries)
+            if (DateTime.tryParse('${entry.value}') != null)
+              entry.key: DateTime.parse('${entry.value}'),
+        };
+      } catch (_) {
+        _profileLastUsed = {};
+      }
+    }
+  }
+
+  Future<void> _persistGroups() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        _kConnectionGroups, _groups.map((g) => g.toJson()).toList());
+  }
+
+  /// Creates or renames a group.
+  Future<void> saveGroup(ConnectionGroup group) async {
+    final index = _groups.indexWhere((g) => g.id == group.id);
+    if (index >= 0) {
+      _groups[index] = group;
+    } else {
+      _groups.add(group);
+    }
+    notifyListeners();
+    await _persistGroups();
+  }
+
+  /// Deletes a group. Its profiles are *not* deleted — they fall back to the
+  /// ungrouped bucket, which is the only non-destructive reading of "remove
+  /// this folder".
+  Future<void> deleteGroup(String id) async {
+    _groups.removeWhere((g) => g.id == id);
+    final orphans = _profiles.where((p) => p.groupId == id).toList();
+    for (var i = 0; i < _profiles.length; i++) {
+      if (_profiles[i].groupId == id) {
+        _profiles[i] = _profiles[i].copyWith(clearGroupId: true);
+      }
+    }
+    notifyListeners();
+    await _persistGroups();
+    if (orphans.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await _persistProfiles(prefs);
+    }
+  }
+
+  /// Moves [profileId] into [groupId] (null = ungrouped).
+  Future<void> setProfileGroup(String profileId, String? groupId) async {
+    final index = _profiles.indexWhere((p) => p.id == profileId);
+    if (index < 0) return;
+    _profiles[index] = _profiles[index]
+        .copyWith(groupId: groupId, clearGroupId: groupId == null);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await _persistProfiles(prefs);
+  }
+
+  bool isFavoriteProfile(String id) => _favoriteProfiles.contains(id);
+
+  Future<void> toggleFavoriteProfile(String id) async {
+    if (!_favoriteProfiles.remove(id)) _favoriteProfiles.add(id);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kProfileFavorites, _favoriteProfiles.toList());
+  }
+
+  /// When [id] was last connected to, or null if never.
+  DateTime? lastConnectedAt(String id) => _profileLastUsed[id];
+
+  /// Profiles connected to at least once, most recent first. The connections
+  /// screen shows the top few above the full list — on a phone that is the
+  /// difference between one tap and a scroll through thirty servers.
+  List<ConnectionProfile> recentProfiles({int limit = 3}) {
+    final dated = _profiles
+        .where((p) => _profileLastUsed.containsKey(p.id))
+        .toList()
+      ..sort((a, b) =>
+          _profileLastUsed[b.id]!.compareTo(_profileLastUsed[a.id]!));
+    return dated.take(limit).toList();
+  }
+
+  /// Stamps a successful connection. Fire-and-forget: it runs inside the
+  /// connect path, where an await on a prefs write would delay the first byte.
+  void _noteProfileConnected(ConnectionProfile profile) {
+    _profileLastUsed[profile.id] = DateTime.now();
+    SharedPreferences.getInstance().then((prefs) => prefs.setString(
+        _kProfileLastUsed,
+        json.encode({
+          for (final e in _profileLastUsed.entries)
+            e.key: e.value.toIso8601String(),
+        })));
+  }
+
+  /// Copies [profile] under a new id and a "(copia)" name, keeping its secrets,
+  /// tunnels and group. Returns the new profile so the caller can open it for
+  /// editing straight away.
+  Future<ConnectionProfile> duplicateProfile(ConnectionProfile profile) async {
+    final copy = ConnectionProfile(
+      id: const Uuid().v4(),
+      name: tr('{0} (copia)', [profile.name]),
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      password: profile.password,
+      privateKey: profile.privateKey,
+      isLocal: profile.isLocal,
+      groupId: profile.groupId,
+      tunnels: profile.tunnels,
+      useTmux: profile.useTmux,
+      useDeviceKey: profile.useDeviceKey,
+    );
+    await saveProfile(copy);
+    return copy;
   }
 
   // ---- Prompt snippets ------------------------------------------------------
@@ -2159,6 +2643,39 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return client;
   }
 
+
+  /// Opens a throwaway connection with [profile] and closes it, reporting what
+  /// happened in one sentence.
+  ///
+  /// This is the "Probar conexión" button in the profile form. Before it, the
+  /// only way to find out a profile was wrong was to save it, connect, and read
+  /// an exception in the terminal — after which the form (and everything just
+  /// typed into it) was gone.
+  ///
+  /// Deliberately does *not* create a session, touch [_sessions], or stamp the
+  /// profile as recently used: a test is not a connection.
+  Future<({bool ok, String message})> testProfile(
+      ConnectionProfile profile) async {
+    SSHClient? client;
+    try {
+      client = await openClient(profile, onNotice: (_) {})
+          .timeout(const Duration(seconds: 20));
+      // Authentication is what we actually care about, and openClient only
+      // returns once it succeeded.
+      final banner = client.remoteVersion;
+      return (
+        ok: true,
+        message: banner != null && banner.isNotEmpty
+            ? tr('Conexión correcta · {0}', [banner])
+            : tr('Conexión correcta.'),
+      );
+    } catch (e) {
+      return (ok: false, message: ConnectionError.from(e).friendly.oneLine);
+    } finally {
+      client?.close();
+    }
+  }
+
   /// Asked by the UI layer to confirm an unknown or changed host key. Set in
   /// `main.dart`; when it's null (no UI available) an unrecognized key is
   /// refused rather than silently trusted.
@@ -2224,9 +2741,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.sshClient?.close();
     session.sshClient = null;
     session.connectionStatus = ConnectionStatus.connecting;
+    session.lastError = null;
     notifyListeners();
 
-    session.terminal.write('\r\nConectando a ${profile.name} (${profile.host}:${profile.port})...\r\n');
+    session.terminal.write(
+        '\r\n${tr('Conectando a {0} ({1}:{2})…', [
+          profile.name,
+          profile.host,
+          profile.port
+        ])}\r\n');
 
     try {
       session.sshClient = await openClient(
@@ -2274,6 +2797,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
       session.connectionStatus = ConnectionStatus.remote;
       session.started = true;
+      session.lastError = null;
+      _noteProfileConnected(profile);
       // First live SSH session → keep the process alive while backgrounded.
       _ensureBackgroundService();
 
@@ -2315,7 +2840,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           tunnels.onSessionLost(session.id);
-          session.terminal.write('\r\nConexión cerrada por el servidor.\r\n');
+          session.terminal.write(
+              '\r\n${tr('Conexión cerrada por el servidor.')}\r\n');
           _onSessionAlert(session,
               body: tr('Se cerró la conexión con {0}.', [session.name]),
               kind: AlertKind.disconnect);
@@ -2325,7 +2851,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           tunnels.onSessionLost(session.id);
-          session.terminal.write('\r\nError de conexión: $e\r\n');
+          session.lastError = ConnectionError.from(e as Object);
+          session.terminal.write(
+              '\r\n${tr('Error de conexión: {0}', [session.lastError!.title])}\r\n');
           _onSessionAlert(session,
               body: tr('Se perdió la conexión con {0}.', [session.name]),
               kind: AlertKind.disconnect);
@@ -2349,7 +2877,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     } catch (e) {
       session.connectionStatus = ConnectionStatus.disconnected;
-      session.terminal.write('\r\nError de conexión: $e\r\n');
+      final failure = ConnectionError.from(e);
+      session.lastError = failure;
+      // The classified reason first (that's the actionable part), then the raw
+      // text — it stays in the scrollback for a bug report.
+      session.terminal.write(
+          '\r\n${tr('Error de conexión: {0}', [failure.friendly.oneLine])}\r\n$e\r\n');
       notifyListeners();
     }
   }
@@ -2406,6 +2939,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final session = _sessions[index];
     _cleanupSession(session);
     _sessions.removeAt(index);
+    _persistOpenSessions();
 
     if (_sessions.isEmpty) {
       // No SSH sessions left: drop back to the connections tab. A new session
@@ -2428,6 +2962,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (newName.trim().isNotEmpty) {
       _sessions[index].name = newName.trim();
       tunnels.renameSession(_sessions[index].id, _sessions[index].name);
+      _persistOpenSessions();
       notifyListeners();
     }
   }
@@ -2918,6 +3453,255 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+
+
+
+
+  // ---- Text scale -----------------------------------------------------------
+  // Flutter already honours the system font-size setting, so the app has always
+  // scaled *somewhat*. Two things were missing, and both matter here: this UI
+  // has labels down to 8px (tags, session meta, panel titles), so "a bit
+  // bigger" is a real need even for people who leave the system alone; and the
+  // chrome is built from fixed heights (a 46px toolbar, a 42px path bar), which
+  // a 2x system scale overflows. So the app publishes its own multiplier and
+  // clamps the product — see main.dart, where it is applied.
+
+  static const String _kTextScale = 'settings_text_scale';
+  static const double minTextScale = 0.85;
+  static const double maxTextScale = 1.5;
+
+  /// Upper bound on system × app scaling. Past this the fixed-height bars stop
+  /// being able to contain their own labels, which is worse for everyone than
+  /// text that stopped growing.
+  static const double maxEffectiveTextScale = 1.6;
+
+  double _textScale = 1.0;
+  double get textScale => _textScale;
+
+  Future<void> setTextScale(double value) async {
+    final clamped = value.clamp(minTextScale, maxTextScale);
+    if (clamped == _textScale) return;
+    _textScale = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kTextScale, clamped);
+  }
+
+  // ---- Onboarding -----------------------------------------------------------
+  // Whether the three-card introduction has been shown. Versioned in the key so
+  // a future rewrite of the cards can be shown again to existing users without
+  // clearing anything else.
+  static const String _kOnboardingSeen = 'onboarding_seen_v1';
+
+  bool _onboardingSeen = false;
+  bool get onboardingSeen => _onboardingSeen;
+
+  Future<void> markOnboardingSeen() async {
+    if (_onboardingSeen) return;
+    _onboardingSeen = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kOnboardingSeen, true);
+  }
+
+  /// Lets the user replay the introduction from Ajustes.
+  Future<void> resetOnboarding() async {
+    _onboardingSeen = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kOnboardingSeen);
+  }
+
+  // ---- Terminal chrome ------------------------------------------------------
+  // Which of the terminal's optional bars are showing. This lived as private
+  // State inside TerminalTab, which was fine while the toolbar was the only
+  // thing that could toggle it — a keyboard shortcut (and the command palette)
+  // need to reach the same switch, and two sources of truth for "is the quick
+  // keyboard up" is how a toggle ends up out of sync with its own button.
+
+  static const String _kQuickKeysVisible = 'settings_quick_keys_visible';
+
+  bool _quickKeysVisible = true;
+  bool get quickKeysVisible => _quickKeysVisible;
+
+  Future<void> setQuickKeysVisible(bool value) async {
+    if (_quickKeysVisible == value) return;
+    _quickKeysVisible = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kQuickKeysVisible, value);
+  }
+
+  void toggleQuickKeys() => setQuickKeysVisible(!_quickKeysVisible);
+
+  // Dictation bar. Not persisted: it is opened for a specific stretch of
+  // dictation and costs vertical space, so it should not come back by itself.
+  bool _composeBarVisible = false;
+  bool get composeBarVisible => _composeBarVisible;
+
+  void setComposeBarVisible(bool value) {
+    if (_composeBarVisible == value) return;
+    _composeBarVisible = value;
+    notifyListeners();
+  }
+
+  void toggleComposeBar() => setComposeBarVisible(!_composeBarVisible);
+
+  // Scrollback search. The query and the match cursor live in TerminalTab (they
+  // are meaningless without the buffer they were computed against); only
+  // "is the search bar up" belongs here, so Ctrl+Shift+F can raise it from
+  // anywhere.
+  bool _terminalSearchOpen = false;
+  bool get terminalSearchOpen => _terminalSearchOpen;
+
+  void setTerminalSearchOpen(bool value) {
+    if (_terminalSearchOpen == value) return;
+    _terminalSearchOpen = value;
+    notifyListeners();
+  }
+
+  // ---- Command history ------------------------------------------------------
+  // Every line submitted to a shell, newest last. The keystroke stream is
+  // already being watched to identify which agent a session is running
+  // (see [_noteInputEvidence]); this reuses the same Enter boundary.
+  //
+  // Only recorded from the normal buffer: inside a full-screen TUI those
+  // keystrokes are chat messages to an agent or vim commands, not shell
+  // history, and mixing them in makes the list useless.
+
+  static const String _kCommandHistory = 'command_history';
+  static const String _kCommandHistoryEnabled = 'settings_command_history';
+
+  /// How many lines are kept. Enough to cover a working session; small enough
+  /// that the prefs write on every command stays cheap.
+  static const int maxCommandHistory = 200;
+
+  List<String> _commandHistory = [];
+
+  /// Newest first — the order the history sheet shows them in.
+  List<String> get commandHistory => List.unmodifiable(_commandHistory.reversed);
+
+  bool _commandHistoryEnabled = true;
+  bool get commandHistoryEnabled => _commandHistoryEnabled;
+
+  Future<void> setCommandHistoryEnabled(bool value) async {
+    if (_commandHistoryEnabled == value) return;
+    _commandHistoryEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kCommandHistoryEnabled, value);
+    // Turning it off throws away what was already collected: leaving it on disk
+    // would defeat the point of the switch.
+    if (!value) await clearCommandHistory();
+  }
+
+  Future<void> clearCommandHistory() async {
+    if (_commandHistory.isEmpty) return;
+    _commandHistory = [];
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kCommandHistory);
+  }
+
+  void _recordCommand(TerminalSession session, String rawLine) {
+    if (!_commandHistoryEnabled) return;
+    if (session.terminal.isUsingAltBuffer) return;
+    final line = rawLine.trim();
+    if (line.isEmpty) return;
+    // A command repeated back-to-back (a failing `make` run four times) adds
+    // nothing to a list whose whole job is recall.
+    if (_commandHistory.isNotEmpty && _commandHistory.last == line) return;
+
+    _commandHistory.add(line);
+    if (_commandHistory.length > maxCommandHistory) {
+      _commandHistory.removeRange(
+          0, _commandHistory.length - maxCommandHistory);
+    }
+    notifyListeners();
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setStringList(_kCommandHistory, _commandHistory));
+  }
+
+  // ---- Explorer sorting -----------------------------------------------------
+  // Persisted, because "logs newest first" is a standing preference and not a
+  // per-visit one. Directories are pinned above files in every mode.
+
+  static const String _kFileSortKey = 'settings_explorer_sort_key';
+  static const String _kFileSortAsc = 'settings_explorer_sort_asc';
+
+  FileSortKey _fileSortKey = FileSortKey.name;
+  FileSortKey get fileSortKey => _fileSortKey;
+
+  bool _fileSortAscending = true;
+  bool get fileSortAscending => _fileSortAscending;
+
+  Future<void> setFileSort(FileSortKey key, {bool? ascending}) async {
+    // Tapping the active key flips the direction — the behaviour of every
+    // sortable table there has ever been.
+    final asc = ascending ?? (key == _fileSortKey ? !_fileSortAscending : true);
+    if (key == _fileSortKey && asc == _fileSortAscending) return;
+    _fileSortKey = key;
+    _fileSortAscending = asc;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kFileSortKey, key.index);
+    await prefs.setBool(_kFileSortAsc, asc);
+  }
+
+  /// Orders [files] by the current sort. Returns a new list; the caller's is
+  /// left alone (it is usually the session's own cached listing).
+  List<FileSystemEntityInfo> sortFiles(List<FileSystemEntityInfo> files) {
+    final out = List<FileSystemEntityInfo>.from(files);
+    final sign = _fileSortAscending ? 1 : -1;
+    out.sort((a, b) {
+      if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+      final cmp = switch (_fileSortKey) {
+        FileSortKey.name =>
+          a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        FileSortKey.modified => a.modified.compareTo(b.modified),
+        FileSortKey.size => a.size.compareTo(b.size),
+        FileSortKey.extension =>
+          _extensionOf(a.name).compareTo(_extensionOf(b.name)),
+      };
+      // Same key value (two files modified in the same second, two `.log`s):
+      // fall back to the name so the order can't shuffle between rebuilds.
+      if (cmp != 0) return cmp * sign;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return out;
+  }
+
+  static String _extensionOf(String name) {
+    final dot = name.lastIndexOf('.');
+    // A leading dot is a hidden file, not an extension (`.bashrc`).
+    if (dot <= 0) return '';
+    return name.substring(dot + 1).toLowerCase();
+  }
+
+  // ---- Explorer bookmarks ---------------------------------------------------
+  // Pinned directories. Reaching /var/www/app on a phone is eight taps through
+  // the tree every single time; this makes it one.
+
+  static const String _kExplorerBookmarks = 'explorer_bookmarks';
+
+  List<String> _explorerBookmarks = [];
+  List<String> get explorerBookmarks => List.unmodifiable(_explorerBookmarks);
+
+  void _loadExplorerBookmarks(SharedPreferences prefs) {
+    _explorerBookmarks = prefs.getStringList(_kExplorerBookmarks) ?? [];
+  }
+
+  bool isBookmarked(String path) => _explorerBookmarks.contains(path);
+
+  /// Pins or unpins [path]. Returns true if it is bookmarked afterwards, so the
+  /// caller can word its confirmation without re-reading the list.
+  Future<bool> toggleBookmark(String path) async {
+    final added = !_explorerBookmarks.remove(path);
+    if (added) _explorerBookmarks.add(path);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kExplorerBookmarks, _explorerBookmarks);
+    return added;
+  }
+
   void setShowHidden(bool value) {
     if (_showHidden == value) return;
     _showHidden = value;
@@ -2967,10 +3751,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> deleteSelection() async {
+  Future<FileOpResult> deleteSelection() async {
     final session = activeSession;
     final entries = _selectedEntries;
-    if (session == null || entries.isEmpty) return;
+    if (session == null || entries.isEmpty) return FileOpResult.ok('');
     _selectedPaths = const {};
     session.isLoadingFiles = true;
     notifyListeners();
@@ -2987,9 +3771,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           await File(entry.path).delete();
         }
       }
+      return FileOpResult.ok(entries.length == 1
+          ? tr('Se eliminó "{0}"', [entries.first.name])
+          : tr('Se eliminaron {0} elementos', ['${entries.length}']));
     } catch (e) {
-      session.terminal.write('Error al eliminar: $e\r\n');
       session.sftpClient = null;
+      return FileOpResult.failed(tr('No se pudo eliminar'), e);
     } finally {
       await _loadFiles();
     }
@@ -3012,9 +3799,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Create an empty subdirectory named [name] inside the active session's
   /// current directory.
-  Future<void> createFolder(String name) async {
+  Future<FileOpResult> createFolder(String name) async {
     final session = activeSession;
-    if (session == null || name.isEmpty) return;
+    if (session == null || name.isEmpty) return FileOpResult.ok('');
     session.isLoadingFiles = true;
     notifyListeners();
     try {
@@ -3025,9 +3812,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         await Directory(path).create();
       }
+      return FileOpResult.ok(tr('Se creó la carpeta "{0}"', [name]));
     } catch (e) {
-      session.terminal.write('Error al crear carpeta: $e\r\n');
       session.sftpClient = null;
+      return FileOpResult.failed(tr('No se pudo crear la carpeta'), e);
     } finally {
       await _loadFiles();
     }
@@ -3035,9 +3823,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Create an empty file named [name] inside the active session's current
   /// directory.
-  Future<void> createFile(String name) async {
+  Future<FileOpResult> createFile(String name) async {
     final session = activeSession;
-    if (session == null || name.isEmpty) return;
+    if (session == null || name.isEmpty) return FileOpResult.ok('');
     session.isLoadingFiles = true;
     notifyListeners();
     try {
@@ -3054,18 +3842,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         await File(path).create();
       }
+      return FileOpResult.ok(tr('Se creó "{0}"', [name]));
     } catch (e) {
-      session.terminal.write('Error al crear archivo: $e\r\n');
       session.sftpClient = null;
+      return FileOpResult.failed(tr('No se pudo crear el archivo'), e);
     } finally {
       await _loadFiles();
     }
   }
 
   /// Rename [entry] to [newName], keeping it in the same directory.
-  Future<void> renameEntry(FileSystemEntityInfo entry, String newName) async {
+  Future<FileOpResult> renameEntry(
+      FileSystemEntityInfo entry, String newName) async {
     final session = activeSession;
-    if (session == null || newName.isEmpty || newName == entry.name) return;
+    if (session == null || newName.isEmpty || newName == entry.name) {
+      return FileOpResult.ok('');
+    }
     final parent = entry.path.substring(
         0, entry.path.length - entry.name.length);
     final newPath = '$parent$newName';
@@ -3080,9 +3872,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         await File(entry.path).rename(newPath);
       }
+      return FileOpResult.ok(tr('Se renombró a "{0}"', [newName]));
     } catch (e) {
-      session.terminal.write('Error al renombrar: $e\r\n');
       session.sftpClient = null;
+      return FileOpResult.failed(tr('No se pudo renombrar'), e);
     } finally {
       await _loadFiles();
     }
@@ -3092,10 +3885,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// every source/destination combination (local↔local, remote↔remote, and
   /// local↔remote up/downloads). Move uses a rename fast path when source and
   /// destination share a filesystem, falling back to copy + delete.
-  Future<void> pasteClipboard() async {
+  Future<FileOpResult> pasteClipboard() async {
     final session = activeSession;
     final entries = _clipboard;
-    if (session == null || entries.isEmpty) return;
+    if (session == null || entries.isEmpty) return FileOpResult.ok('');
     final isMove = _clipboardIsMove;
     final srcClient = _clipboardSshClient;
     final destRemote = session.connectionStatus == ConnectionStatus.remote;
@@ -3113,6 +3906,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     session.isLoadingFiles = true;
     notifyListeners();
+    // Skipped items are not failures — pasting a folder into itself is a
+    // no-op, not an error — but staying silent about them would look like the
+    // paste simply did nothing.
+    final skipped = <String>[];
     try {
       final srcSftp = srcSession != null ? await _getSftpClient(srcSession) : null;
       final destSftp = destClient != null ? await _getSftpClient(session) : null;
@@ -3124,8 +3921,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             sameFs &&
             (session.currentPath == entry.path ||
                 session.currentPath.startsWith('${entry.path}$sep'))) {
-          session.terminal.write(
-              'No se puede pegar "${entry.name}" dentro de sí misma.\r\n');
+          skipped.add(entry.name);
           continue;
         }
 
@@ -3156,10 +3952,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
       }
+      if (skipped.isNotEmpty) {
+        return FileOpResult.ok(tr('No se puede pegar "{0}" dentro de sí misma',
+            [skipped.first]));
+      }
+      return FileOpResult.ok(entries.length == 1
+          ? (isMove
+              ? tr('Se movió "{0}"', [entries.first.name])
+              : tr('Se copió "{0}"', [entries.first.name]))
+          : (isMove
+              ? tr('Se movieron {0} elementos', ['${entries.length}'])
+              : tr('Se copiaron {0} elementos', ['${entries.length}'])));
     } catch (e) {
-      session.terminal.write('Error al pegar: $e\r\n');
       session.sftpClient = null;
       if (srcSession != null) srcSession.sftpClient = null;
+      return FileOpResult.failed(
+          isMove ? tr('No se pudo mover') : tr('No se pudo copiar'), e);
     } finally {
       if (isMove) {
         _clipboard = const [];

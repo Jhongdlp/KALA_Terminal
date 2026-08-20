@@ -19,7 +19,9 @@ void _expectCheckedRadioOn(WidgetTester tester, String label) {
 }
 
 Future<AppState> _pumpApp(WidgetTester tester) async {
-  SharedPreferences.setMockInitialValues({});
+  // The first-run introduction is a modal sheet over the whole shell; without
+  // marking it seen it would cover every control these tests reach for.
+  SharedPreferences.setMockInitialValues({'onboarding_seen_v1': true});
   L10n.notifier.value = AppLang.es;
   await L10n.load();
   final state = AppState();
@@ -83,9 +85,11 @@ void main() {
 
     final dropdown = find.byType(DropdownButton<TerminalShortcutLayout>);
     expect(dropdown, findsOneWidget);
+    // A fresh install starts with the arrows inline on the fixed row; an
+    // existing user keeps whatever they had picked.
     expect(
       tester.widget<DropdownButton<TerminalShortcutLayout>>(dropdown).value,
-      TerminalShortcutLayout.classic,
+      TerminalShortcutLayout.inline,
     );
 
     // Same path the dropdown's onChanged takes; the panel has to follow it.

@@ -7,6 +7,9 @@ import '../services/device_key.dart';
 import '../services/known_hosts.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swiss.dart';
+import 'backup_sheet.dart';
+import 'onboarding_sheet.dart';
+import 'shortcuts_help_sheet.dart';
 import '../l10n/l10n.dart';
 
 /// Central configuration screen for general app settings (Explorer, Notifications, Security, and SSH keys).
@@ -23,6 +26,10 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.appLockEnabled);
     final agentAlerts =
         context.select<AppState, bool>((s) => s.agentAlertsEnabled);
+    final commandHistoryEnabled =
+        context.select<AppState, bool>((s) => s.commandHistoryEnabled);
+    final restoreSessions =
+        context.select<AppState, bool>((s) => s.restoreSessionsEnabled);
     final state = context.read<AppState>();
 
     return ContentColumn(
@@ -60,6 +67,102 @@ class SettingsTab extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+
+          // ---- Terminal ----------------------------------------------------
+          SwissPanel(
+            title: tr('Terminal'),
+            children: [
+              ToggleRow(
+                label: tr('GUARDAR HISTORIAL DE COMANDOS'),
+                description: tr(
+                    'Recuerda los comandos que envías para poder reutilizarlos desde el menú de la terminal. Se guardan en este dispositivo; al desactivarlo se borran.'),
+                value: commandHistoryEnabled,
+                onChanged: state.setCommandHistoryEnabled,
+              ),
+              Hairline(),
+              ToggleRow(
+                label: tr('RESTAURAR SESIONES AL ABRIR'),
+                description: tr(
+                    'Vuelve a abrir las pestañas de la última vez, desconectadas y listas para reconectar de un toque. No se conecta solo a ningún servidor.'),
+                value: restoreSessions,
+                onChanged: state.setRestoreSessionsEnabled,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // ---- Backup ------------------------------------------------------
+          SwissPanel(
+            title: tr('Copia de seguridad'),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tr('EXPORTAR O RESTAURAR'),
+                        style: AppText.label(9, color: AppColors.muted)),
+                    const SizedBox(height: 5),
+                    Text(
+                      tr('Guarda en un archivo tus servidores, grupos, prompts, teclas rápidas y colores, o recupéralos en otro teléfono.'),
+                      style: AppText.label(8.5,
+                          color: AppColors.faint, spacing: 0.3),
+                    ),
+                    const SizedBox(height: 10),
+                    GhostButton(
+                      label: tr('ABRIR COPIA DE SEGURIDAD'),
+                      icon: Icons.backup_outlined,
+                      onPressed: () => showBackupSheet(context),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // ---- Help --------------------------------------------------------
+          // The app's gestures are its best feature and were written down
+          // nowhere; this is the permanent home for that reference.
+          SwissPanel(
+            title: tr('Ayuda'),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tr('ATAJOS Y GESTOS'),
+                        style: AppText.label(9, color: AppColors.muted)),
+                    const SizedBox(height: 5),
+                    Text(
+                      tr('Todo lo que KAMMEL hace con un gesto o una combinación de teclas, en una sola pantalla.'),
+                      style: AppText.label(8.5,
+                          color: AppColors.faint, spacing: 0.3),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        GhostButton(
+                          label: tr('VER ATAJOS'),
+                          icon: Icons.help_outline,
+                          onPressed: () => showShortcutsHelpSheet(context),
+                        ),
+                        const SizedBox(width: 8),
+                        GhostButton(
+                          label: tr('VER INTRODUCCIÓN'),
+                          icon: Icons.slideshow_outlined,
+                          onPressed: () => showOnboarding(context),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
           const SizedBox(height: 16),
 
           // ---- Notifications ----------------------------------------------
