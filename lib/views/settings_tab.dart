@@ -30,6 +30,8 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.commandHistoryEnabled);
     final restoreSessions =
         context.select<AppState, bool>((s) => s.restoreSessionsEnabled);
+    final keyboardAutocorrect =
+        context.select<AppState, bool>((s) => s.terminalKeyboardAutocorrect);
     final state = context.read<AppState>();
 
     return ContentColumn(
@@ -87,6 +89,14 @@ class SettingsTab extends StatelessWidget {
                     'Vuelve a abrir las pestañas de la última vez, desconectadas y listas para reconectar de un toque. No se conecta solo a ningún servidor.'),
                 value: restoreSessions,
                 onChanged: state.setRestoreSessionsEnabled,
+              ),
+              Hairline(),
+              ToggleRow(
+                label: tr('AUTOCORRECTOR EN LA TERMINAL'),
+                description: tr(
+                    'Habilita el corrector ortográfico y las sugerencias del teclado en la terminal. Desactivarlo evita problemas como palabras duplicadas o invertidas al escribir.'),
+                value: keyboardAutocorrect,
+                onChanged: state.setTerminalKeyboardAutocorrect,
               ),
             ],
           ),

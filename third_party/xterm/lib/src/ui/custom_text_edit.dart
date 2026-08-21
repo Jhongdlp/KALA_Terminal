@@ -24,6 +24,8 @@ class CustomTextEdit extends StatefulWidget {
     this.onInsertContent,
     this.onArrowLeft,
     this.onArrowRight,
+    this.autocorrect = true,
+    this.enableSuggestions = true,
   });
 
   final Widget child;
@@ -59,6 +61,10 @@ class CustomTextEdit extends StatefulWidget {
   final void Function()? onArrowLeft;
 
   final void Function()? onArrowRight;
+
+  final bool autocorrect;
+
+  final bool enableSuggestions;
 
   @override
   CustomTextEditState createState() => CustomTextEditState();
@@ -177,8 +183,9 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         inputType: widget.inputType,
         inputAction: widget.inputAction,
         keyboardAppearance: widget.keyboardAppearance,
-        autocorrect: true,
-        enableSuggestions: true,
+        autocorrect: widget.autocorrect,
+        enableSuggestions: widget.enableSuggestions,
+        textCapitalization: TextCapitalization.none,
         enableIMEPersonalizedLearning: true,
         // Advertise support for pasting images via the soft keyboard (Gboard
         // "insert content"). The platform then routes inserts to

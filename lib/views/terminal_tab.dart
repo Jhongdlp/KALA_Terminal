@@ -356,6 +356,8 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                         focusNode: _terminalFocusNode,
                         autofocus: true,
                         deleteDetection: true,
+                        autocorrect: state.terminalKeyboardAutocorrect,
+                        enableSuggestions: state.terminalKeyboardAutocorrect,
                         theme: AppTerminalTheme.byId(state.terminalScheme,
                             Theme.of(context).brightness,
                             accentColor: AppColors.accent),

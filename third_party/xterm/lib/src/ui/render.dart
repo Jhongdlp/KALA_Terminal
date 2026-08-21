@@ -401,7 +401,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void paint(PaintingContext context, Offset offset) {
     _paint(context, offset);
-    context.setWillChangeHint();
   }
 
   void _paint(PaintingContext context, Offset offset) {

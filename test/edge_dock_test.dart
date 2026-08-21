@@ -22,7 +22,7 @@ Future<List<(bool, double)>> _pump(
           left: left,
           y: y,
           onMoved: (l, ny) => moves.add((l, ny)),
-          builder: (_, isLeft) => Container(
+          builder: (_, isLeft, __) => Container(
             key: const ValueKey('dock'),
             width: 30,
             height: 50,

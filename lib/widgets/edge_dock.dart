@@ -27,7 +27,7 @@ class EdgeDock extends StatefulWidget {
 
   /// Builds the panel. [left] is the side it is currently drawn on, which the
   /// content needs so its chevron and rounded corners face outward.
-  final Widget Function(BuildContext context, bool left) builder;
+  final Widget Function(BuildContext context, bool left, bool dragging) builder;
 
   const EdgeDock({
     super.key,
@@ -105,9 +105,9 @@ class _EdgeDockState extends State<EdgeDock> {
             // The lift is the only thing that says "you are holding it now":
             // without it a long press looks like nothing happened until the
             // finger moves.
-            scale: _dragging ? 1.08 : 1.0,
+            scale: _dragging ? 1.15 : 1.0,
             duration: const Duration(milliseconds: 120),
-            child: widget.builder(context, _left),
+            child: widget.builder(context, _left, _dragging),
           ),
         ),
       ),

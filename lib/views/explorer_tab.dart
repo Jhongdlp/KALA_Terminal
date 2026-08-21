@@ -124,8 +124,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
             left: dockLeft,
             y: dockY,
             onMoved: context.read<AppState>().setExplorerDock,
-            builder: (context, left) => _buildSideDock(
-                context, visible, selected, clipboardCount, left),
+            builder: (context, left, dragging) => _buildSideDock(
+                context, visible, selected, clipboardCount, left, dragging),
           ),
         ],
       ),
@@ -464,7 +464,8 @@ class _ExplorerTabState extends State<ExplorerTab> {
       List<FileSystemEntityInfo> visible,
       Set<String> selected,
       int clipboardCount,
-      bool left) {
+      bool left,
+      bool dragging) {
     final state = context.read<AppState>();
 
     Future<void> handleUpload() async {
@@ -499,6 +500,7 @@ class _ExplorerTabState extends State<ExplorerTab> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
+        width: _sideDockOpen ? 40.0 : 28.0,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: AppColors.panelHi,
@@ -507,10 +509,31 @@ class _ExplorerTabState extends State<ExplorerTab> {
             right: left ? const Radius.circular(8) : Radius.zero,
           ),
           border: Border.all(color: AppColors.hairline, width: 1),
+          boxShadow: dragging
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.35),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                    offset: Offset(left ? 2 : -2, 4),
+                  ),
+                ]
+              : null,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Tooltip(
+              message: tr('Mantén presionado para mover'),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 6, bottom: 2),
+                child: Icon(
+                  Icons.drag_handle,
+                  size: 14,
+                  color: AppColors.muted.withOpacity(0.5),
+                ),
+              ),
+            ),
             InkWell(
               onTap: () => setState(() => _sideDockOpen = !_sideDockOpen),
               child: SizedBox(

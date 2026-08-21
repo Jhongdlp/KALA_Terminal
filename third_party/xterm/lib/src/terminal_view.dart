@@ -51,6 +51,8 @@ class TerminalView extends StatefulWidget {
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
     this.forceLocalMode = false,
+    this.autocorrect = true,
+    this.enableSuggestions = true,
   });
 
   /// The underlying terminal that this widget renders.
@@ -151,6 +153,10 @@ class TerminalView extends StatefulWidget {
   final bool simulateScroll;
 
   final bool forceLocalMode;
+
+  final bool autocorrect;
+
+  final bool enableSuggestions;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -278,6 +284,8 @@ class TerminalViewState extends State<TerminalView> {
         keyboardAppearance: widget.keyboardAppearance,
         deleteDetection: widget.deleteDetection,
         onInsertContent: widget.onInsertContent,
+        autocorrect: widget.autocorrect,
+        enableSuggestions: widget.enableSuggestions,
         onInsert: _onInsert,
         onDelete: () {
           _scrollToBottom();

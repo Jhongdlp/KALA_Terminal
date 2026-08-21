@@ -190,11 +190,113 @@ class TerminalPainter {
     }
     flushRun();
 
+    // Group consecutive foreground cells that share the same style
+    final runText = StringBuffer();
+    var fRunStart = 0;
+    var runForeground = 0;
+    var runBackground = 0;
+    var runFlags = 0;
+    var hasRun = false;
+
+    void flushForegroundRun() {
+      if (!hasRun) return;
+      
+      final text = runText.toString();
+      if (text.isNotEmpty) {
+        paintRunForeground(
+          canvas,
+          offset.translate(fRunStart * cellWidth, 0),
+          runForeground,
+          runBackground,
+          runFlags,
+          text,
+        );
+      }
+      runText.clear();
+      hasRun = false;
+    }
+
     for (var i = 0; i < length; i++) {
       line.getCellData(i, cellData);
-      paintCellForeground(canvas, offset.translate(i * cellWidth, 0), cellData);
-      if (cellData.content >> CellContent.widthShift == 2) i++;
+      final charCode = cellData.content & CellContent.codepointMask;
+      final width = cellData.content >> CellContent.widthShift == 2 ? 2 : 1;
+
+      if (charCode == 0) {
+        flushForegroundRun();
+        if (width == 2) i++;
+        continue;
+      }
+
+      if (hasRun &&
+          cellData.foreground == runForeground &&
+          cellData.background == runBackground &&
+          cellData.flags == runFlags) {
+        var char = String.fromCharCode(charCode);
+        if (runFlags & CellFlags.underline != 0 && charCode == 0x20) {
+          char = String.fromCharCode(0xA0);
+        }
+        runText.write(char);
+      } else {
+        flushForegroundRun();
+        runForeground = cellData.foreground;
+        runBackground = cellData.background;
+        runFlags = cellData.flags;
+        fRunStart = i;
+        hasRun = true;
+        
+        var char = String.fromCharCode(charCode);
+        if (runFlags & CellFlags.underline != 0 && charCode == 0x20) {
+          char = String.fromCharCode(0xA0);
+        }
+        runText.write(char);
+      }
+
+      if (width == 2) i++;
     }
+    flushForegroundRun();
+  }
+
+  /// Paints a run of text sharing the same style properties (foreground, background, flags).
+  void paintRunForeground(
+    Canvas canvas,
+    Offset offset,
+    int foreground,
+    int background,
+    int flags,
+    String text,
+  ) {
+    if (text.isEmpty) return;
+
+    // Use a hash of the text and style to cache the run's Paragraph
+    final styleHash = Object.hash(foreground, background, flags, text);
+    final cacheKey = styleHash ^ _textScaler.hashCode;
+    var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
+
+    if (paragraph == null) {
+      var color = flags & CellFlags.inverse == 0
+          ? resolveForegroundColor(foreground)
+          : resolveBackgroundColor(background);
+
+      if (flags & CellFlags.faint != 0) {
+        color = color.withOpacity(0.5);
+      }
+
+      final style = _textStyle.toTextStyle(
+        color: color,
+        bold: flags & CellFlags.bold != 0,
+        italic: flags & CellFlags.italic != 0,
+        underline: flags & CellFlags.underline != 0,
+      );
+
+      paragraph = _paragraphCache.performAndCacheLayout(
+        text,
+        style,
+        _textScaler,
+        cacheKey,
+      );
+    }
+
+    canvas.drawParagraph(paragraph, offset);
   }
 
   /// The colour this cell's background should be filled with, or null when

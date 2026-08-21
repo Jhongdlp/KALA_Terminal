@@ -1,20 +1,24 @@
+import 'dart:collection';
 import 'dart:ui';
 
 import 'package:flutter/widgets.dart';
-import 'package:quiver/collection.dart';
 
 /// A cache of laid out [Paragraph]s. This is used to avoid laying out the same
 /// text multiple times, which is expensive.
 class ParagraphCache {
-  ParagraphCache(int maximumSize)
-      : _cache = LruMap<int, Paragraph>(maximumSize: maximumSize);
+  ParagraphCache(this.maximumSize);
 
-  final LruMap<int, Paragraph> _cache;
+  final int maximumSize;
+  final LinkedHashMap<int, Paragraph> _cache = LinkedHashMap<int, Paragraph>();
 
   /// Returns a [Paragraph] for the given [key]. [key] is the same as the
   /// key argument to [performAndCacheLayout].
   Paragraph? getLayoutFromCache(int key) {
-    return _cache[key];
+    final paragraph = _cache.remove(key);
+    if (paragraph != null) {
+      _cache[key] = paragraph; // Move to end (MRU)
+    }
+    return paragraph;
   }
 
   /// Applies [style] and [textScaler] to [text] and lays it out to create
@@ -33,6 +37,16 @@ class ParagraphCache {
     final paragraph = builder.build();
     paragraph.layout(ParagraphConstraints(width: double.infinity));
 
+    // If key is already in cache, remove and dispose the old one
+    final oldParagraph = _cache.remove(key);
+    oldParagraph?.dispose();
+
+    if (_cache.length >= maximumSize) {
+      final firstKey = _cache.keys.first;
+      final evicted = _cache.remove(firstKey);
+      evicted?.dispose();
+    }
+
     _cache[key] = paragraph;
     return paragraph;
   }
@@ -41,6 +55,9 @@ class ParagraphCache {
   /// pair no longer produces the same layout. For example, when a font is
   /// loaded.
   void clear() {
+    for (final paragraph in _cache.values) {
+      paragraph.dispose();
+    }
     _cache.clear();
   }
 

@@ -558,6 +558,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kIconScale = 'settings_icon_scale';
   static const String _kBackGestureFolders = 'settings_back_gesture_folders';
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
+  static const String _kTerminalKeyboardAutocorrect = 'settings_terminal_keyboard_autocorrect';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
   static const String _kAgentAlerts = 'settings_agent_alerts';
   static const String _kNotificationPrefs = 'settings_notification_prefs';
@@ -627,6 +628,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _syncTerminalPath = true;
   bool get syncTerminalPath => _syncTerminalPath;
+
+  bool _terminalKeyboardAutocorrect = false;
+  bool get terminalKeyboardAutocorrect => _terminalKeyboardAutocorrect;
 
   // Everything about agent notifications: which kinds fire, how loudly, when,
   // and how sensitive the autodetector is. See [NotificationPrefs].
@@ -1647,6 +1651,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _syncTerminalPath =
         prefs.getBool(_kSyncTerminalPath) ?? true;
 
+    _terminalKeyboardAutocorrect =
+        prefs.getBool(_kTerminalKeyboardAutocorrect) ?? false;
+
     _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
 
     // Notification config: the JSON blob wins; on first run after the update
@@ -2039,6 +2046,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSyncTerminalPath, value);
+  }
+
+  Future<void> setTerminalKeyboardAutocorrect(bool value) async {
+    if (_terminalKeyboardAutocorrect == value) return;
+    _terminalKeyboardAutocorrect = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kTerminalKeyboardAutocorrect, value);
   }
 
   Future<void> setThemeChoice(AppThemeChoice choice) async {
