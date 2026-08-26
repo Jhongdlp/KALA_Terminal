@@ -44,6 +44,8 @@ Y si solo quieres una shell, también es un cliente SSH normal y rápido.
 - **Detección de agente** — reconoce Claude Code, Codex, Gemini CLI, Aider, OpenCode, Copilot CLI, Cursor, Qwen Code y Antigravity a partir de la línea de comandos y del título de ventana, incluso a través de envoltorios como `npx`, `sudo` o `uvx`.
 - **Avisos de "el agente te necesita"** — cuando una sesión en segundo plano se queda quieta tras un rato de trabajo, hace una pregunta, o suena la campana de la terminal / emite `OSC 9` u `OSC 777`, recibes una notificación con un fragmento de la pantalla y el distintivo del agente. Al tocarla saltas a esa sesión.
 - **Intensidad por tipo de aviso** — cada clase de alerta va a su propio canal de Android: emergente, solo sonido, silencioso u off. Puedes silenciar sesiones concretas y enviar notificaciones de prueba desde Ajustes.
+- **Tablero de agentes** — una pantalla con cada sesión abierta según lo que está haciendo ahora mismo: esperándote, trabajando, terminada, en el prompt o sin conexión, con la pregunta que te hace, desde hace cuánto y en qué máquina. Ordenado para que la que te necesita quede arriba, con un contador en el menú para saberlo sin abrirlo. Responde `y`/`n`/Enter/Esc o escribe desde la propia tarjeta — si la máquina está marcada como *producción*, te pide confirmación.
+- **Lanzadores de agente** — una rejilla con los logos reales detrás del botón AGENTES de la terminal (y del radial del pad táctil). Cada uno lleva su propio comando, así que `claude --dangerously-skip-permissions` es un toque y no una errata en el teclado del móvil; y si sale un agente nuevo, lo añades tú: nombre, comando e icono.
 - **Prompts guardados** — guarda instrucciones recurrentes e insértalas con un toque en vez de escribir un párrafo en el teclado del móvil.
 - **Dictado por voz** en el compositor de prompts.
 - **Panel de git** — ve los cambios pendientes del proyecto, abre un archivo modificado, escribe un commit, o **delega en la IA** ("haz add -A, commit con un mensaje sensato y push") con un solo toque.
@@ -51,6 +53,8 @@ Y si solo quieres una shell, también es un cliente SSH normal y rápido.
 ### Conexiones
 - **Perfiles** — host, puerto, usuario, contraseña o clave privada, guardados y reutilizables.
 - **Pegar un comando SSH** — sueltas `ssh -p 2222 user@host -L 8080:localhost:80` y el perfil se rellena solo.
+- **Color por máquina** — das a un perfil un color de señal (y una marca opcional de *producción*) y esa máquina queda marcada en todas partes: la lista de conexiones, el selector de sesiones, una franja sobre la propia terminal y la barra de título en escritorio. Cuatro terminales negras idénticas dejan de ser idénticas.
+- **Servidores de salto (`ProxyJump`)** — llega a una máquina que solo responde desde dentro, encadenando por un bastión que ya tienes como perfil. Hasta cinco saltos, cada uno autenticado y con su propia llave de host fijada; el selector rechaza los ciclos antes de que puedas guardarlos.
 - **Llave SSH del dispositivo** — genera una identidad ed25519 que vive en el almacenamiento seguro del móvil y nunca sale de ahí. Copias la línea pública en el `~/.ssh/authorized_keys` del servidor y entras sin contraseña.
 - **Secretos en el keystore del sistema** — contraseñas y claves privadas van al Keystore de Android / libsecret vía `flutter_secure_storage`, no a preferencias en claro.
 - **Bloqueo de la app** — desbloqueo opcional con biometría o credencial del dispositivo, al abrir y al volver.
@@ -147,6 +151,8 @@ lib/
 │   ├── app_lock.dart           # Bloqueo biométrico / por credencial
 │   ├── background_service.dart # Servicio en primer plano (mantiene las shells)
 │   ├── notification_service.dart # Canales de avisos de agente
+│   ├── agent_screen.dart       # Clasificadores puros: ¿trabaja, pregunta o está quieta?
+│   ├── agent_monitor.dart      # Estado de agente por sesión (tablero de agentes)
 │   ├── server_controller.dart  # Consola de servidor + Docker + BD
 │   └── update_service.dart     # Actualizaciones desde GitHub Releases
 ├── theme/                  # Temas, paletas de terminal, resaltado del editor
@@ -169,11 +175,20 @@ KAMMEL SSH habla con tus servidores y con la API de GitHub Releases (comprobaci�
 
 ## 🗺 Hoja de ruta
 
-- [ ] Túneles dinámicos (`-D`, SOCKS5) y remotos (`-R`) — el modelo ya existe, la interfaz cubre hoy `-L`
-- [ ] Traducción de la interfaz al inglés (y a más idiomas)
+Ya hecho desde la última vez que se escribió esta lista:
+
+- [x] Túneles dinámicos (`-D`, SOCKS5) y remotos (`-R`), con cierre por inactividad
+- [x] Interfaz traducida por completo: español, inglés y chino simplificado
+- [x] Servidores de salto (`ProxyJump`), con la llave de host fijada en cada salto
+- [x] Suite de tests real (más de 270; `flutter test`)
+
+Pendiente:
+
 - [ ] Editor: buscar y reemplazar, pestañas multi-archivo
 - [ ] Mejoras de autenticación por clave: claves con passphrase, reenvío de agente
-- [ ] Suite de tests real (`test/widget_test.dart` sigue siendo la plantilla de Flutter)
+- [ ] Responder desde la propia notificación, sin abrir la app
+- [ ] Detectar agentes en sesiones `tmux` desprendidas, no solo en pestañas abiertas
+- [ ] Transferencias SFTP que se reanuden tras cortarse la conexión
 
 ¿Tienes una idea? [Abre un issue](https://github.com/Jhongdlp/Kammel_ssh/issues/new).
 

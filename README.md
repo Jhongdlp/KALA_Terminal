@@ -44,6 +44,8 @@ It is also a perfectly ordinary, fast SSH client if you just want a shell.
 - **Agent detection** — recognises Claude Code, Codex, Gemini CLI, Aider, OpenCode, Copilot CLI, Cursor, Qwen Code and Antigravity from the running command line and window title, including through wrappers like `npx`, `sudo` or `uvx`.
 - **"Agent needs you" notifications** — when a backgrounded session goes idle after a burst of work, asks a question, or rings the terminal bell / emits `OSC 9`/`OSC 777`, you get a heads-up notification with a snippet of the screen and the agent's badge. Tap it to jump straight back to that session.
 - **Per-alert intensity** — each alert kind maps to its own Android channel: heads-up, sound only, silent, or off. Mute individual sessions. Send test notifications from Settings.
+- **Agents dashboard** — one screen listing every open session by what it is doing right now: waiting on you, working, finished, at a prompt or offline, with the question it is asking, how long it has been asking it, and which machine it is on. Sorted so the one that needs you is at the top, with a badge on the menu so you can tell without opening it. Answer `y`/`n`/Enter/Esc or type a reply straight from the card — a machine marked *production* asks you to confirm first.
+- **One-tap agent launchers** — a grid of real agent marks behind the terminal's AGENTS button (and the touch pad's radial). Each one carries its own command, so `claude --dangerously-skip-permissions` is a tap rather than a phone-keyboard typo, and a new agent is one you add yourself: name, command, icon.
 - **Prompt snippets** — save recurring instructions and insert them with one tap instead of typing a paragraph on a phone keyboard.
 - **Voice dictation** in the prompt composer.
 - **Git panel** — see pending changes in the project, open a changed file, write a commit, or **delegate to the agent** ("commit everything with a sensible message and push") with a single tap.
@@ -51,6 +53,9 @@ It is also a perfectly ordinary, fast SSH client if you just want a shell.
 ### Connections
 - **Profiles** — host, port, user, password or private key, saved and reusable.
 - **Paste an SSH command** — drop in `ssh -p 2222 user@host -L 8080:localhost:80` and the profile fills itself in.
+- **Import `~/.ssh/config`** — `Host` blocks become profiles, `ProxyJump` links included; a bastion a chosen host needs is imported with it.
+- **Color per machine** — give a profile a signal color (and an optional *production* flag) and it marks that machine everywhere: the connection list, the session switcher, a stripe over the terminal itself and the desktop title bar. Four identical black terminals stop being identical.
+- **Jump hosts (`ProxyJump`)** — reach a machine that only answers from inside, by chaining through a bastion you already have a profile for. Up to five hops, each one authenticated and host-key-pinned on its own; the picker refuses loops before you can save one.
 - **Device SSH key** — generate an ed25519 identity that lives in the phone's secure storage and never leaves it. Copy the public line into `~/.ssh/authorized_keys` and connect passwordless.
 - **Secrets in the OS keystore** — passwords and private keys go to the Android Keystore / libsecret via `flutter_secure_storage`, not into plain preferences.
 - **App lock** — optional biometric / device-credential unlock on launch and on resume.
@@ -147,6 +152,8 @@ lib/
 │   ├── app_lock.dart           # Biometric / device-credential lock
 │   ├── background_service.dart # Android foreground service (keeps shells alive)
 │   ├── notification_service.dart # Agent-alert notification channels
+│   ├── agent_screen.dart       # Pure classifiers: is this screen busy/asking/idle?
+│   ├── agent_monitor.dart      # Live per-session agent state (agents dashboard)
 │   ├── server_controller.dart  # Server console + Docker + DB state machine
 │   └── update_service.dart     # In-app updates from GitHub Releases
 ├── theme/                  # Themes, terminal palettes, editor highlighting
@@ -169,11 +176,20 @@ KAMMEL SSH talks to your servers and to the GitHub Releases API (update check). 
 
 ## 🗺 Roadmap
 
-- [ ] Dynamic (`-D`, SOCKS5) and remote (`-R`) tunnels — the model exists, the UI covers `-L` today
-- [ ] English (and further) translations of the UI
+Shipped since this list was last written:
+
+- [x] Dynamic (`-D`, SOCKS5) and remote (`-R`) tunnels, with per-tunnel idle timeouts
+- [x] Full UI translation — Spanish, English and Simplified Chinese
+- [x] Jump hosts (`ProxyJump`), with per-hop host-key pinning
+- [x] A real test suite (270+ tests; `flutter test`)
+
+Still open:
+
 - [ ] Editor: search & replace, multi-file tabs
 - [ ] Key-based auth improvements: passphrase-protected keys, agent forwarding
-- [ ] A real test suite (`test/widget_test.dart` is still the Flutter template)
+- [ ] Quick replies from the notification itself, without opening the app
+- [ ] Find agents running in detached `tmux` sessions, not just open tabs
+- [ ] SFTP transfers that resume after a dropped connection
 
 Have an idea? [Open an issue](https://github.com/Jhongdlp/Kammel_ssh/issues/new).
 
