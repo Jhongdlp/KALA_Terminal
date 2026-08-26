@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import 'agent_launchers_panel.dart';
 import '../widgets/color_picker_dialog.dart';
 import '../widgets/swiss.dart';
+import '../models/touch_pad.dart';
+import '../widgets/joystick_recognizer.dart';
+import '../widgets/terminal_touch_pad.dart';
+import 'pad_slot_sheet.dart';
 import 'shortcut_manager_sheet.dart';
 import '../l10n/l10n.dart';
 
@@ -27,6 +32,18 @@ class PersonalizationTab extends StatelessWidget {
         context.select<AppState, String>((s) => s.accentColorHex);
     final terminalGestureDeadzone =
         context.select<AppState, double>((s) => s.terminalGestureDeadzone);
+    final padEnabled =
+        context.select<AppState, bool>((s) => s.terminalPadEnabled);
+    final padRadialEnabled =
+        context.select<AppState, bool>((s) => s.terminalPadRadialEnabled);
+    final padHoldMs = context.select<AppState, int>((s) => s.terminalPadHoldMs);
+    final padRadialMs =
+        context.select<AppState, int>((s) => s.terminalPadRadialMs);
+    // Selected by its encoded form: the config is rebuilt on every edit, so a
+    // selector on the object itself would never compare equal.
+    final padSlotsEncoded =
+        context.select<AppState, String>((s) => s.terminalPadConfig.encode());
+    final padConfig = TouchPadConfig.decode(padSlotsEncoded);
     // Selected as a joined string: `customAccentColors` hands back a fresh list
     // every call, so a List selector would never compare equal.
     final customAccentJoined = context
@@ -212,39 +229,6 @@ class PersonalizationTab extends StatelessWidget {
               ),
               Hairline(),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(tr('SENSIBILIDAD GESTOS (ZONA MUERTA)'),
-                          style: AppText.label(9, color: AppColors.muted)),
-                    ),
-                    Text('${terminalGestureDeadzone.toStringAsFixed(0)} PX',
-                        style: AppText.mono(12, color: AppColors.bone)),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Slider(
-                        value: terminalGestureDeadzone,
-                        min: 10,
-                        max: 150,
-                        divisions: 140,
-                        activeColor: AppColors.bone,
-                        inactiveColor: AppColors.hairline,
-                        thumbColor: AppColors.bone,
-                        onChanged: state.setTerminalGestureDeadzone,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Hairline(),
-              Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
                 child: Text(tr('ESQUEMA DE COLOR'),
                     style: AppText.label(9, color: AppColors.muted)),
@@ -313,8 +297,176 @@ class PersonalizationTab extends StatelessWidget {
               ),
             ],
           ),
+
+          // ---- Agent launchers --------------------------------------------
+          // Above the pad on purpose: the pad's radial is one of the places
+          // this list is reached from, so reading the app's own settings top to
+          // bottom introduces the agents before the gesture that opens them.
+          const AgentLaunchersPanel(),
+          const SizedBox(height: 16),
+
+          // ---- Touch pad --------------------------------------------------
+          // The pad shares its pixels with the scroll and the long press, so
+          // every threshold that separates them is a setting: where one hand
+          // draws the line between a swipe and a hold is not where another does.
+          SwissPanel(
+            title: tr('Pad táctil'),
+            children: [
+              ToggleRow(
+                label: tr('PAD TÁCTIL'),
+                description: tr(
+                    'Mantén el dedo sobre el terminal y se convierte en un pad: arrastra para repetir la tecla de esa dirección (arriba y abajo recorren el historial) sin abrir el teclado.'),
+                value: padEnabled,
+                onChanged: state.setTerminalPadEnabled,
+              ),
+              Hairline(),
+              _SliderRow(
+                label: tr('TIEMPO DE PULSACIÓN'),
+                hint: tr(
+                    'Cuánto hay que mantener el dedo quieto antes de que el pad se active. Súbelo si al deslizar se activa el pad; bájalo si tienes que esperar demasiado.'),
+                value: padHoldMs.toDouble(),
+                min: JoystickGestureRecognizer.minHoldMs.toDouble(),
+                max: JoystickGestureRecognizer.maxHoldMs.toDouble(),
+                readout: '$padHoldMs MS',
+                enabled: padEnabled,
+                onChanged: (v) => state.setTerminalPadHoldMs(v.round()),
+              ),
+              Hairline(),
+              _SliderRow(
+                label: tr('ZONA MUERTA'),
+                hint: tr(
+                    'Cuánto hay que arrastrar desde el centro antes de que el pad empiece a enviar la tecla.'),
+                value: terminalGestureDeadzone,
+                min: 10,
+                max: 150,
+                divisions: 140,
+                readout: '${terminalGestureDeadzone.toStringAsFixed(0)} PX',
+                enabled: padEnabled,
+                onChanged: state.setTerminalGestureDeadzone,
+              ),
+              Hairline(),
+              ToggleRow(
+                label: tr('MENÚ RADIAL'),
+                description: tr(
+                    'Si mantienes el dedo un poco más sin arrastrar, el pad se abre en ocho accesos rápidos. Arrastra hacia uno y suelta; suelta en el centro para cancelar.'),
+                value: padRadialEnabled,
+                onChanged: state.setTerminalPadRadialEnabled,
+              ),
+              Hairline(),
+              _SliderRow(
+                label: tr('ESPERA DEL MENÚ'),
+                hint: tr(
+                    'Cuánto tarda en abrirse el menú radial desde que el pad se activa.'),
+                value: padRadialMs.toDouble(),
+                min: AppState.minPadRadialMs.toDouble(),
+                max: AppState.maxPadRadialMs.toDouble(),
+                readout: '$padRadialMs MS',
+                enabled: padEnabled && padRadialEnabled,
+                onChanged: (v) => state.setTerminalPadRadialMs(v.round()),
+              ),
+              Hairline(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(tr('ACCESOS DEL PAD'),
+                          style: AppText.label(9, color: AppColors.muted)),
+                    ),
+                    GhostButton(
+                      label: tr('RESTABLECER'),
+                      dense: true,
+                      onPressed: state.resetTerminalPadSlots,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Text(
+                    tr('Toca una casilla para elegir qué envía. Las cuatro flechas son también lo que repite el arrastre; las esquinas sólo están en el menú radial.'),
+                    style: AppText.label(8.5,
+                        color: AppColors.faint, spacing: 0.3)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
+                child: TouchPadGrid(
+                  config: padConfig,
+                  onTap: (direction) =>
+                      showPadSlotSheet(context, state, direction),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// Label + readout + slider, the shape every threshold in the pad panel takes.
+/// Disabled sliders are drawn faint rather than hidden: a setting that vanishes
+/// when its feature is off is a setting the user cannot find again.
+class _SliderRow extends StatelessWidget {
+  const _SliderRow({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.readout,
+    required this.onChanged,
+    this.divisions,
+    this.enabled = true,
+  });
+
+  final String label;
+  final String hint;
+  final double value;
+  final double min;
+  final double max;
+  final String readout;
+  final int? divisions;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = enabled ? AppColors.bone : AppColors.faint;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(label,
+                    style: AppText.label(9, color: AppColors.muted)),
+              ),
+              Text(readout, style: AppText.mono(12, color: fg)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          child: Text(hint,
+              style: AppText.label(8.5, color: AppColors.faint, spacing: 0.3)),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            activeColor: fg,
+            inactiveColor: AppColors.hairline,
+            thumbColor: fg,
+            onChanged: enabled ? onChanged : null,
+          ),
+        ),
+      ],
     );
   }
 }

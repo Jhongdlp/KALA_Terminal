@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import '../models/connection_error.dart';
 import '../providers/app_state.dart';
+import 'agent_launcher_sheet.dart';
 import '../services/terminal_search.dart';
 import '../theme/app_theme.dart';
 import '../widgets/adaptive_sheet.dart';
@@ -26,6 +28,9 @@ import 'tunnels_tab.dart';
 import '../models/connection_profile.dart';
 import '../services/tunnel_manager.dart';
 import '../widgets/joystick_recognizer.dart';
+import '../widgets/terminal_touch_pad.dart';
+import '../models/touch_pad.dart';
+import '../widgets/profile_tint.dart';
 import '../l10n/l10n.dart';
 
 class TerminalTab extends StatefulWidget {
@@ -37,118 +42,231 @@ class TerminalTab extends StatefulWidget {
 
 class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   final FocusNode _terminalFocusNode = FocusNode();
-  Offset? _pointerStart;
-  Offset? _pointerCurrent;
-  Timer? _springTimer;
-  String? _springDirection;
-  bool _isAccelerated = false;
-  Duration _currentSpringInterval = const Duration(milliseconds: 300);
 
-  void _fireSpringTick(AppState state) {
-    if (_pointerStart == null || _springDirection == null) return;
-    
-    // Send the key
-    switch (_springDirection) {
-      case 'up': _sendTerminalKey(state, '\x1b[A'); break;
-      case 'down': _sendTerminalKey(state, '\x1b[B'); break;
-      case 'right': _sendTerminalKey(state, '\x1b[C'); break;
-      case 'left': _sendTerminalKey(state, '\x1b[D'); break;
+  // ---- Touch pad -----------------------------------------------------------
+  // Hold a beat and the finger becomes a d-pad; hold a beat longer without
+  // pulling and it blooms into the radial. The gesture arena work is in
+  // [JoystickGestureRecognizer]; what lives here is what the pad *does* and
+  // what it looks like while doing it.
+  //
+  // Coordinates are local to [_padSpaceKey]'s stack, because the overlay is
+  // painted inside it while the recogniser reports global positions.
+  final GlobalKey _padSpaceKey = GlobalKey();
+  Offset? _padOrigin;
+  Offset? _padCurrent;
+  TouchPadMode? _padMode;
+  PadDirection? _padDirection;
+  bool _padAccelerated = false;
+  double _padTension = 0;
+  // Set when the slot under the finger is a one-shot action rather than keys,
+  // so a bound sheet opens once instead of once per repeat tick.
+  bool _padActionFired = false;
+  Timer? _padRepeatTimer;
+  Timer? _padRadialTimer;
+  Duration _padRepeatInterval = const Duration(milliseconds: 300);
+
+  /// How close to a slot the finger has to be for the radial to consider it
+  /// picked. Deliberately much smaller than the radius the chips are drawn at:
+  /// the finger only has to *lean* towards a slot, not reach it.
+  static const double _radialPickRadius = 34;
+
+  Offset _toPadSpace(Offset global) {
+    final box = _padSpaceKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return global;
+    return box.globalToLocal(global);
+  }
+
+  Offset _fromPadSpace(Offset local) {
+    final box = _padSpaceKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return local;
+    return box.localToGlobal(local);
+  }
+
+  /// Sends whatever [direction] is bound to. Returns false when the slot is
+  /// empty or is a one-shot action, i.e. when there is nothing to repeat.
+  bool _firePadSlot(AppState state, PadDirection direction) {
+    final shortcut = state.terminalPadConfig.slot(direction);
+    if (shortcut == null) return false;
+    if (shortcut.value.startsWith('system:')) {
+      _runKeyAction(state, shortcut.value.substring('system:'.length));
+      return false;
     }
-    
-    // Schedule next tick
-    _springTimer?.cancel();
-    _springTimer = Timer(_currentSpringInterval, () {
-      if (mounted) _fireSpringTick(state);
+    _sendTerminalKey(state, shortcut.parsedValue);
+    return true;
+  }
+
+  void _firePadRepeatTick(AppState state) {
+    final direction = _padDirection;
+    if (_padOrigin == null || direction == null) return;
+    if (_padMode != TouchPadMode.repeat) return;
+    if (!_firePadSlot(state, direction)) {
+      // A one-shot slot: fire once and stop, rather than reopening a sheet
+      // three times a second for as long as the finger is held.
+      _padActionFired = true;
+      _padRepeatTimer?.cancel();
+      _padRepeatTimer = null;
+      return;
+    }
+    _padRepeatTimer?.cancel();
+    _padRepeatTimer = Timer(_padRepeatInterval, () {
+      if (mounted) _firePadRepeatTick(state);
     });
   }
 
-  void _updateSpring(AppState state) {
-    if (_pointerStart == null || _pointerCurrent == null) return;
-    
-    final dx = _pointerCurrent!.dx - _pointerStart!.dx;
-    final dy = _pointerCurrent!.dy - _pointerStart!.dy;
-    
-    final absX = dx.abs();
-    final absY = dy.abs();
-    
+  /// Called on every move once the pad owns the pointer. Decides which of the
+  /// three modes we are in and keeps the HUD in step with it.
+  void _updatePad(AppState state) {
+    final origin = _padOrigin;
+    final current = _padCurrent;
+    if (origin == null || current == null) return;
+    final delta = current - origin;
+
+    // The radial has already opened: it owns the gesture until release, so a
+    // pull no longer starts a repeat. Waiting for the menu and then dragging
+    // has to mean "pick this slot", or the wait would be punished.
+    if (_padMode == TouchPadMode.radial) {
+      final picked = padDirectionFor(delta,
+          deadzone: _radialPickRadius, corners: true);
+      if (picked != _padDirection) {
+        HapticFeedback.selectionClick();
+        setState(() => _padDirection = picked);
+      }
+      return;
+    }
+
     final deadzone = state.terminalGestureDeadzone;
-    
-    // Deadzone
-    if (absX < deadzone && absY < deadzone) {
-      _springTimer?.cancel();
-      _springTimer = null;
-      if (_springDirection != null || _isAccelerated) {
+    final direction =
+        padDirectionFor(delta, deadzone: deadzone, corners: false);
+
+    if (direction == null) {
+      // Back inside the deadzone: stop repeating and start counting towards
+      // the radial again.
+      _padRepeatTimer?.cancel();
+      _padRepeatTimer = null;
+      _padActionFired = false;
+      _armRadialTimer(state);
+      if (_padDirection != null || _padAccelerated || _padTension != 0) {
         setState(() {
-          _springDirection = null;
-          _isAccelerated = false;
+          _padDirection = null;
+          _padAccelerated = false;
+          _padTension = 0;
         });
       }
       return;
     }
-    
-    String newDir;
-    double pullDistance;
-    
-    if (absX > absY) {
-      newDir = dx > 0 ? 'right' : 'left';
-      pullDistance = absX;
-    } else {
-      newDir = dy > 0 ? 'down' : 'up';
-      pullDistance = absY;
+
+    // Pulling: the radial is off the table until the finger comes back.
+    _padRadialTimer?.cancel();
+    _padRadialTimer = null;
+
+    final pull = direction == PadDirection.left || direction == PadDirection.right
+        ? delta.dx.abs()
+        : delta.dy.abs();
+    final ratio = ((pull - deadzone) / 160).clamp(0.0, 1.0);
+    _padRepeatInterval = Duration(milliseconds: 300 - (270 * ratio).toInt());
+    final accelerated = ratio >= 0.35;
+    if (!_padAccelerated && accelerated) HapticFeedback.selectionClick();
+
+    final changed = _padDirection != direction;
+    if (changed) _padActionFired = false;
+    if (changed || _padAccelerated != accelerated || _padMode != TouchPadMode.repeat) {
+      setState(() {
+        _padMode = TouchPadMode.repeat;
+        _padDirection = direction;
+        _padAccelerated = accelerated;
+        _padTension = ratio;
+      });
+    } else if ((_padTension - ratio).abs() > 0.05) {
+      setState(() => _padTension = ratio);
     }
-    
-    // Calculate speed based on pull distance (spring tension)
-    // deadzone -> 300ms, deadzone + 160px -> 30ms
-    final speedRatio = ((pullDistance - deadzone) / 160).clamp(0.0, 1.0);
-    final intervalMs = 300 - (270 * speedRatio).toInt();
-    _currentSpringInterval = Duration(milliseconds: intervalMs);
-    
-    // Trigger acceleration (double arrows) when pulling beyond ~35% of max stretch
-    final newAccelerated = speedRatio >= 0.35;
-    
-    // Haptic tick when transitioning into accelerated speed
-    if (!_isAccelerated && newAccelerated) {
+
+    if (_padActionFired) return;
+    if (_padRepeatTimer == null || !_padRepeatTimer!.isActive) {
+      _firePadRepeatTick(state);
+    }
+  }
+
+  void _armRadialTimer(AppState state) {
+    _padRadialTimer?.cancel();
+    if (!state.terminalPadRadialEnabled) return;
+    _padRadialTimer = Timer(state.terminalPadRadialDelay, () {
+      _padRadialTimer = null;
+      if (!mounted || _padOrigin == null) return;
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _padMode = TouchPadMode.radial;
+        _padDirection = null;
+        _padAccelerated = false;
+        _padTension = 0;
+      });
+    });
+  }
+
+  /// The finger has been still long enough that a nudge would arm the pad.
+  /// Nothing has been won in the arena yet — this only draws the ring, which
+  /// is the whole point: the gesture used to be invisible until it fired.
+  void _handleHoldQualified(Offset global, AppState state) {
+    if (!state.terminalPadEnabled) return;
+    if (_terminalController.selection != null) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _padOrigin = _toPadSpace(global);
+      _padCurrent = _padOrigin;
+      _padMode = TouchPadMode.armed;
+      _padDirection = null;
+      _padAccelerated = false;
+      _padTension = 0;
+    });
+  }
+
+  /// It turned out to be a swipe, a tap or a long press: take the ring away.
+  void _handleHoldCancelled() {
+    if (_padMode == null) return;
+    _clearPad();
+  }
+
+  void _handleJoystickStart(Offset global, AppState state) {
+    if (_terminalController.selection != null) return;
+    setState(() {
+      _padOrigin = _toPadSpace(global);
+      _padCurrent = _padOrigin;
+      _padMode = TouchPadMode.armed;
+    });
+    _armRadialTimer(state);
+  }
+
+  void _handleJoystickMove(Offset global, AppState state) {
+    if (_padOrigin == null) return;
+    _padCurrent = _toPadSpace(global);
+    _updatePad(state);
+  }
+
+  void _handleJoystickEnd(AppState state) {
+    // Releasing on a radial slot is what fires it — the whole menu is a
+    // pick-and-release, so nothing happens while the finger is still down.
+    if (_padMode == TouchPadMode.radial && _padDirection != null) {
+      _firePadSlot(state, _padDirection!);
       HapticFeedback.selectionClick();
     }
-    
-    if (_springDirection != newDir || _isAccelerated != newAccelerated) {
-      setState(() {
-        _springDirection = newDir;
-        _isAccelerated = newAccelerated;
-      });
-    }
-    
-    if (_springTimer == null || !_springTimer!.isActive) {
-      _fireSpringTick(state);
-    }
+    _clearPad();
   }
 
-  void _handleJoystickStart(Offset pos, AppState state) {
-    if (_terminalController.selection != null) return;
-    _pointerStart = pos;
-    _pointerCurrent = pos;
-    HapticFeedback.selectionClick();
+  void _clearPad() {
+    _padRepeatTimer?.cancel();
+    _padRepeatTimer = null;
+    _padRadialTimer?.cancel();
+    _padRadialTimer = null;
+    _padActionFired = false;
+    if (!mounted) return;
+    setState(() {
+      _padOrigin = null;
+      _padCurrent = null;
+      _padMode = null;
+      _padDirection = null;
+      _padAccelerated = false;
+      _padTension = 0;
+    });
   }
-
-  void _handleJoystickMove(Offset pos, AppState state) {
-    if (_pointerStart == null) return;
-    _pointerCurrent = pos;
-    _updateSpring(state);
-  }
-
-  void _handleJoystickEnd() {
-    _pointerStart = null;
-    _pointerCurrent = null;
-    _springTimer?.cancel();
-    _springTimer = null;
-    if (_springDirection != null || _isAccelerated) {
-      setState(() {
-        _springDirection = null;
-        _isAccelerated = false;
-      });
-    }
-  }
-
 
   @override
   void initState() {
@@ -213,6 +331,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // The pad's timers outlive the widget otherwise: a repeat tick firing
+    // after the tab is gone would push keys into a dead session.
+    _padRepeatTimer?.cancel();
+    _padRadialTimer?.cancel();
     _observedTerminal?.removeListener(_onTerminalChanged);
     _terminalFocusNode.dispose();
     _terminalController.dispose();
@@ -300,9 +422,15 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           builder: (context, constraints) {
 
             return Stack(
+              key: _padSpaceKey,
               children: [
                 Column(
                   children: [
+                // Which machine this is, in 3px. Above the toolbar and outside
+                // it so fullscreen keeps it — fullscreen is exactly when the
+                // session name is no longer on screen.
+                ProfileTintBand(
+                    tint: profileTint(state.activeSession?.activeProfile)),
                 if (!fullscreen) _buildToolbar(context, state),
                 // Dropped connection with a known profile → offer to
                 // re-establish it in place (with tmux this re-attaches to
@@ -323,16 +451,26 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                         () => JoystickGestureRecognizer(
                           onJoystickStart: (pos) => _handleJoystickStart(pos, state),
                           onJoystickMove: (pos) => _handleJoystickMove(pos, state),
-                          onJoystickEnd: _handleJoystickEnd,
+                          onJoystickEnd: () => _handleJoystickEnd(state),
+                          onHoldQualified: (pos) =>
+                              _handleHoldQualified(pos, state),
+                          onHoldCancelled: _handleHoldCancelled,
+                          holdDelay: state.terminalPadHoldDelay,
                           isSelectionActive: () =>
-                              _terminalController.selection != null,
+                              _terminalController.selection != null ||
+                              !state.terminalPadEnabled,
                         ),
                         (JoystickGestureRecognizer instance) {
                           instance.onJoystickStart = (pos) => _handleJoystickStart(pos, state);
                           instance.onJoystickMove = (pos) => _handleJoystickMove(pos, state);
-                          instance.onJoystickEnd = _handleJoystickEnd;
+                          instance.onJoystickEnd = () => _handleJoystickEnd(state);
+                          instance.onHoldQualified = (pos) =>
+                              _handleHoldQualified(pos, state);
+                          instance.onHoldCancelled = _handleHoldCancelled;
+                          instance.holdDelay = state.terminalPadHoldDelay;
                           instance.isSelectionActive = () =>
-                              _terminalController.selection != null;
+                              _terminalController.selection != null ||
+                              !state.terminalPadEnabled;
                         },
                       ),
                     },
@@ -410,56 +548,19 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                   ),
               ],
             ),
-            // Fleeting gesture feedback HUD (Spring Mode)
-            if (_springDirection != null)
+            // The pad's ring, repeat chip and radial. Pure paint over the
+            // buffer: the pointer belongs to the recogniser that armed it.
+            if (_padOrigin != null && _padMode != null)
               Positioned.fill(
                 child: IgnorePointer(
-                  child: Center(
-                    child: AnimatedOpacity(
-                      opacity: _springDirection != null ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 100),
-                      child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: AppColors.ink.withOpacity(0.85),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: _isAccelerated
-                                ? AppColors.accent.withOpacity(0.8)
-                                : AppColors.hairline.withOpacity(0.4),
-                            width: _isAccelerated ? 1.5 : 1.0,
-                          ),
-                          boxShadow: _isAccelerated
-                              ? [
-                                  BoxShadow(
-                                    color: AppColors.accent.withOpacity(0.3),
-                                    blurRadius: 18,
-                                    spreadRadius: 2,
-                                  )
-                                ]
-                              : null,
-                        ),
-                        child: Icon(
-                          _springDirection == 'up'
-                              ? (_isAccelerated
-                                  ? Icons.keyboard_double_arrow_up
-                                  : Icons.keyboard_arrow_up)
-                              : _springDirection == 'down'
-                                  ? (_isAccelerated
-                                      ? Icons.keyboard_double_arrow_down
-                                      : Icons.keyboard_arrow_down)
-                                  : _springDirection == 'left'
-                                      ? (_isAccelerated
-                                          ? Icons.keyboard_double_arrow_left
-                                          : Icons.keyboard_arrow_left)
-                                      : (_isAccelerated
-                                          ? Icons.keyboard_double_arrow_right
-                                          : Icons.keyboard_arrow_right),
-                          size: _isAccelerated ? 44 : 40,
-                          color: _isAccelerated ? AppColors.accent : AppColors.bone,
-                        ),
-                      ),
-                    ),
+                  child: TouchPadOverlay(
+                    origin: _padOrigin!,
+                    current: _padCurrent,
+                    mode: _padMode!,
+                    config: state.terminalPadConfig,
+                    active: _padDirection,
+                    accelerated: _padAccelerated,
+                    tension: _padTension,
                   ),
                 ),
               ),
@@ -1244,6 +1345,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   /// slide-up sessions panel.
   Widget _sessionSelector(BuildContext context, AppState state) {
     final active = state.activeSession;
+    final profile = active?.activeProfile;
+    final tint = profileTint(profile);
+    // The glyph's *shape* is what carries connection status (spinner / dns /
+    // ring), so its color is free to carry identity instead.
+    final glyphColor = tint ?? AppColors.bone;
     return InkWell(
       onTap: () => _showSessionsSheet(context, state),
       child: Padding(
@@ -1252,7 +1358,7 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           children: [
             active != null
                 ? _statusGlyph(active, state,
-                    size: 18 * state.uiIconFactor, color: AppColors.bone)
+                    size: 18 * state.uiIconFactor, color: glyphColor)
                 : Icon(Icons.circle_outlined,
                     size: 18 * state.uiIconFactor, color: AppColors.bone),
             const SizedBox(width: 10),
@@ -1264,6 +1370,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (profile?.isProduction ?? false) ...[
+              const SizedBox(width: 7),
+              ProdBadge(tint: tint),
+            ],
             const SizedBox(width: 7),
             // A non-active session rang the bell (agent waiting) → draw the
             // eye to the session switcher.
@@ -1339,8 +1449,9 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     final isActive = index == state.activeSessionIndex;
     final fg = isActive ? AppColors.ink : AppColors.bone;
     final metaFg = isActive ? AppColors.ink : AppColors.muted;
+    final tint = profileTint(session.activeProfile);
 
-    return Material(
+    final row = Material(
       color: isActive ? AppColors.bone : Colors.transparent,
       child: InkWell(
         onTap: () {
@@ -1365,6 +1476,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                                   color: fg, weight: FontWeight.w700),
                               overflow: TextOverflow.ellipsis),
                         ),
+                        if (session.activeProfile?.isProduction ?? false) ...[
+                          const SizedBox(width: 8),
+                          ProdBadge(tint: tint),
+                        ],
                         // Pending agent alert: this session asked for
                         // attention while another one was visible.
                         if (session.hasPendingAlert) ...[
@@ -1420,6 +1535,19 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           ),
         ),
       ),
+    );
+
+    if (tint == null) return row;
+    return Stack(
+      children: [
+        row,
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: Container(width: 3, color: tint),
+        ),
+      ],
     );
   }
 
@@ -1491,6 +1619,9 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   /// Runs a named action key from the quick keyboard's ACCIONES layer.
   void _runKeyAction(AppState state, String action) {
     switch (action) {
+      case 'agents':
+        showAgentLauncher(context);
+        break;
       case 'attach':
         _attach(state);
         break;
@@ -1503,7 +1634,60 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
       case 'links':
         _showLinksSheet(state);
         break;
+      case 'select':
+        _startSelection(state);
+        break;
     }
+  }
+
+  /// Starts a text selection without a long press — the `system:select`
+  /// action, which can sit on a pad slot or on the ACCIONES layer.
+  ///
+  /// Copying used to have exactly one entrance, and that entrance was a
+  /// gesture the touch pad competes for on the same pixels: hold still and the
+  /// long press selects, hold and drift and the pad takes the pointer instead.
+  /// The pad standing down for a selection ([JoystickGestureRecognizer]'s
+  /// `isSelectionActive`) only helps once a selection already exists, so this
+  /// is the way in that no gesture can take away.
+  ///
+  /// Fired from the pad it selects the word under the finger that armed it —
+  /// the press the user already made is the pointing gesture. Fired from a key
+  /// there is nothing to point at, so it takes the last non-empty line, which
+  /// is the command or the error that is nearly always what gets copied.
+  void _startSelection(AppState state, {Offset? atGlobal}) {
+    final viewState = _terminalViewKey.currentState;
+    if (viewState == null) return;
+    final render = viewState.renderTerminal;
+    if (!render.attached) return;
+
+    final origin = _padOrigin;
+    final at = atGlobal ?? (origin == null ? null : _fromPadSpace(origin));
+    if (at != null) {
+      render.selectWord(render.globalToLocal(at));
+    } else {
+      _selectLastLine(state);
+    }
+    if (_terminalController.selection == null) return;
+    HapticFeedback.selectionClick();
+  }
+
+  /// Selects the whole of the last line that has anything on it.
+  void _selectLastLine(AppState state) {
+    final buffer = state.terminal.buffer;
+    var y = buffer.lines.length - 1;
+    while (y > 0 && buffer.lines[y].getText().trim().isEmpty) {
+      y--;
+    }
+    // `getText()` drops empty cells, so its length is a lower bound on the
+    // column the line ends at — good enough for an end anchor, which is
+    // clamped to the viewport anyway.
+    final text = buffer.lines[y].getText().trimRight();
+    if (text.isEmpty) return;
+    _terminalController.setSelection(
+      buffer.createAnchor(0, y),
+      buffer.createAnchor(
+          math.min(text.length, state.terminal.viewWidth), y),
+    );
   }
 
   /// Thin banner over the shortcut rows while a file is being uploaded to the

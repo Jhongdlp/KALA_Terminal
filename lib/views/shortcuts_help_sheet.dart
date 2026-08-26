@@ -45,6 +45,8 @@ const List<_Gesture> _terminalGestures = [
       'Recorre el historial de salida. Dentro de tmux o un TUI, envía la rueda a la aplicación.'),
   _Gesture(Icons.gamepad_outlined, 'Mantener pulsado y arrastrar',
       'Convierte el dedo en un joystick de flechas: cuanto más lejos arrastras, más rápido se repite la tecla.'),
+  _Gesture(Icons.blur_circular, 'Mantener pulsado, mover un poco y esperar',
+      'Abre el menú radial del pad: ocho accesos rápidos alrededor del dedo. Arrastra a uno y suelta; en el centro se cancela.'),
   _Gesture(Icons.text_fields, 'Mantener pulsado sin mover',
       'Selecciona la palabra y muestra los tiradores para ampliar la selección.'),
   _Gesture(Icons.pinch_outlined, 'Pellizcar con dos dedos',

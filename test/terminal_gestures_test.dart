@@ -18,7 +18,9 @@ void main() {
   late TerminalController controller;
   late ScrollController scrollController;
   late List<String> joystick;
+  late List<String> hold;
   late List<String> output;
+  Duration? holdDelay;
 
   Future<void> pumpTerminal(WidgetTester tester) async {
     await tester.pumpWidget(
@@ -37,6 +39,9 @@ void main() {
                     onJoystickStart: (_) => joystick.add('start'),
                     onJoystickMove: (_) => joystick.add('move'),
                     onJoystickEnd: () => joystick.add('end'),
+                    onHoldQualified: (_) => hold.add('qualified'),
+                    onHoldCancelled: () => hold.add('cancelled'),
+                    holdDelay: holdDelay,
                     isSelectionActive: () => controller.selection != null,
                   ),
                   (JoystickGestureRecognizer instance) {},
@@ -62,6 +67,8 @@ void main() {
     controller = TerminalController();
     scrollController = ScrollController();
     joystick = <String>[];
+    hold = <String>[];
+    holdDelay = null;
     output = <String>[];
     terminal.onOutput = output.add;
   });
@@ -156,6 +163,82 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(joystick, isEmpty);
+    });
+
+    testWidgets('the ring shows on the hold and leaves when the long press wins',
+        (tester) async {
+      await pumpTerminal(tester);
+
+      final gesture =
+          await tester.startGesture(const Offset(60, 200), kind: touch);
+      await tester.pump(const Duration(milliseconds: 260));
+      // The pad is listening: the ring is up before anything has been won.
+      expect(hold, ['qualified']);
+
+      await tester.pump(const Duration(milliseconds: 300));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // The long press took it, so the ring was taken back.
+      expect(hold, ['qualified', 'cancelled']);
+      expect(joystick, isEmpty);
+      expect(controller.selection, isNotNull);
+    });
+
+    testWidgets('a swipe never shows the ring at all', (tester) async {
+      await pumpTerminal(tester);
+
+      final gesture =
+          await tester.startGesture(const Offset(200, 200), kind: touch);
+      for (var i = 0; i < 12; i++) {
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump(const Duration(milliseconds: 30));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(hold, isEmpty);
+    });
+
+    testWidgets('arming keeps the ring: the cancel is never sent',
+        (tester) async {
+      await pumpTerminal(tester);
+
+      final gesture =
+          await tester.startGesture(const Offset(200, 200), kind: touch);
+      await tester.pump(const Duration(milliseconds: 260));
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(0, -4));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(hold, ['qualified']);
+      expect(joystick.first, 'start');
+    });
+
+    testWidgets('a longer configured hold makes an early nudge a scroll',
+        (tester) async {
+      holdDelay = const Duration(milliseconds: 320);
+      await pumpTerminal(tester);
+      final bottom = scrollController.position.pixels;
+
+      final gesture =
+          await tester.startGesture(const Offset(200, 200), kind: touch);
+      // Long enough for the default, too early for the configured delay.
+      await tester.pump(const Duration(milliseconds: 240));
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(0, 6));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(hold, isEmpty);
+      expect(joystick, isEmpty);
+      expect(scrollController.position.pixels, lessThan(bottom),
+          reason: 'it stayed a scroll');
     });
   });
 

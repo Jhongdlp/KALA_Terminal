@@ -27,12 +27,26 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
     required this.onJoystickStart,
     required this.onJoystickMove,
     required this.onJoystickEnd,
+    this.onHoldQualified,
+    this.onHoldCancelled,
     this.isSelectionActive,
+    Duration? holdDelay,
     super.debugOwner,
-  });
+  }) : holdDelay = holdDelay ?? defaultHoldDelay;
 
   /// How long the finger must sit still before a drag counts as a joystick.
-  static const holdDelay = Duration(milliseconds: 200);
+  /// Configurable (Personalizar → Pad táctil): the gesture competes with the
+  /// scroll, and where the line falls between "a swipe" and "a hold" is a
+  /// property of the hand, not of the app.
+  static const defaultHoldDelay = Duration(milliseconds: 200);
+
+  /// Bounds offered in the UI. The ceiling is what keeps [armWindowEnd] from
+  /// collapsing: past it there would be no room left to nudge before the long
+  /// press takes the pointer for a text selection.
+  static const minHoldMs = 120;
+  static const maxHoldMs = 320;
+
+  Duration holdDelay;
 
   /// How far the finger may drift during [holdDelay] and still count as held.
   static const stillSlop = 9.0;
@@ -54,6 +68,17 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
   void Function(Offset) onJoystickMove;
   void Function() onJoystickEnd;
 
+  /// The finger has sat still long enough that a nudge would arm the pad —
+  /// fired *before* the arena is won, so the view can show that the pad is
+  /// listening. Until this existed the gesture had no affordance at all: the
+  /// user held, dragged, and saw nothing happen until the deadzone was
+  /// crossed, which reads exactly like the scroll refusing to work.
+  void Function(Offset)? onHoldQualified;
+
+  /// The sequence that had qualified ended without arming (it became a swipe,
+  /// a long press or a tap). Always paired with [onHoldQualified].
+  void Function()? onHoldCancelled;
+
   /// Returns true while a text selection is on screen. The joystick stands
   /// down then, so the selection handles and tap-to-dismiss keep working.
   bool Function()? isSelectionActive;
@@ -70,6 +95,10 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
 
   /// The finger stayed still for [holdDelay]; a drag may now arm the joystick.
   bool _qualified = false;
+
+  /// Whether [onHoldQualified] has fired for this sequence and still owes an
+  /// [onHoldCancelled] (or an [onJoystickStart]).
+  bool _qualifiedNotified = false;
 
   /// This sequence can no longer become a joystick.
   bool _disqualified = false;
@@ -98,6 +127,10 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
     _holdTimer = Timer(holdDelay, () {
       _qualified = true;
       _holdOrigin = _lastPosition;
+      if (!_disqualified) {
+        _qualifiedNotified = true;
+        onHoldQualified?.call(_holdOrigin ?? event.position);
+      }
     });
     // Past this deadline the finger belongs to text selection.
     _abortTimer = Timer(armWindowEnd, () {
@@ -132,6 +165,7 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
           return;
         }
         _active = true;
+        _qualifiedNotified = false;
         _holdTimer?.cancel();
         _abortTimer?.cancel();
         resolve(GestureDisposition.accepted);
@@ -178,13 +212,16 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
     _abortTimer?.cancel();
     _abortTimer = null;
     final wasActive = _active;
+    final owedCancel = _qualifiedNotified;
     _active = false;
     _qualified = false;
+    _qualifiedNotified = false;
     _disqualified = false;
     _origin = null;
     _holdOrigin = null;
     _lastPosition = null;
     _pointer = null;
+    if (owedCancel) onHoldCancelled?.call();
     if (wasActive) onJoystickEnd();
   }
 

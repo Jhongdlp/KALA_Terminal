@@ -469,11 +469,37 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void _onKeyboardShow() {
-    if (_focusNode.hasFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToBottom();
-      });
-    }
+    if (!_focusNode.hasFocus) return;
+
+    // Chasing the prompt is only right when the viewport was *already* at the
+    // bottom: the keyboard is about to cover the last lines, so the cursor has
+    // to be pulled back into view. Reading scrollback is the opposite case —
+    // and jumping away from it is what made selecting text with the keyboard
+    // up look like the selection was being lost, since the tap that starts a
+    // long press is also the tap that opens the keyboard.
+    //
+    // The check has to run *now*, before the frame that applies the new
+    // insets: once the viewport has shrunk, `maxScrollExtent` has already
+    // moved and "was it at the bottom" can no longer be answered.
+    final position = _scrollableKey.currentState?.position;
+    final wasAtBottom = position == null ||
+        !position.hasContentDimensions ||
+        position.pixels >= position.maxScrollExtent - _lineHeightOrZero;
+    if (!wasAtBottom) return;
+    if (_controller.selection != null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The inset animates over several frames, so this runs more than once
+      // per keyboard: a selection made in the meantime must still survive.
+      if (!mounted || _controller.selection != null) return;
+      _scrollToBottom();
+    });
+  }
+
+  /// [RenderTerminal.lineHeight], or 0 before the viewport is laid out.
+  double get _lineHeightOrZero {
+    final render = _viewportKey.currentContext?.findRenderObject();
+    return render is RenderTerminal ? render.lineHeight : 0;
   }
 
   void _onEditableRect(Rect rect, Rect caretRect) {

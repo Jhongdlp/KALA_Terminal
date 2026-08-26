@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -163,24 +165,61 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
     final bounds = stackBox.size;
 
     bool tipVisible(Offset tip) =>
-        tip.dy >= 0 && tip.dy <= bounds.height + _handleTouch;
+        tip.dy >= 0 && tip.dy <= bounds.height + cell.height;
 
     return [
-      if (tipVisible(startTip)) _handle(tip: startTip, isStart: true),
-      if (tipVisible(endTip)) _handle(tip: endTip, isStart: false),
+      if (tipVisible(startTip))
+        _handle(
+            tip: startTip,
+            isStart: true,
+            bounds: bounds,
+            lineHeight: cell.height),
+      if (tipVisible(endTip))
+        _handle(
+            tip: endTip,
+            isStart: false,
+            bounds: bounds,
+            lineHeight: cell.height),
       _actionBar(startTip, endTip, cell.height, bounds),
     ];
   }
 
   // ---- Handles ---------------------------------------------------------------
 
-  Widget _handle({required Offset tip, required bool isStart}) {
+  Widget _handle({
+    required Offset tip,
+    required bool isStart,
+    required Size bounds,
+    required double lineHeight,
+  }) {
     final radius = Radius.circular(_handleVisual);
+
+    // With the soft keyboard up the terminal is a handful of lines tall, and a
+    // handle hanging below the last row is clipped by the [Stack]: painted,
+    // and impossible to grab. Flip it above the selected line instead — the
+    // same thing Android's own handles do at the bottom of a field.
+    final flip = tip.dy + _handleTouch > bounds.height;
+    // A selection that starts in the first column would put the start handle
+    // almost entirely off the left edge (and the end handle off the right
+    // one). Clamping costs a few pixels of alignment with the tip and buys a
+    // target that exists at all.
+    final left = (isStart ? tip.dx - _handleTouch : tip.dx)
+        .clamp(0.0, math.max(0.0, bounds.width - _handleTouch))
+        .toDouble();
+    final top = (flip ? tip.dy - lineHeight - _handleTouch : tip.dy)
+        .clamp(0.0, math.max(0.0, bounds.height - _handleTouch))
+        .toDouble();
+
+    // The square corner is the one that touches the tip; the other three are
+    // rounded, so the teardrop always points at the character it moves.
+    final square = flip
+        ? (isStart ? Alignment.bottomRight : Alignment.bottomLeft)
+        : (isStart ? Alignment.topRight : Alignment.topLeft);
+
     return Positioned(
-      // The teardrop's square corner is its tip: top-right corner for the
-      // start handle (body hangs down-left), top-left for the end handle.
-      left: isStart ? tip.dx - _handleTouch : tip.dx,
-      top: tip.dy,
+      key: ValueKey(isStart ? 'selection-handle-start' : 'selection-handle-end'),
+      left: left,
+      top: top,
       width: _handleTouch,
       height: _handleTouch,
       child: GestureDetector(
@@ -191,7 +230,7 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
         onPanEnd: (_) => _dragFixed = null,
         onPanCancel: () => _dragFixed = null,
         child: Align(
-          alignment: isStart ? Alignment.topRight : Alignment.topLeft,
+          alignment: square,
           child: Container(
             width: _handleVisual,
             height: _handleVisual,
@@ -199,10 +238,14 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
               color: AppColors.bone,
               border: Border.all(color: AppColors.ink, width: 1),
               borderRadius: BorderRadius.only(
-                topLeft: isStart ? radius : Radius.zero,
-                topRight: isStart ? Radius.zero : radius,
-                bottomLeft: radius,
-                bottomRight: radius,
+                topLeft:
+                    square == Alignment.topLeft ? Radius.zero : radius,
+                topRight:
+                    square == Alignment.topRight ? Radius.zero : radius,
+                bottomLeft:
+                    square == Alignment.bottomLeft ? Radius.zero : radius,
+                bottomRight:
+                    square == Alignment.bottomRight ? Radius.zero : radius,
               ),
             ),
           ),
@@ -306,6 +349,11 @@ class _TerminalSelectionAreaState extends State<TerminalSelectionArea> {
         top = (bounds.height - _barHeight) / 2;
       }
     }
+    // None of the three placements is guaranteed to fit once the keyboard has
+    // taken most of the terminal: the bar is clipped by the [Stack] like the
+    // handles are, and a COPIAR nobody can press is worse than one sitting a
+    // little too close to the text.
+    top = top.clamp(2.0, math.max(2.0, bounds.height - _barHeight - 2)).toDouble();
 
     return Positioned(
       left: 0,

@@ -159,9 +159,11 @@ const List<QuickKey> kFnKeys = [
 
 /// Icons for the `system:` shortcuts that make up the ACCIONES page.
 const Map<String, IconData> kSystemActionIcons = {
+  'agents': Icons.smart_toy_outlined,
   'attach': Icons.attach_file,
   'prompts': Icons.bolt_outlined,
   'commit': Icons.commit_outlined,
   'links': Icons.link,
+  'select': Icons.highlight_alt,
   'settings': Icons.settings,
 };
