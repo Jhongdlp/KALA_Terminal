@@ -114,6 +114,14 @@ class NotificationPrefs {
   /// faster but risks announcing a pause mid-task as a finished task.
   final int idleDelaySeconds;
 
+  /// Only let the idle autodetector alert when an agent was actually detected
+  /// in the session. On by default: at a bare shell prompt "terminó de
+  /// escribir" is never true of anything, and a repaint of that prompt (the
+  /// soft keyboard closing as the user leaves the app resizes the PTY) used to
+  /// be announced as if someone were waiting. The bell (BEL / OSC 9 / 777) is
+  /// an explicit request for attention and is never gated by this.
+  final bool requireAgent;
+
   /// Treat spinners and "esc to interrupt" status lines as "still working".
   /// On by default; exposed mainly so a misbehaving agent can be debugged.
   final bool suppressWhileBusy;
@@ -135,6 +143,7 @@ class NotificationPrefs {
     this.when = AlertWhen.always,
     this.skipActiveSession = true,
     this.idleDelaySeconds = 7,
+    this.requireAgent = true,
     this.suppressWhileBusy = true,
     this.includeSnippet = true,
     this.quietFromMinutes,
@@ -182,6 +191,7 @@ class NotificationPrefs {
     AlertWhen? when,
     bool? skipActiveSession,
     int? idleDelaySeconds,
+    bool? requireAgent,
     bool? suppressWhileBusy,
     bool? includeSnippet,
     int? quietFromMinutes,
@@ -195,6 +205,7 @@ class NotificationPrefs {
       when: when ?? this.when,
       skipActiveSession: skipActiveSession ?? this.skipActiveSession,
       idleDelaySeconds: idleDelaySeconds ?? this.idleDelaySeconds,
+      requireAgent: requireAgent ?? this.requireAgent,
       suppressWhileBusy: suppressWhileBusy ?? this.suppressWhileBusy,
       includeSnippet: includeSnippet ?? this.includeSnippet,
       quietFromMinutes:
@@ -217,6 +228,7 @@ class NotificationPrefs {
         'when': when.name,
         'skipActiveSession': skipActiveSession,
         'idleDelaySeconds': idleDelaySeconds,
+        'requireAgent': requireAgent,
         'suppressWhileBusy': suppressWhileBusy,
         'includeSnippet': includeSnippet,
         'quietFromMinutes': quietFromMinutes,
@@ -242,6 +254,7 @@ class NotificationPrefs {
           : AlertWhen.always,
       skipActiveSession: json['skipActiveSession'] as bool? ?? true,
       idleDelaySeconds: (json['idleDelaySeconds'] as num?)?.toInt() ?? 7,
+      requireAgent: json['requireAgent'] as bool? ?? true,
       suppressWhileBusy: json['suppressWhileBusy'] as bool? ?? true,
       includeSnippet: json['includeSnippet'] as bool? ?? true,
       quietFromMinutes: (json['quietFromMinutes'] as num?)?.toInt(),

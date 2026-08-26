@@ -44,6 +44,18 @@ class NotificationsTab extends StatelessWidget {
                 onChanged: (v) =>
                     state.updateNotificationPrefs(prefs.copyWith(enabled: v)),
               ),
+              const Hairline(),
+              // Lives here rather than in Ajustes because it shares the
+              // detector with the switch above: between the two of them they
+              // decide whether the screen-watching loop runs at all.
+              ToggleRow(
+                label: tr('TABLERO DE AGENTES'),
+                description: tr(
+                    'Mantiene el estado en vivo de cada sesión para la pantalla Agentes. Se puede tener sin avisos, y avisos sin él; con ambos apagados no se vigila ninguna pantalla.'),
+                value: context.select<AppState, bool>(
+                    (s) => s.agentDashboardEnabled),
+                onChanged: (v) => state.setAgentDashboardEnabled(v),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -103,6 +115,15 @@ class NotificationsTab extends StatelessWidget {
             title: tr('Sensibilidad del detector'),
             children: [
               _IdleDelayRow(prefs: prefs),
+              Hairline(),
+              ToggleRow(
+                label: tr('SÓLO SI HAY UN AGENTE'),
+                description:
+                    tr('Avisa de "pregunta" y "terminó" sólo cuando se detecta un agente en la sesión. Apagado, un terminal en el prompt también puede avisarte al salir de la app. La campana del programa avisa siempre.'),
+                value: prefs.requireAgent,
+                onChanged: (v) => state.updateNotificationPrefs(
+                    prefs.copyWith(requireAgent: v)),
+              ),
               Hairline(),
               ToggleRow(
                 label: tr('LAS PAUSAS LARGAS NO SON EL FINAL'),
