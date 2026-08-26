@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../l10n/l10n.dart';
+import '../models/jump_chain.dart';
 
 /// A failure turned into something a person can act on.
 ///
@@ -43,6 +44,27 @@ FriendlyError describeError(Object error) {
 
   FriendlyError of(String message, [String? hint]) =>
       FriendlyError(message, hint: hint, detail: detail);
+
+  // ---- Jump chain --------------------------------------------------------
+  // First, and by type rather than by text: a hop failure *contains* another
+  // error, and matching on the combined string would classify it by the inner
+  // one and lose the name of the machine that actually refused.
+
+  if (error is JumpChainError) {
+    return FriendlyError(
+      error.message,
+      hint: tr('Revisa el servidor de salto en el perfil.'),
+      detail: error.toString(),
+    );
+  }
+  if (error is JumpHopError) {
+    final inner = describeError(error.cause);
+    return FriendlyError(
+      tr('Falló el salto por "{0}": {1}', [error.hopName, inner.message]),
+      hint: inner.hint,
+      detail: inner.detail,
+    );
+  }
 
   // ---- SSH ---------------------------------------------------------------
 

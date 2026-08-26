@@ -4,10 +4,12 @@ import '../services/ssh_config_import.dart';
 import 'package:uuid/uuid.dart';
 import '../models/connection_group.dart';
 import '../models/connection_profile.dart';
+import '../models/jump_chain.dart';
 import '../models/ssh_tunnel.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/adaptive_sheet.dart';
+import '../widgets/profile_tint.dart';
 import '../widgets/swiss.dart';
 import '../widgets/tap_target.dart';
 import 'backup_sheet.dart';
@@ -342,18 +344,42 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
     final lastUsed = state.lastConnectedAt(profile.id);
 
     var meta = '${profile.username}@${profile.host}:${profile.port}';
+    final via = JumpChain.describe(profile, state.profiles);
+    if (via != null) meta = '$meta · ${tr('vía {0}', [via])}';
     if (showLastUsed && lastUsed != null) {
       meta = '$meta · ${relativeTime(lastUsed)}';
     }
+
+    // A chain that can no longer be walked (the bastion was deleted from a
+    // restored backup, say) is worth saying *here*: the alternative is finding
+    // out at connect time, which is exactly when it is most expensive.
+    final chainError = JumpChain.validate(profile, state.profiles);
+    final tint = profileTint(profile);
 
     return LayerRow(
       glyph: Icon(isConnected ? Icons.circle : Icons.circle_outlined),
       title: profile.name,
       meta: meta,
       active: isConnected,
+      tint: tint,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (chainError != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Tooltip(
+                message: chainError.message,
+                child: Icon(Icons.link_off,
+                    size: 13,
+                    color: isConnected ? AppColors.ink : AppColors.danger),
+              ),
+            ),
+          if (profile.isProduction)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ProdBadge(tint: tint),
+            ),
           if (favorite)
             Padding(
               padding: const EdgeInsets.only(right: 6),
@@ -517,7 +543,7 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Text(
-                    tr('Se crearán perfiles sin contraseña. Los que usen una llave quedarán marcados para usar la llave del dispositivo.'),
+                    tr('Se crearán perfiles sin contraseña. Los que usen una llave quedarán marcados para usar la llave del dispositivo. Si un host salta por otro, ese otro se importa también.'),
                     style: AppText.body(11, color: AppColors.muted)),
               ),
               Hairline(),
@@ -551,7 +577,9 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                                           weight: FontWeight.w700)),
                                   const SizedBox(height: 2),
                                   Text(
-                                      '${host.user ?? '?'}@${host.hostName}:${host.port}',
+                                      host.proxyJump == null
+                                          ? '${host.user ?? '?'}@${host.hostName}:${host.port}'
+                                          : '${host.user ?? '?'}@${host.hostName}:${host.port}  ·  ${tr('vía {0}', [host.proxyJump!])}',
                                       style: AppText.mono(10,
                                           color: AppColors.muted)),
                                 ],
@@ -582,15 +610,15 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
     );
 
     if (confirmed != true) return;
-    var imported = 0;
-    for (final host in hosts) {
-      if (!chosen.contains(host.alias)) continue;
-      await state.saveProfile(host.toProfile());
-      imported++;
+    // toProfiles wires the ProxyJump chains and pulls in any bastion a chosen
+    // host needs, so the count can be larger than the ticks.
+    final profiles = SshConfigImport.toProfiles(hosts, chosen);
+    for (final profile in profiles) {
+      await state.saveProfile(profile);
     }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(tr('Importados {0} servidor(es)', [imported]))));
+        content: Text(tr('Importados {0} servidor(es)', [profiles.length]))));
   }
 
   // ---- Groups ----------------------------------------------------------------
@@ -781,14 +809,34 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
 
   void _showDeleteConfirmation(
       BuildContext context, AppState state, ConnectionProfile profile) {
+    // Deleting a bastion is never a local edit: everything behind it loses its
+    // way in. Say which machines, by name, while the list is still on screen.
+    final dependents = state.profilesJumpingThrough(profile.id);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
         title: Text(tr('ELIMINAR CONEXIÓN'),
             style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
-        content: Text(tr('¿Eliminar el perfil "{0}"?', [profile.name]),
-            style: AppText.body(12, color: AppColors.muted)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(tr('¿Eliminar el perfil "{0}"?', [profile.name]),
+                style: AppText.body(12, color: AppColors.muted)),
+            if (dependents.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                tr('{0} saltan por él y pasarán a conectar directamente: {1}', [
+                  dependents.length,
+                  dependents.map((p) => p.name).join(', '),
+                ]),
+                style: AppText.body(12, color: AppColors.danger),
+              ),
+            ],
+          ],
+        ),
         actions: [
           GhostButton(
             label: tr('Cancelar'),
@@ -799,10 +847,11 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
             label: tr('Eliminar'),
             dense: true,
             danger: true,
-            onPressed: () {
+            onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);
-              state.deleteProfile(profile.id);
-              Navigator.of(context).pop();
+              final navigator = Navigator.of(context);
+              final orphaned = await state.deleteProfile(profile.id);
+              navigator.pop();
               // The in-memory profile still holds its secrets, so re-saving it
               // restores the entry *and* its password/key. A confirmation
               // dialog plus an undo is not redundant: the dialog catches the
@@ -813,7 +862,12 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                   content: Text(tr('"{0}" eliminado', [profile.name])),
                   action: SnackBarAction(
                     label: tr('Deshacer'),
-                    onPressed: () => state.saveProfile(profile),
+                    onPressed: () async {
+                      await state.saveProfile(profile);
+                      // Undo has to put the chain back too, or the bastion
+                      // returns with nothing pointing at it.
+                      await state.relinkJumpHost(orphaned, profile.id);
+                    },
                   ),
                 ));
             },
@@ -827,6 +881,10 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
 
   void _showProfileDialog(BuildContext context, ConnectionProfile? profile) {
     final isEditing = profile != null;
+    // Hoisted out of buildProfile(): the jump picker has to reason about this
+    // profile's identity (a chain must not close a loop through it) before it
+    // has been saved, and a fresh uuid per rebuild would not be an identity.
+    final draftId = profile?.id ?? const Uuid().v4();
     final nameController = TextEditingController(text: profile?.name ?? '');
     final hostController = TextEditingController(text: profile?.host ?? '');
     final portController =
@@ -841,6 +899,9 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
     final tunnels = List<SshTunnel>.from(profile?.tunnels ?? const []);
     var useTmux = profile?.useTmux ?? false;
     var useDeviceKey = profile?.useDeviceKey ?? false;
+    var colorHex = profile?.colorHex;
+    var isProduction = profile?.isProduction ?? false;
+    var jumpProfileId = profile?.jumpProfileId;
     var groupId = profile?.groupId;
 
     // "Probar conexión" state, owned by the sheet: null = never run.
@@ -856,7 +917,7 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
       builder: (sheetCtx) => StatefulBuilder(
         builder: (sheetCtx, setSheetState) {
           ConnectionProfile buildProfile() => ConnectionProfile(
-                id: profile?.id ?? const Uuid().v4(),
+                id: draftId,
                 name: nameController.text,
                 host: hostController.text,
                 port: int.tryParse(portController.text) ?? 22,
@@ -871,6 +932,9 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                 tunnels: tunnels,
                 useTmux: useTmux,
                 useDeviceKey: useDeviceKey,
+                colorHex: colorHex,
+                isProduction: isProduction,
+                jumpProfileId: jumpProfileId,
               );
 
           bool complete() =>
@@ -1032,6 +1096,45 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                   ),
                   const SizedBox(height: 8),
 
+                  // ---- Jump host (ProxyJump) ------------------------------
+                  // Placed with the connection details, not with the extras:
+                  // for a machine behind a bastion this is as much part of
+                  // "how do I reach it" as the host and the port.
+                  _jumpField(
+                    sheetCtx,
+                    draftId: draftId,
+                    jumpProfileId: jumpProfileId,
+                    onPick: (id) => setSheetState(() => jumpProfileId = id),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ---- Signal color + production marker --------------------
+                  // Sits right after the connection details because it answers
+                  // a question about the machine ("which one is this?"), not
+                  // about how to reach it.
+                  Text(tr('COLOR E IDENTIDAD'),
+                      style: AppText.label(9,
+                          color: AppColors.muted, spacing: 1.4)),
+                  const SizedBox(height: 8),
+                  Text(
+                    tr('El color marca esta máquina en la lista, en la barra de sesiones y sobre la propia terminal.'),
+                    style: AppText.body(11, color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 10),
+                  ProfileColorPicker(
+                    selectedHex: colorHex,
+                    onChanged: (hex) => setSheetState(() => colorHex = hex),
+                  ),
+                  const SizedBox(height: 12),
+                  ToggleRow(
+                    label: tr('MÁQUINA DE PRODUCCIÓN'),
+                    description: tr(
+                        'Añade una etiqueta PROD y, si no elegiste color, pinta esta máquina en rojo.'),
+                    value: isProduction,
+                    onChanged: (v) => setSheetState(() => isProduction = v),
+                  ),
+                  const SizedBox(height: 8),
+
                   // ---- Group ----------------------------------------------
                   _groupField(sheetCtx, groupId,
                       (id) => setSheetState(() => groupId = id)),
@@ -1147,6 +1250,159 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
 
   /// Group selector inside the profile form: a row of chips, so assigning a
   /// group costs one tap and is visible without opening anything.
+  /// "Conectar a través de" — OpenSSH's `ProxyJump`.
+  ///
+  /// A tappable row into a picker rather than a chip strip: the candidate list
+  /// is every other profile, which is thirty rows for the kind of user who
+  /// needs a bastion in the first place.
+  Widget _jumpField(
+    BuildContext context, {
+    required String draftId,
+    required String? jumpProfileId,
+    required ValueChanged<String?> onPick,
+  }) {
+    final state = Provider.of<AppState>(context, listen: false);
+    final candidates = JumpChain.candidatesFor(draftId, state.profiles);
+    final selected =
+        state.profiles.where((p) => p.id == jumpProfileId).firstOrNull;
+
+    // The referenced profile is gone (deleted, or a backup restored without
+    // it). Say so in the field instead of showing "Directo", which would be a
+    // lie about what this profile is configured to do.
+    final dangling = jumpProfileId != null && selected == null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr('CONECTAR A TRAVÉS DE (SALTO)'),
+            style: AppText.label(9, color: AppColors.muted, spacing: 1.4)),
+        const SizedBox(height: 6),
+        Text(
+          tr('Para máquinas que solo son accesibles desde otro servidor. Equivale a ssh -J.'),
+          style: AppText.body(11, color: AppColors.muted),
+        ),
+        const SizedBox(height: 8),
+        if (candidates.isEmpty && !dangling)
+          Text(
+            tr('Necesitas otro perfil guardado para usarlo como salto.'),
+            style: AppText.body(11, color: AppColors.faint),
+          )
+        else
+          InkWell(
+            onTap: () => _showJumpPicker(context, draftId, jumpProfileId, onPick),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: dangling ? AppColors.danger : AppColors.hairline,
+                    width: 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                      selected == null
+                          ? (dangling ? Icons.link_off : Icons.trending_flat)
+                          : Icons.alt_route,
+                      size: 15,
+                      color: dangling ? AppColors.danger : AppColors.muted),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      dangling
+                          ? tr('El salto guardado ya no existe')
+                          : selected == null
+                              ? tr('Directo (sin salto)')
+                              : '${selected.name}  ·  ${selected.username}@${selected.host}:${selected.port}',
+                      style: AppText.body(12,
+                          color: dangling ? AppColors.danger : AppColors.bone),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Icon(Icons.expand_more, size: 16, color: AppColors.muted),
+                ],
+              ),
+            ),
+          ),
+        // The full route, once there is more than one hop to show.
+        if (selected != null) ...[
+          const SizedBox(height: 6),
+          Builder(builder: (_) {
+            final route = JumpChain.describe(
+              ConnectionProfile(
+                id: draftId,
+                name: '',
+                host: '',
+                port: 22,
+                username: '',
+                jumpProfileId: jumpProfileId,
+              ),
+              state.profiles,
+            );
+            if (route == null) return const SizedBox.shrink();
+            return Text(
+              tr('Ruta: {0} → este servidor', [route]),
+              style: AppText.mono(9, color: AppColors.faint, spacing: 0.4),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
+  void _showJumpPicker(BuildContext context, String draftId,
+      String? jumpProfileId, ValueChanged<String?> onPick) {
+    final state = Provider.of<AppState>(context, listen: false);
+    // Only legal hops are listed: anything that would close a loop, point at
+    // itself, run through the local terminal or overflow the hop limit is not
+    // offered, so an unusable chain cannot be saved in the first place.
+    final candidates = JumpChain.candidatesFor(draftId, state.profiles);
+
+    showAdaptiveSheet(
+      context,
+      backgroundColor: AppColors.panel,
+      maxWidth: 460,
+      isScrollControlled: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _sheetTitle(tr('SERVIDOR DE SALTO')),
+            Hairline(),
+            _actionTile(sheetCtx, Icons.trending_flat, tr('DIRECTO (SIN SALTO)'),
+                () => onPick(null),
+                selected: jumpProfileId == null),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: candidates.length,
+                separatorBuilder: (_, _) => Hairline(),
+                itemBuilder: (ctx, i) {
+                  final hop = candidates[i];
+                  final depth = JumpChain.depthOf(hop.id, state.profiles);
+                  return LayerRow(
+                    glyph: const Icon(Icons.alt_route),
+                    title: hop.name,
+                    meta: depth > 1
+                        ? '${hop.username}@${hop.host}:${hop.port}  ·  ${tr('{0} saltos', [depth])}'
+                        : '${hop.username}@${hop.host}:${hop.port}',
+                    active: hop.id == jumpProfileId,
+                    tint: profileTint(hop),
+                    onTap: () {
+                      onPick(hop.id);
+                      Navigator.of(sheetCtx).pop();
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _groupField(
       BuildContext context, String? groupId, ValueChanged<String?> onPick) {
     final state = Provider.of<AppState>(context, listen: false);

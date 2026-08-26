@@ -83,6 +83,26 @@ class ConnectionProfile {
   /// server's `authorized_keys`.
   final bool useDeviceKey;
 
+  /// Signal color for this machine, as `#RRGGBB` (see `AppColors.parseHex`), or
+  /// null for none. It is *identity*, not decoration: every surface that shows
+  /// which host a session belongs to paints this stripe, so four black-on-black
+  /// terminals stop being indistinguishable.
+  final String? colorHex;
+
+  /// Marks the machine as production. Beyond the badge, it is what gives a
+  /// profile a tint when the user never picked one (see `profileTint`).
+  final bool isProduction;
+
+  /// Id of the profile to tunnel through to reach this one — OpenSSH's
+  /// `ProxyJump` / `ssh -J`. Null connects directly.
+  ///
+  /// A *reference*, not a copy of the bastion's host/user/key: the jump host is
+  /// a machine the user already has a profile for, with its own credentials and
+  /// its own pinned host key, and inlining that into every profile behind it
+  /// means editing ten profiles the day the bastion moves. Resolution, cycle
+  /// detection and depth limits live in `JumpChain`.
+  final String? jumpProfileId;
+
   ConnectionProfile({
     required this.id,
     required this.name,
@@ -96,6 +116,9 @@ class ConnectionProfile {
     this.tunnels = const [],
     this.useTmux = false,
     this.useDeviceKey = false,
+    this.colorHex,
+    this.isProduction = false,
+    this.jumpProfileId,
   });
 
   /// tmux session name used when [useTmux] is on: a slug of the profile name
@@ -131,6 +154,9 @@ class ConnectionProfile {
           .toList(),
       'useTmux': useTmux,
       'useDeviceKey': useDeviceKey,
+      'colorHex': colorHex,
+      'isProduction': isProduction,
+      'jumpProfileId': jumpProfileId,
     };
   }
 
@@ -148,7 +174,8 @@ class ConnectionProfile {
 
   /// [clearGroupId] is what moves a profile *out* of every group: a null
   /// `groupId` argument can only ever mean "keep what it had", so without an
-  /// explicit flag there is no way to express "ungrouped".
+  /// explicit flag there is no way to express "ungrouped". [clearColor] and
+  /// [clearJump] are the same trick for the signal color and the jump host.
   ConnectionProfile copyWith({
     String? name,
     String? host,
@@ -161,6 +188,11 @@ class ConnectionProfile {
     bool clearGroupId = false,
     bool? useTmux,
     bool? useDeviceKey,
+    String? colorHex,
+    bool clearColor = false,
+    bool? isProduction,
+    String? jumpProfileId,
+    bool clearJump = false,
   }) {
     return ConnectionProfile(
       id: id,
@@ -175,6 +207,10 @@ class ConnectionProfile {
       tunnels: tunnels ?? this.tunnels,
       useTmux: useTmux ?? this.useTmux,
       useDeviceKey: useDeviceKey ?? this.useDeviceKey,
+      colorHex: clearColor ? null : (colorHex ?? this.colorHex),
+      isProduction: isProduction ?? this.isProduction,
+      jumpProfileId:
+          clearJump ? null : (jumpProfileId ?? this.jumpProfileId),
     );
   }
 
@@ -192,6 +228,13 @@ class ConnectionProfile {
       tunnels: _tunnelsFromMap(map),
       useTmux: map['useTmux'] ?? false,
       useDeviceKey: map['useDeviceKey'] ?? false,
+      colorHex: (map['colorHex'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (map['colorHex'] as String).trim(),
+      isProduction: map['isProduction'] ?? false,
+      jumpProfileId: (map['jumpProfileId'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (map['jumpProfileId'] as String).trim(),
     );
   }
 

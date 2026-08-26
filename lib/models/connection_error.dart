@@ -1,5 +1,6 @@
 import '../l10n/l10n.dart';
 import '../services/friendly_error.dart';
+import 'jump_chain.dart';
 
 /// What kind of failure it was — not for wording (that's [FriendlyError]'s job)
 /// but for deciding **which action to offer**. "Reintentar" is the right button
@@ -16,6 +17,10 @@ enum ConnectionErrorKind {
 
   /// Host key unknown or changed and not accepted.
   hostKey,
+
+  /// The jump-host chain itself is unusable: a hop that no longer exists, a
+  /// cycle, or one too many hops. Nothing was dialled.
+  jump,
 
   /// Anything we couldn't place.
   unknown,
@@ -58,7 +63,9 @@ class ConnectionError {
   /// Whether editing the profile is the likely fix — the failure dialog makes
   /// "Editar perfil" its primary action then, and demotes "Reintentar".
   bool get suggestsEditingProfile =>
-      kind == ConnectionErrorKind.auth || kind == ConnectionErrorKind.address;
+      kind == ConnectionErrorKind.auth ||
+      kind == ConnectionErrorKind.address ||
+      kind == ConnectionErrorKind.jump;
 
   /// Whether this is resolved in Ajustes → Servidores conocidos.
   bool get suggestsKnownHosts => kind == ConnectionErrorKind.hostKey;
@@ -71,6 +78,12 @@ class ConnectionError {
   }
 
   static ConnectionErrorKind _kindOf(Object error) {
+    // Typed first: a broken chain is a configuration problem, and a failed hop
+    // is classified by *its* cause — a bastion refusing the password should
+    // still route to "editar perfil", not to a generic retry.
+    if (error is JumpChainError) return ConnectionErrorKind.jump;
+    if (error is JumpHopError) return _kindOf(error.cause);
+
     final text = error.toString().toLowerCase();
     bool has(List<String> needles) => needles.any(text.contains);
 
