@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
+import 'whats_new_sheet.dart';
 import '../widgets/swiss.dart';
 import 'update_dialog.dart';
 import '../l10n/l10n.dart';
@@ -75,6 +76,8 @@ class AboutTab extends StatelessWidget {
               Hairline(),
               const _VersionRow(),
               Hairline(),
+              const _ChangelogRow(),
+              Hairline(),
               const _UpdateCheckRow(),
             ],
           ),
@@ -98,6 +101,35 @@ class _VersionRow extends StatelessWidget {
             : '${info.version}+${info.buildNumber}';
         return _InfoRow(label: tr('VERSIÓN'), value: value);
       },
+    );
+  }
+}
+
+/// Opens the full version history. The changelog is shown automatically once
+/// after an update; this is how someone who dismissed it — or who wants to know
+/// what a version they skipped brought — gets back to it.
+class _ChangelogRow extends StatelessWidget {
+  const _ChangelogRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => showChangelog(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(tr('NOVEDADES'),
+                  style: AppText.label(9, color: AppColors.muted)),
+            ),
+            Text(tr('VER HISTORIAL'),
+                style: AppText.mono(11, color: AppColors.bone)),
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right, size: 16, color: AppColors.muted),
+          ],
+        ),
+      ),
     );
   }
 }

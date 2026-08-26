@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
+import 'release_notes_view.dart';
 import '../l10n/l10n.dart';
 
 /// Shows the "new version available" dialog for [update]. While downloading it
@@ -71,19 +72,26 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             if (notes.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
-                constraints: const BoxConstraints(maxHeight: 160),
+                constraints: const BoxConstraints(maxHeight: 260),
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: AppColors.ink,
                   border: Border.all(color: AppColors.hairline, width: 1),
                 ),
                 child: SingleChildScrollView(
-                  child: Text(
-                    notes,
-                    style: AppText.mono(11, color: AppColors.muted),
-                  ),
+                  child: ReleaseNotesView(notes),
                 ),
+              ),
+              const SizedBox(height: 8),
+              // These notes come off GitHub and are generated in English (see
+              // scripts/changelog_notes.py). Saying so is cheaper than leaving
+              // a Spanish or Chinese user wondering why one box switched
+              // language; the same list arrives translated in NOVEDADES once
+              // the update is installed.
+              Text(
+                tr('Resumen en inglés. Lo verás en tu idioma en NOVEDADES tras actualizar.'),
+                style: AppText.body(10, color: AppColors.faint),
               ),
             ],
             if (_downloading) ...[

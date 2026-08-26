@@ -10,8 +10,9 @@
 #   ./scripts/release.sh major      # bump major  (1.2.0 -> 2.0.0)
 #   ./scripts/release.sh 1.4.2      # set an exact version
 #
-# Requires: flutter on PATH (or sdk/flutter/bin), and gh authenticated
-# (`gh auth login`).
+# Requires: flutter on PATH (or sdk/flutter/bin), gh authenticated
+# (`gh auth login`), python3, and an entry for the new version in
+# lib/models/changelog.dart.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -56,6 +57,14 @@ if gh release view "$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- guard: the changelog must describe this version ----------------------
+# lib/models/changelog.dart is what the app's NOVEDADES screen shows and what
+# the release body below is generated from. Checked *before* the version bump
+# so a missing entry costs nothing to fix.
+if ! python3 scripts/changelog_notes.py --check "$new_name"; then
+  exit 1
+fi
+
 # --- write the new version back into pubspec.yaml -------------------------
 # Portable in-place edit (works on both GNU and BSD sed).
 sed -i.bak "s/^version: .*/version: ${new_name}+${new_build}/" pubspec.yaml && rm -f pubspec.yaml.bak
@@ -76,7 +85,11 @@ git push origin "$tag"
 
 # --- publish the GitHub release -------------------------------------------
 echo "==> creating GitHub release ${tag}…"
-notes=${RELEASE_NOTES:-"Versión ${new_name}"}
+# Generated in English from the in-app changelog, so the body a user sees
+# before installing always matches what NOVEDADES will show them afterwards —
+# and is never left in whatever language the release was written in.
+# RELEASE_NOTES still overrides it for a one-off.
+notes=${RELEASE_NOTES:-"$(python3 scripts/changelog_notes.py "$new_name")"}
 gh release create "$tag" "$apk" --title "$tag" --notes "$notes"
 
 echo
