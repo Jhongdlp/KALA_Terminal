@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../l10n/l10n.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/profile_tint.dart';
 import 'shell/app_commands.dart';
 
 /// One row of the palette: a label, what it is, and what running it does.
@@ -21,12 +22,17 @@ class _PaletteEntry {
   final String group;
   final VoidCallback run;
 
+  /// Signal color of the machine behind this entry, for the server and session
+  /// rows. "Conectar a prod" should be recognizable before it is read.
+  final Color? tint;
+
   const _PaletteEntry({
     required this.icon,
     required this.label,
     required this.group,
     required this.run,
     this.trailing,
+    this.tint,
   });
 }
 
@@ -100,6 +106,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
         label: tr('Conectar a {0}', [profile.name]),
         group: tr('Servidores'),
         trailing: '${profile.username}@${profile.host}',
+        tint: profileTint(profile),
         run: () => state.connectToSSH(profile),
       ));
     }
@@ -111,6 +118,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
         label: tr('Ir a la sesión {0}', [session.name]),
         group: tr('Sesiones abiertas'),
         trailing: i < 9 ? 'Alt+${i + 1}' : null,
+        tint: profileTint(session.activeProfile),
         run: () {
           state.switchSession(i);
           state.setActiveTabIndex(1);
@@ -291,7 +299,9 @@ class _CommandPaletteState extends State<_CommandPalette> {
                 children: [
                   Icon(entry.icon,
                       size: 15,
-                      color: selected ? AppColors.ink : AppColors.muted),
+                      color: selected
+                          ? AppColors.ink
+                          : (entry.tint ?? AppColors.muted)),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(entry.label,

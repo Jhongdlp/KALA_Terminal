@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/app_state.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/profile_tint.dart';
 
 /// The app's own window title bar, replacing the GTK one on desktop.
 ///
@@ -75,6 +76,11 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
         context.select<AppState, bool>((state) => state.activeSession != null);
     final connected = context.select<AppState, bool>(
         (state) => state.connectionStatus == ConnectionStatus.remote);
+    // Signal color of the machine behind the active session, if it has one.
+    // Selected (not watched) like everything else here: it changes only when
+    // the active session does.
+    final tint = context.select<AppState, Color?>(
+        (state) => profileTint(state.activeSession?.activeProfile));
 
     // Material ancestor, required rather than decorative: this bar is mounted
     // above the navigator, where there is none, and unparented Text falls back
@@ -84,7 +90,12 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(color: AppColors.hairline, width: 1),
+            // The hairline doubles as the machine's color band on desktop,
+            // where there is no room for another 3px strip.
+            bottom: BorderSide(
+              color: tint ?? AppColors.hairline,
+              width: tint == null ? 1 : 2,
+            ),
           ),
         ),
         child: SizedBox(
@@ -125,7 +136,9 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
                         Container(
                           width: 6,
                           height: 6,
-                          color: connected ? AppColors.accent : AppColors.faint,
+                          color: connected
+                              ? (tint ?? AppColors.accent)
+                              : AppColors.faint,
                         ),
                       ],
                       const SizedBox(width: 12),

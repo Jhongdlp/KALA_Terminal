@@ -164,6 +164,13 @@ class LayerRow extends StatelessWidget {
   final VoidCallback? onLongPress;
   final VoidCallback? onTrailingTap;
 
+  /// Optional signal color painted as a stripe on the row's leading edge (see
+  /// `profile_tint.dart`). Drawn in a [Stack] rather than inserted into the
+  /// [Row] so a tinted row keeps exactly the same content alignment as an
+  /// untinted one — a list where half the titles sit 3px further right reads as
+  /// a bug.
+  final Color? tint;
+
   const LayerRow({
     super.key,
     required this.glyph,
@@ -174,6 +181,7 @@ class LayerRow extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.onTrailingTap,
+    this.tint,
   });
 
   @override
@@ -185,7 +193,7 @@ class LayerRow extends StatelessWidget {
     // child painted over the ink swallows the hover and focus overlays, which
     // is why rows never highlighted under a mouse. Material also gives the row
     // a click cursor for free when onTap is set.
-    return Material(
+    final row = Material(
       color: active ? AppColors.accent : Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -245,6 +253,21 @@ class LayerRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    if (tint == null) return row;
+    return Stack(
+      children: [
+        row,
+        // Non-positioned child sizes the stack, so the stripe stretches to
+        // whatever height the row ended up with.
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: Container(width: 3, color: tint),
+        ),
+      ],
     );
   }
 }
