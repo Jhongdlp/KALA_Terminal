@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an idea before writing code for it
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        *Puedes escribir en español si lo prefieres.*
+
+        If you plan to implement it yourself, opening this first means we can
+        agree on the approach before you spend an evening on it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the app makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+    validations:
+      required: true
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - label: I'd be up for opening a PR for this

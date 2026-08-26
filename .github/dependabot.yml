@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Actions only. Dart dependencies are deliberately left out: two packages
+  # (xterm, dartssh2) are vendored under third_party/ with local patches and
+  # wired through dependency_overrides, so an automated bump would either be
+  # ignored or would silently drop a patch the app depends on.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

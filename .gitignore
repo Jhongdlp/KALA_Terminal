@@ -58,3 +58,6 @@ key.properties.*
 # Antigravity / Gemini Skills
 .gemini/
 skills/
+
+# Vendored Flutter SDK — local only, not part of the app source
+/sdk/

@@ -9,8 +9,13 @@ Thank you for your interest in contributing! KALA is a young project and every k
 - **Report bugs** using the [bug report template](../../issues/new/choose). Include your device, Android/Linux version, and steps to reproduce.
 - **Propose features** through a feature request issue *before* writing code, so we can discuss the approach.
 - **Improve docs** — READMEs, code comments, this file.
-- **Translate** — the UI is currently Spanish-only; help with i18n is very welcome.
-- **Write tests** — the project currently has no real test suite (see Roadmap), so tests are one of the most valuable contributions.
+- **Translate** — the UI ships in Spanish, English and Simplified Chinese. Spanish is
+  the source language: every `tr('…')` key *is* the Spanish text, and a new language is
+  one `strings_<code>.dart` table plus an entry in `AppLang`. A partial table is safe —
+  anything missing falls back to Spanish.
+- **Write tests** — there is a suite under `test/` (run it with `flutter test`). Gaps are
+  still plenty, and a test that pins down a gesture, a parser or a layout invariant is
+  one of the most valuable things you can send.
 
 ## Development setup
 
@@ -21,20 +26,28 @@ Thank you for your interest in contributing! KALA is a young project and every k
    cd Kammel_ssh
    ```
 
-2. Use Flutter 3.44+ / Dart 3.12+. The repo vendors a full Flutter SDK at `sdk/flutter` — if you don't have a matching Flutter on your `PATH`, just use it directly:
+2. Use **Flutter 3.44.4** (Dart 3.12+) — the version CI builds with:
 
    ```bash
-   sdk/flutter/bin/flutter pub get
-   sdk/flutter/bin/flutter run -d linux
+   flutter pub get
+   flutter run -d linux      # or -d <android-device-id>
    ```
 
-3. Before opening a PR, make sure the analyzer is clean:
+   Two packages are vendored under `third_party/` and wired through
+   `dependency_overrides`: a patched `xterm` and a patched `dartssh2`. `pub get`
+   picks them up automatically — don't replace them with the upstream versions,
+   the patches are load-bearing (see [CLAUDE.md](CLAUDE.md)).
+
+3. Before opening a PR, run what CI runs:
 
    ```bash
-   flutter analyze
+   flutter analyze --no-fatal-infos
+   flutter test
    ```
 
-> **Note:** `flutter test` currently fails because `test/widget_test.dart` is still the default Flutter template. Don't worry about it unless your PR adds tests (please do!).
+   Both must pass — CI runs them on every PR and the result is a required check
+   on `main`. The analyzer still reports pre-existing *infos* (deprecated
+   `withOpacity` calls); those are tracked separately and don't fail the build.
 
 ## Project conventions
 
@@ -52,7 +65,10 @@ File and editor features must work both locally (`dart:io`) and remotely (SFTP v
 ### UI & styling
 
 - Hand-rolled flat dark theme with hardcoded constants: background `0xFF0D0D0D`, surface `0xFF1E1E1E`, borders `0xFF333333`, muted text `0xFF9CA3AF`, primary azure `0xFF007AFF`, 4 px border radii, small uppercase letter-spaced labels. Match these instead of default Material styling.
-- UI copy is currently in **Spanish**.
+- UI copy is authored in **Spanish** and wrapped in `tr('…')` (`lib/l10n/l10n.dart`).
+  The Spanish text *is* the lookup key, so never write a bare user-facing string —
+  and note that `tr()` is not a `const` expression, so a widget holding one can't
+  be `const`.
 
 ### Android specifics
 
