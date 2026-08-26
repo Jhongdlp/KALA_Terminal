@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:terminal_agent/l10n/l10n.dart';
 import 'package:terminal_agent/l10n/strings_en.dart';
+import 'package:terminal_agent/l10n/strings_zh.dart';
 
 void main() {
   setUp(() {
@@ -41,22 +42,42 @@ void main() {
     });
   });
 
-  group('strings_en.dart', () {
-    test('keeps every placeholder of the Spanish key', () {
-      final placeholder = RegExp(r'\{\d+\}');
-      final broken = <String>[];
-      enStrings.forEach((es, en) {
-        final a = placeholder.allMatches(es).map((m) => m[0]!).toSet();
-        final b = placeholder.allMatches(en).map((m) => m[0]!).toSet();
-        if (a.length != b.length || !a.containsAll(b)) broken.add(es);
-      });
-      expect(broken, isEmpty,
-          reason: 'la traducción perdió o inventó un placeholder');
-    });
+  // Every table mirrors the Spanish key set, so the same invariants have to
+  // hold for each one — a third language must not be able to regress quietly.
+  const tables = <String, Map<String, String>>{
+    'strings_en.dart': enStrings,
+    'strings_zh.dart': zhStrings,
+  };
 
-    test('has no empty translations', () {
-      expect(enStrings.entries.where((e) => e.value.trim().isEmpty).map((e) => e.key),
-          isEmpty);
+  tables.forEach((name, table) {
+    group(name, () {
+      test('keeps every placeholder of the Spanish key', () {
+        final placeholder = RegExp(r'\{\d+\}');
+        final broken = <String>[];
+        table.forEach((es, translated) {
+          final a = placeholder.allMatches(es).map((m) => m[0]!).toSet();
+          final b =
+              placeholder.allMatches(translated).map((m) => m[0]!).toSet();
+          if (a.length != b.length || !a.containsAll(b)) broken.add(es);
+        });
+        expect(broken, isEmpty,
+            reason: 'la traducción perdió o inventó un placeholder');
+      });
+
+      test('has no empty translations', () {
+        expect(
+            table.entries
+                .where((e) => e.value.trim().isEmpty)
+                .map((e) => e.key),
+            isEmpty);
+      });
+
+      test('covers exactly the same keys as every other table', () {
+        for (final other in tables.entries) {
+          expect(table.keys.toSet(), other.value.keys.toSet(),
+              reason: '$name y ${other.key} no cubren las mismas claves');
+        }
+      });
     });
   });
 

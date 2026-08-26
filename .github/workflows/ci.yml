@@ -35,8 +35,8 @@ jobs:
       - name: flutter test
         run: flutter test
 
-      # Spanish is the source language; strings_en.dart is the table the
-      # checker validates. A missing English entry falls back to Spanish,
-      # so this reports rather than fails.
+      # Spanish is the source language. A missing entry only falls back to
+      # Spanish at runtime, but a string nobody can read is a bug in the
+      # language it was meant for — so this fails the build.
       - name: i18n coverage
-        run: python3 scripts/i18n_check.py || true
+        run: python3 scripts/i18n_check.py
