@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'l10n/l10n.dart';
 import 'providers/app_state.dart';
+import 'services/agent_monitor.dart';
 import 'services/tunnel_manager.dart';
 import 'services/window_geometry.dart';
 import 'theme/app_theme.dart';
@@ -73,6 +74,10 @@ Future<void> main() async {
         // keeps those rebuilds inside the tunnels UI instead of the whole app.
         // AppState owns it, so it must not be disposed twice.
         ChangeNotifierProvider<TunnelManager>.value(value: appState.tunnels),
+        // Same split, same reason: the agent watch loop re-reads a session's
+        // screen several times a second, and only the dashboard and its badge
+        // care. AppState owns it — do not dispose it here.
+        ChangeNotifierProvider<AgentMonitor>.value(value: appState.agents),
       ],
       child: const MyApp(),
     ),

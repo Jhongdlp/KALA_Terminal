@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:terminal_agent/l10n/l10n.dart';
 import 'package:terminal_agent/main.dart';
 import 'package:terminal_agent/providers/app_state.dart';
+import 'package:terminal_agent/services/agent_monitor.dart';
 import 'package:terminal_agent/services/tunnel_manager.dart';
 import 'package:terminal_agent/views/editor_tab.dart';
 import 'package:terminal_agent/views/explorer_tab.dart';
@@ -37,6 +38,7 @@ Future<AppState> _pumpApp(WidgetTester tester, Size size) async {
       providers: [
         ChangeNotifierProvider<AppState>.value(value: state),
         ChangeNotifierProvider<TunnelManager>.value(value: state.tunnels),
+        ChangeNotifierProvider<AgentMonitor>.value(value: state.agents),
       ],
       child: const MyApp(),
     ),

@@ -40,6 +40,7 @@ class DesktopShell extends StatelessWidget {
     AppScreen.connections,
     AppScreen.server,
     AppScreen.tunnels,
+    AppScreen.agents,
     AppScreen.notifications,
     AppScreen.settings,
     AppScreen.personalization,

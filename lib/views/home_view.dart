@@ -6,13 +6,16 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/breakpoints.dart';
 import '../services/update_service.dart';
+import '../widgets/agent_waiting_badge.dart';
 import '../widgets/menu_drawer.dart';
 import 'command_palette.dart';
 import 'onboarding_sheet.dart';
+import 'whats_new_sheet.dart';
 import 'shell/app_commands.dart';
 import 'shell/app_screen.dart';
 import 'shell/desktop_shell.dart';
 import 'shell/git_pane.dart';
+import 'agents_tab.dart';
 import 'connections_tab.dart';
 import 'terminal_tab.dart';
 import 'explorer_tab.dart';
@@ -78,6 +81,7 @@ class _HomeViewState extends State<HomeView> {
         AppScreen.about => const AboutTab(),
         AppScreen.notifications => const NotificationsTab(),
         AppScreen.tunnels => const TunnelsTab(),
+        AppScreen.agents => const AgentsTab(),
         AppScreen.git => const GitPane(),
       };
 
@@ -101,8 +105,13 @@ class _HomeViewState extends State<HomeView> {
     // First run: the three-card introduction. Guarded by its own persisted
     // flag (written before the sheet opens), so the language remount can't
     // show it twice.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) maybeShowOnboarding(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await maybeShowOnboarding(context);
+      // After the introduction, not beside it: on a fresh install there is
+      // nothing to report anyway, and on an update the changelog is the only
+      // sheet that opens. Awaited so the two can never stack.
+      if (mounted) await maybeShowWhatsNew(context);
     });
   }
 
@@ -306,6 +315,7 @@ class _HomeViewState extends State<HomeView> {
                       spec: _items[i],
                       active: activeTabIndex == i || (i == 4 && activeTabIndex >= 4),
                       dirty: i == 3 && isFileDirty,
+                      agentBadge: i == 4,
                       onTap: () {
                         if (i == 4) {
                           _scaffoldKey.currentState?.openEndDrawer();
@@ -340,6 +350,12 @@ class _TopNavItem extends StatelessWidget {
   final _NavSpec spec;
   final bool active;
   final bool dirty;
+
+  /// Whether to show the "an agent is waiting" dot. On the compact strip this
+  /// rides the MENÚ slot, because the drawer behind it is the only way to reach
+  /// anything past index 3 — without the dot, the one screen that says an agent
+  /// stopped for you is two taps away and gives no sign it has news.
+  final bool agentBadge;
   final VoidCallback onTap;
 
   const _TopNavItem({
@@ -347,6 +363,7 @@ class _TopNavItem extends StatelessWidget {
     required this.active,
     required this.dirty,
     required this.onTap,
+    this.agentBadge = false,
   });
 
   @override
@@ -365,6 +382,12 @@ class _TopNavItem extends StatelessWidget {
                 clipBehavior: Clip.none,
                 children: [
                   Icon(spec.icon, size: iconSz, color: fg),
+                  if (agentBadge)
+                    const Positioned(
+                      right: -5,
+                      top: -2,
+                      child: AgentWaitingBadge(showCount: false),
+                    ),
                   if (dirty)
                     Positioned(
                       right: -5,

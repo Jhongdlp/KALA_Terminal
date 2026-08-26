@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/dimens.dart';
+import '../../widgets/agent_waiting_badge.dart';
 import '../../widgets/swiss.dart';
 import 'app_screen.dart';
 
@@ -60,6 +61,7 @@ class NavRail extends StatelessWidget {
           NavRailItem(AppScreen.tunnels, tr('TÚNELES'), Icons.swap_horiz),
         ],
         [
+          NavRailItem(AppScreen.agents, tr('AGENTES'), Icons.smart_toy_outlined),
           NavRailItem(AppScreen.notifications, tr('NOTIFICACIONES'),
               Icons.notifications_active_outlined),
           NavRailItem(AppScreen.settings, tr('AJUSTES'), Icons.tune),
@@ -147,6 +149,15 @@ class _RailButton extends StatelessWidget {
                     alignment: Alignment.center,
                     children: [
                       Icon(item.icon, size: 18, color: foreground),
+                      // Sessions waiting on an answer, on the entry that leads
+                      // to them. A dot rather than the count: a 56px rail has
+                      // no room for a number beside an 18px glyph.
+                      if (item.screen == AppScreen.agents)
+                        const Positioned(
+                          right: 8,
+                          top: 10,
+                          child: AgentWaitingBadge(showCount: false),
+                        ),
                       if (dirty)
                         Positioned(
                           right: 8,

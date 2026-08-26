@@ -287,6 +287,15 @@ List<AppCommand> appCommands() => <AppCommand>[
         run: (context, state) => state.setActiveTabIndex(9),
       ),
       AppCommand(
+        id: 'app.agents',
+        label: 'Agentes',
+        icon: Icons.smart_toy_outlined,
+        section: CommandSection.app,
+        activator: const SingleActivator(LogicalKeyboardKey.keyA,
+            control: true, shift: true),
+        run: (context, state) => state.setActiveTabIndex(10),
+      ),
+      AppCommand(
         id: 'app.notifications',
         label: 'Notificaciones',
         icon: Icons.notifications_active_outlined,

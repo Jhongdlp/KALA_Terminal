@@ -22,3 +22,17 @@ String relativeTime(DateTime when, {DateTime? now}) {
   return '${when.day.toString().padLeft(2, '0')}/'
       '${when.month.toString().padLeft(2, '0')}/${when.year}';
 }
+
+/// A running duration, as short as it can be read: `12 s`, `4 min`, `2 h`.
+///
+/// Separate from [relativeTime] because that one collapses everything under 45
+/// seconds into "ahora", which is the right answer for "when did this profile
+/// last connect" and the wrong one for a counter the user is watching tick. An
+/// agent that has been waiting twelve seconds should say so.
+String elapsedShort(Duration d) {
+  final seconds = d.isNegative ? 0 : d.inSeconds;
+  if (seconds < 60) return tr('{0} s', [seconds]);
+  if (seconds < 3600) return tr('{0} min', [d.inMinutes]);
+  if (d.inHours < 24) return tr('{0} h', [d.inHours]);
+  return tr('{0} d', [d.inDays]);
+}

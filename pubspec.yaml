@@ -150,6 +150,10 @@ flutter:
   assets:
     # Camel silhouette (white on transparent) — tinted at draw time.
     - assets/images/kammel_logo.png
+    # Real agent marks, keyed by the same ids the detector and the Android
+    # notification badges use (see AlertNotifier.agentBadge). Drawn as-is:
+    # these are brand marks, so unlike the logo above they are never tinted.
+    - assets/agents/
 
   fonts:
     - family: CascadiaCode

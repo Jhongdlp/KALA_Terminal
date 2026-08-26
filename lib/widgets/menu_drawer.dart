@@ -3,6 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import 'agent_waiting_badge.dart';
 import 'swiss.dart';
 import '../l10n/l10n.dart';
 
@@ -75,6 +76,28 @@ class MenuDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.of(context).pop(); // Close drawer
                 state.setActiveTabIndex(9); // Switch to Tunnels Tab
+              },
+            ),
+            Hairline(),
+
+            // Section 1c: Agents. Which session stopped to ask you something —
+            // the one screen that answers it without opening every tab.
+            ListTile(
+              leading: Icon(Icons.smart_toy_outlined, color: AppColors.accent),
+              title: Text(
+                tr('AGENTES'),
+                style: AppText.mono(11, color: AppColors.bone),
+              ),
+              subtitle: Text(
+                tr('Qué está haciendo cada sesión ahora mismo'),
+                style: AppText.body(9, color: AppColors.muted),
+              ),
+              // Only the badge listens to the monitor, so a session changing
+              // state doesn't rebuild the drawer around it.
+              trailing: const AgentWaitingBadge(),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                state.setActiveTabIndex(10); // Switch to Agents Tab
               },
             ),
             Hairline(),

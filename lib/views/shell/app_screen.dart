@@ -18,6 +18,7 @@ enum AppScreen {
   about(7),
   notifications(8),
   tunnels(9),
+  agents(10),
 
   /// The git panel. It has no tab index: on the compact layout it is a route
   /// pushed from the terminal toolbar, and on the desktop shell it is a real

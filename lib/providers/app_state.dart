@@ -15,12 +15,19 @@ import 'package:open_filex/open_filex.dart';
 import '../models/connection_error.dart';
 import '../models/connection_group.dart';
 import '../models/connection_profile.dart';
+import '../models/jump_chain.dart';
 import '../models/notification_prefs.dart';
 import '../models/prompt_snippet.dart';
 import '../models/terminal_shortcut.dart';
 import '../models/terminal_key_layer.dart';
+import '../models/touch_pad.dart';
+import '../widgets/joystick_recognizer.dart';
 import '../services/file_error.dart';
 import '../theme/app_theme.dart';
+import '../models/agent_activity.dart';
+import '../models/agent_launcher.dart';
+import '../services/agent_monitor.dart';
+import '../services/agent_screen.dart';
 import '../services/background_service.dart';
 import '../services/device_key.dart';
 import '../services/git_service.dart';
@@ -171,6 +178,13 @@ class TerminalSession {
   // whenever the (normalized) screen content actually changes again, so a
   // static prompt can never re-notify.
   bool watchAlertFired = false;
+  // Until when incoming output counts as a *redraw* of what was already on
+  // screen rather than as new content. Backgrounding the app hides the soft
+  // keyboard, which resizes the PTY, which makes the shell (or the agent)
+  // repaint everything: without this window that repaint looks like a fresh
+  // answer that then goes quiet — i.e. it notified the user for leaving the
+  // terminal. Set on every PTY resize and whenever the watch state is seeded.
+  DateTime? redrawGraceUntil;
   // True while a reconnect attempt is in flight, so the banner button and the
   // on-resume sweep can't double-connect the same session.
   bool reconnecting = false;
@@ -342,6 +356,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// so the byte counters don't rebuild the whole app — the tunnels screen
   /// listens to it directly (same split as [server]).
   final TunnelManager tunnels = TunnelManager();
+
+  /// Live agent activity per session, feeding the agents dashboard. Its own
+  /// ChangeNotifier for the same reason as [tunnels]: the watch loop below
+  /// re-reads a session's screen several times a second, and pushing that
+  /// through [notifyListeners] would rebuild the whole app at that rate.
+  final AgentMonitor agents = AgentMonitor();
 
   // Per-session idle timers: armed when the (normalized) screen content
   // changes while backgrounded, fire after [_agentIdleDelay] of no further
@@ -561,6 +581,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kTerminalKeyboardAutocorrect = 'settings_terminal_keyboard_autocorrect';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
   static const String _kAgentAlerts = 'settings_agent_alerts';
+  static const String _kAgentDashboard = 'settings_agent_dashboard';
+  static const String _kAgentLaunchers = 'settings_agent_launchers';
   static const String _kNotificationPrefs = 'settings_notification_prefs';
   static const String _kAccentColorHex = 'settings_accent_color_hex';
   static const String _kCustomAccentColors = 'settings_custom_accent_colors';
@@ -575,6 +597,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kDockLeft = 'settings_explorer_dock_left';
   static const String _kDockY = 'settings_explorer_dock_y';
   static const String _kTerminalGestureDeadzone = 'settings_terminal_gesture_deadzone';
+  static const String _kPadEnabled = 'settings_pad_enabled';
+  static const String _kPadHoldMs = 'settings_pad_hold_ms';
+  static const String _kPadRadial = 'settings_pad_radial';
+  static const String _kPadRadialMs = 'settings_pad_radial_ms';
+  static const String _kPadSlots = 'settings_pad_slots';
   // Desktop workspace: splitter positions and which side panes are open.
   static const String _kSplitSide = 'settings_split_side';
   static const String _kSplitEditorTerminal = 'settings_split_editor_terminal';
@@ -614,6 +641,36 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   double _terminalGestureDeadzone = 60.0; // Default deadzone for gestures
   double get terminalGestureDeadzone => _terminalGestureDeadzone;
 
+  // ---- Touch pad (hold-and-drag) ------------------------------------------
+  // The terminal's pad: hold a beat and the finger becomes a d-pad (arrows,
+  // i.e. shell history), hold a beat longer without pulling and it blooms into
+  // the eight-slot radial. Everything about it is a setting because the
+  // gesture shares its pixels with the scroll and the long press, and where
+  // one hand draws the line between them is not where another does.
+  bool _terminalPadEnabled = true;
+  bool get terminalPadEnabled => _terminalPadEnabled;
+
+  int _terminalPadHoldMs = JoystickGestureRecognizer.defaultHoldDelay.inMilliseconds;
+  int get terminalPadHoldMs => _terminalPadHoldMs;
+  Duration get terminalPadHoldDelay => Duration(milliseconds: _terminalPadHoldMs);
+
+  bool _terminalPadRadialEnabled = true;
+  bool get terminalPadRadialEnabled => _terminalPadRadialEnabled;
+
+  /// How long the armed pad must sit inside the deadzone before the radial
+  /// opens. Counted from the moment the pad arms — the arena is already ours
+  /// by then, so this timing competes with nothing.
+  int _terminalPadRadialMs = 420;
+  int get terminalPadRadialMs => _terminalPadRadialMs;
+  Duration get terminalPadRadialDelay =>
+      Duration(milliseconds: _terminalPadRadialMs);
+
+  static const int minPadRadialMs = 250;
+  static const int maxPadRadialMs = 1200;
+
+  TouchPadConfig _terminalPadConfig = TouchPadConfig.defaults;
+  TouchPadConfig get terminalPadConfig => _terminalPadConfig;
+
   // Terminal color scheme id ('auto' follows the app theme; otherwise one of
   // AppTerminalTheme.schemes). The terminal view resolves it via
   // AppTerminalTheme.byId.
@@ -640,6 +697,97 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// Master switch, kept as a named getter because it gates the hot path in
   /// the detector.
   bool get agentAlertsEnabled => _notificationPrefs.enabled;
+
+  /// Whether the agents dashboard tracks session activity.
+  bool _agentDashboardEnabled = true;
+  bool get agentDashboardEnabled => _agentDashboardEnabled;
+
+  /// Whether the screen-watching loop runs at all.
+  ///
+  /// Two features read the same signal now, so the loop can't be gated on the
+  /// notification switch alone: turning alerts off used to be the only way to
+  /// stop it, and doing that would leave the dashboard frozen on whatever each
+  /// session happened to be doing at the time.
+  bool get _watchEnabled => agentAlertsEnabled || _agentDashboardEnabled;
+
+  /// One-tap agent launchers, shown by the pad's `system:agents` action and
+  /// editable in Personalizar → Agentes.
+  ///
+  /// Seeded from [kDefaultAgentLaunchers] on first run and then owned by the
+  /// user: the defaults are a starting point, not a list the app keeps
+  /// reconciling. A new agent appearing in the world is something the user
+  /// adds, which is why the editor takes a free-form command and any of the
+  /// bundled marks.
+  List<AgentLauncher> _agentLaunchers = List.of(kDefaultAgentLaunchers);
+  List<AgentLauncher> get agentLaunchers => List.unmodifiable(_agentLaunchers);
+
+  /// What the launcher sheet actually draws.
+  List<AgentLauncher> get enabledAgentLaunchers =>
+      _agentLaunchers.where((l) => l.enabled).toList(growable: false);
+
+  Future<void> _persistAgentLaunchers() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kAgentLaunchers, AgentLauncher.encodeList(_agentLaunchers));
+  }
+
+  /// Inserts or updates by id, keeping the user's order.
+  Future<void> saveAgentLauncher(AgentLauncher launcher) async {
+    final index = _agentLaunchers.indexWhere((l) => l.id == launcher.id);
+    if (index >= 0) {
+      _agentLaunchers[index] = launcher;
+    } else {
+      _agentLaunchers.add(launcher);
+    }
+    notifyListeners();
+    await _persistAgentLaunchers();
+  }
+
+  Future<void> deleteAgentLauncher(String id) async {
+    _agentLaunchers.removeWhere((l) => l.id == id);
+    notifyListeners();
+    await _persistAgentLaunchers();
+  }
+
+  Future<void> reorderAgentLaunchers(int oldIndex, int newIndex) async {
+    if (oldIndex < 0 || oldIndex >= _agentLaunchers.length) return;
+    // ReorderableListView reports the insertion point *before* the removal.
+    final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
+    final moved = _agentLaunchers.removeAt(oldIndex);
+    _agentLaunchers.insert(target.clamp(0, _agentLaunchers.length), moved);
+    notifyListeners();
+    await _persistAgentLaunchers();
+  }
+
+  /// Puts the defaults back, for a list the user has emptied or broken.
+  Future<void> restoreDefaultAgentLaunchers() async {
+    _agentLaunchers = List.of(kDefaultAgentLaunchers);
+    notifyListeners();
+    await _persistAgentLaunchers();
+  }
+
+  /// Sends [launcher]'s command to the active session.
+  ///
+  /// Routed through [insertPromptText] (a bracketed paste) rather than as a
+  /// burst of keystrokes, so a shell with autocomplete or a TUI already on
+  /// screen receives it as one insertion. The Enter is separate and only sent
+  /// when the launcher asks for it — a command the user means to finish by
+  /// hand must not run itself.
+  void runAgentLauncher(AgentLauncher launcher) {
+    final session = activeSession;
+    if (session == null) return;
+    if (launcher.command.trim().isEmpty) return;
+    insertPromptText(launcher.command);
+    if (launcher.autoRun) sendTerminalInput('\r');
+  }
+
+  Future<void> setAgentDashboardEnabled(bool value) async {
+    if (_agentDashboardEnabled == value) return;
+    _agentDashboardEnabled = value;
+    if (!value) agents.clear();
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAgentDashboard, value);
+  }
 
   /// Rolling diagnostics log of recent alert decisions, newest first. Capped so
   /// it can't grow unbounded; surfaced in the notifications screen.
@@ -896,6 +1044,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.rawWatchSignature = _rawScreenSignature(session);
     session.lastMeaningfulChangeAt = DateTime.now();
     session.watchAlertFired = false;
+    // Going to (or coming back from) the background moves the soft keyboard
+    // and resizes the PTY a moment later; the repaint that follows is this
+    // same screen, not something new to announce.
+    session.redrawGraceUntil = DateTime.now().add(_redrawGrace);
   }
 
   void _onAppResumed() {
@@ -1311,6 +1463,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// session per throttle window, regardless of how many chunks arrive.
   static const Duration _agentCheckThrottle = Duration(milliseconds: 300);
 
+  /// How long after a PTY resize (or after the app changes lifecycle state)
+  /// screen changes are treated as a repaint of the same content. Long enough
+  /// for a remote TUI to finish redrawing over a slow link, short enough that
+  /// an agent answering right then is only ever delayed by one idle period.
+  static const Duration _redrawGrace = Duration(seconds: 3);
+
   /// Rows from the bottom of the buffer that feed detection — roughly one
   /// phone screen of a TUI agent.
   static const int _watchTailLines = 40;
@@ -1320,42 +1478,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// glyphs, progress-bar characters.
   static final RegExp _watchNoiseRegex = RegExp(
     r"[\s\d⠀-⣿✻✳✶✽✢·∙•●○◌◍◐◓◑◒◴◵◶◷⏳⌛|/\\*+~↑↓█▉▊▋▌▍▎▏░▒▓-]",
-  );
-
-  /// Unambiguous "work is running right now" affordances: an agent only offers
-  /// a way to interrupt while there is something to interrupt. Matched anywhere
-  /// in the visible tail. Covers the agents in [_agentMarkers], not just Claude
-  /// Code's phrasing, since each one words its status line differently.
-  static final RegExp _busyStrongRegex = RegExp(
-    r'esc to interrupt|esc para interrumpir|esc to cancel|esc para cancelar|'
-    r'esc to stop|esc twice|ctrl\+c to (?:stop|cancel|interrupt)|'
-    r'ctrl-c to (?:stop|cancel|interrupt)|ctrl\+c para (?:parar|cancelar)|'
-    r'press esc to',
-  );
-
-  /// Progress verbs. On their own these are worthless — an agent's *answer*
-  /// says "running the tests" all the time — so they only count as busy on a
-  /// line that also carries an animation tell ([_animatedLineRegex]), i.e. a
-  /// live status line rather than prose.
-  static final RegExp _busyProgressRegex = RegExp(
-    r'\b(thinking|pensando|working|trabajando|generating|generando|'
-    r'processing|procesando|ejecutando|executing|streaming|esperando|'
-    r'loading|cargando|analizando|analyzing|searching|buscando|'
-    r'compiling|compilando|installing|instalando|waiting)\b',
-  );
-
-  /// Tells that a line is a live, animating status line: a spinner glyph, a
-  /// trailing ellipsis, or an elapsed-time/token counter like "(12s" or "↑1.2k".
-  static final RegExp _animatedLineRegex = RegExp(
-    r'[⠀-⣿✻✳✶✽✢◐◓◑◒◴◵◶◷⏳⌛]|…|\.\.\.|\(\s*\d+\s*[sm]\b|[↑↓]\s*\d',
-  );
-
-  /// UI chrome lines of known agents that would pollute classification and
-  /// snippets (Claude Code's "? for shortcuts" bar would read as a question).
-  static final RegExp _chromeLineRegex = RegExp(
-    r'\?\s*for shortcuts|for commands|for newline|@ for file|shift\+tab|'
-    r'bypass permissions|auto-accept|plan mode|context left|/help|'
-    r'tokens used|tokens remaining',
   );
 
   /// Last [lines] rows of the terminal (screen + tail of scrollback) as plain
@@ -1392,7 +1514,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Entry point wired to every remote-output batch (see [_TerminalWriter]).
   void _onTerminalOutput(TerminalSession session) {
-    if (!agentAlertsEnabled) return;
+    if (!_watchEnabled) return;
     if (_sessionCheckTimers.containsKey(session.id)) return;
     _sessionCheckTimers[session.id] = Timer(_agentCheckThrottle, () {
       _sessionCheckTimers.remove(session.id);
@@ -1403,13 +1525,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// Called shortly after output lands. Classifies what moved and (re)arms the
   /// idle deadline accordingly.
   void _evaluateAgentActivity(TerminalSession session) {
-    if (!agentAlertsEnabled) return;
+    if (!_watchEnabled) return;
     // Both signatures come from the same snapshot: reading the tail twice
     // rebuilt a ~3000-character string from the buffer for nothing, several
     // times a second for as long as output kept flowing.
     final tail = _terminalTail(session, _watchTailLines);
     final sig = _signatureOf(tail);
     session.rawWatchSignature = tail.hashCode;
+
+    if (sig != session.watchSignature && _inRedrawGrace(session)) {
+      // A resize just happened: the same screen laid out differently. Adopt it
+      // as the baseline, but *don't* open a new idle period — the screen the
+      // user walked away from doesn't earn an alert for being repainted. Real
+      // output afterwards lands outside the window and alerts normally.
+      session.watchSignature = sig;
+      session.lastMeaningfulChangeAt = DateTime.now();
+      session.watchAlertFired = true;
+      _sessionAlertTimers.remove(session.id)?.cancel();
+      return;
+    }
 
     if (sig != session.watchSignature) {
       // Genuinely new content: a new idle period starts, so this session is
@@ -1423,6 +1557,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.watchSignature = sig;
       session.watchAlertFired = false;
       session.lastMeaningfulChangeAt = DateTime.now();
+      // Output is moving, so the dashboard says so. No classifier runs here on
+      // purpose: movement is already proof of life, and putting the regexes of
+      // [AgentScreen.read] on a path that fires every 300ms per session would
+      // spend real CPU to learn what the signature just told us. The screen is
+      // read properly once, when the session goes quiet.
+      _noteActivity(session, AgentState.working);
       _armIdleTimer(session);
       return;
     }
@@ -1439,12 +1579,37 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Whether we are inside the window where output is a repaint of what was
+  /// already there (see [TerminalSession.redrawGraceUntil]).
+  bool _inRedrawGrace(TerminalSession session) {
+    final until = session.redrawGraceUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
   /// Whether the meaningful screen content has been frozen past
   /// [_agentNoiseCap], i.e. incoming output should stop counting as progress.
   bool _noiseCapExceeded(TerminalSession session) {
     final last = session.lastMeaningfulChangeAt;
     if (last == null) return false;
     return DateTime.now().difference(last) > _agentNoiseCap;
+  }
+
+  /// Pushes a session's state to the dashboard, resolving the agent badge from
+  /// the sticky identity the detector already keeps.
+  ///
+  /// [snippet] is omitted by callers that only know the connection changed, so
+  /// a drop or a reconnect can't erase the question that is still on screen.
+  void _noteActivity(TerminalSession session, AgentState state,
+      {String? snippet, bool clearAgent = false}) {
+    if (!_agentDashboardEnabled) return;
+    agents.note(
+      session.id,
+      state,
+      snippet: snippet,
+      agentId: session.agentId,
+      agentLabel: session.agentLabel,
+      clearAgent: clearAgent,
+    );
   }
 
   void _armIdleTimer(TerminalSession session) {
@@ -1456,7 +1621,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _maybeFireIdleAlert(TerminalSession session) {
-    if (!agentAlertsEnabled) return;
+    if (!_watchEnabled) return;
     if (session.watchAlertFired) return;
     // Output can land inside the throttle window after the last evaluation:
     // if the screen moved again, this wasn't real silence — restart the cycle.
@@ -1475,7 +1640,43 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final recent =
         lines.length > 14 ? lines.sublist(lines.length - 14) : lines;
 
-    if (_notificationPrefs.suppressWhileBusy && _looksBusy(recent)) {
+    // The screen is read **once**, here, and the reading is then used for two
+    // independent decisions: what the dashboard says this session is doing, and
+    // whether the phone should buzz. Those used to be the same tangle of early
+    // returns, which is why states that make terrible notifications ("it's at a
+    // shell prompt") were computed and thrown away rather than shown.
+    final reading = AgentScreen.read(recent);
+    final screenText = AgentScreen.snippet(recent);
+
+    // Resolved before the prompt branch below can clear it: asking again
+    // afterwards would re-detect the agent from its name still on screen.
+    final agent = _detectAgent(session);
+
+    switch (reading) {
+      case ScreenReading.busy:
+        _noteActivity(session, AgentState.working, snippet: screenText);
+      case ScreenReading.shellPrompt:
+        // The agent exited, so the badge goes with it — the same reasoning as
+        // [_clearAgentIdentity] below, which the notification path applies to
+        // the session itself.
+        _noteActivity(session, AgentState.prompt,
+            snippet: screenText, clearAgent: true);
+      case ScreenReading.question:
+        _noteActivity(session, AgentState.waiting, snippet: screenText);
+      case ScreenReading.quiet:
+        _noteActivity(session, AgentState.done, snippet: screenText);
+    }
+
+    // Everything below is the notification path, unchanged. It deliberately
+    // re-asks the individual classifiers rather than deriving from [reading]:
+    // the precedence [AgentScreen.read] applies is right for a dashboard that
+    // must pick exactly one state, but the alert has always been allowed to
+    // call a busy screen a question when the user turned [suppressWhileBusy]
+    // off. This runs once per idle period, not on the 300ms path, so asking
+    // twice costs nothing.
+    if (!agentAlertsEnabled) return;
+
+    if (_notificationPrefs.suppressWhileBusy && AgentScreen.looksBusy(recent)) {
       // A long silent step (a tool call, a slow model) with the status line
       // still saying so. Don't consume the idle period: keep watching, and
       // when the busy hint disappears the cycle completes normally.
@@ -1483,10 +1684,38 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    // From here on the decision is made for this idle period, whichever way it
+    // goes: without this the same screen would be re-judged on every redraw.
     session.watchAlertFired = true;
-    final isQuestion = _looksLikeQuestion(recent);
+    final isQuestion = AgentScreen.looksLikeQuestion(recent);
+    final alertKind = isQuestion ? AlertKind.question : AlertKind.done;
+
+    void drop(String reason) {
+      _logAlert(AlertLogEntry(
+        at: DateTime.now(),
+        sessionName: session.name,
+        kind: alertKind,
+        agentLabel: agent?.label,
+        suppressedReason: reason,
+        detail: AgentScreen.snippet(recent),
+      ));
+    }
+
+    // Nothing is running in the foreground: the screen ends at a shell prompt.
+    // Whatever agent this tab used to run has exited, so its sticky identity
+    // goes too — otherwise the next redraw of the same prompt would still be
+    // announced under the agent's name and badge.
+    if (AgentScreen.looksLikeShellPrompt(recent)) {
+      _clearAgentIdentity(session);
+      return drop(tr('El terminal está en el prompt, no hay nada esperándote'));
+    }
+
+    if (_notificationPrefs.requireAgent && agent == null) {
+      return drop(tr('No se detectó ningún agente en esta sesión'));
+    }
+
     final snippet =
-        _notificationPrefs.includeSnippet ? _alertSnippet(recent) : '';
+        _notificationPrefs.includeSnippet ? AgentScreen.snippet(recent) : '';
     final headline =
         isQuestion ? tr('Espera tu respuesta') : tr('Terminó de escribir');
     _onSessionAlert(
@@ -1494,82 +1723,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       body: snippet.isEmpty ? headline : '$headline\n$snippet',
       isQuestion: isQuestion,
     );
-  }
-
-  /// Whether the screen says work is still running. Strong "esc to interrupt"
-  /// affordances always count; bare progress verbs only count on an animating
-  /// status line, so an agent's prose ("running the tests, then…") can't
-  /// silence a real alert. Capped by [_agentNoiseCap] so a TUI that animates
-  /// forever eventually stops blocking notifications.
-  bool _looksBusy(List<String> recent) {
-    final blob = recent.join('\n').toLowerCase();
-    if (_busyStrongRegex.hasMatch(blob)) return true;
-    for (final line in recent) {
-      final lower = line.toLowerCase();
-      if (_busyProgressRegex.hasMatch(lower) &&
-          _animatedLineRegex.hasMatch(line)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Whether the tail of the screen looks like an interactive prompt (the
-  /// agent is waiting for the user) rather than a finished task.
-  bool _looksLikeQuestion(List<String> recent) {
-    final meaningful = recent
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty && !_chromeLineRegex.hasMatch(l.toLowerCase()))
-        .toList();
-    if (meaningful.isEmpty) return false;
-
-    var numbered = 0;
-    for (final line in meaningful) {
-      final lower = line.toLowerCase();
-      // Selection menus: "❯ 1. Yes", "› Option", numbered choices.
-      if (line.startsWith('❯') || line.startsWith('›')) return true;
-      if (RegExp(r'^\d+[.)]\s').hasMatch(line)) numbered++;
-      // Question mark closing a sentence (box borders already trimmed).
-      final stripped = line.replaceAll(RegExp(r'[│┃║╮╯┐┘\s]+$'), '');
-      if (stripped.endsWith('?')) return true;
-      if (lower.contains('¿')) return true;
-      if (RegExp(r'\((?:y/n|yes/no|s/n|sí/no)\)|\[(?:y/n|y/N|Y/n|yes/no|s/n)\]',
-              caseSensitive: false)
-          .hasMatch(line)) {
-        return true;
-      }
-      if (RegExp(r'\b(?:do you want|would you like|allow this|approve|confirm|'
-              r'select an option|choose an option|press enter|enter a|'
-              r'deseas|quieres|permitir|aprobar|confirmar|selecciona|elige|'
-              r'escribe|ingresa|contraseña|password|passphrase)\b')
-          .hasMatch(lower)) {
-        return true;
-      }
-    }
-    return numbered >= 2;
-  }
-
-  /// Short human-readable excerpt of what's on screen for the notification
-  /// body: the last meaningful lines with TUI chrome and box borders removed.
-  String _alertSnippet(List<String> recent) {
-    final cleaned = <String>[];
-    for (final raw in recent) {
-      final line = raw
-          .replaceAll(RegExp(r'[│┃║╭╮╰╯┌┐└┘├┤┬┴─━═╌╍]'), ' ')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      if (line.isEmpty) continue;
-      if (_chromeLineRegex.hasMatch(line.toLowerCase())) continue;
-      cleaned.add(line);
-    }
-    if (cleaned.isEmpty) return '';
-    final lastLines =
-        cleaned.length > 3 ? cleaned.sublist(cleaned.length - 3) : cleaned;
-    var snippet = lastLines.join('\n');
-    if (snippet.length > 200) {
-      snippet = '…${snippet.substring(snippet.length - 200)}';
-    }
-    return snippet;
   }
 
   // Ensures the Android foreground service (which keeps the process — and its
@@ -1602,6 +1755,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final deadzone = prefs.getDouble(_kTerminalGestureDeadzone);
     if (deadzone != null) {
       _terminalGestureDeadzone = deadzone;
+    }
+
+    _terminalPadEnabled = prefs.getBool(_kPadEnabled) ?? true;
+    _terminalPadRadialEnabled = prefs.getBool(_kPadRadial) ?? true;
+    final padHold = prefs.getInt(_kPadHoldMs);
+    if (padHold != null) {
+      _terminalPadHoldMs = padHold.clamp(JoystickGestureRecognizer.minHoldMs,
+          JoystickGestureRecognizer.maxHoldMs);
+    }
+    final padRadialMs = prefs.getInt(_kPadRadialMs);
+    if (padRadialMs != null) {
+      _terminalPadRadialMs = padRadialMs.clamp(minPadRadialMs, maxPadRadialMs);
+    }
+    final padSlots = prefs.getString(_kPadSlots);
+    if (padSlots != null) {
+      _terminalPadConfig = TouchPadConfig.decode(padSlots);
     }
 
     final editorFontSize = prefs.getDouble(_kEditorFontSize);
@@ -1656,6 +1825,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
 
+    _agentDashboardEnabled = prefs.getBool(_kAgentDashboard) ?? true;
+
+    // Absent (first run) seeds the defaults; present-but-empty is a list the
+    // user deliberately emptied and is left empty.
+    final rawLaunchers = prefs.getString(_kAgentLaunchers);
+    if (rawLaunchers != null) {
+      _agentLaunchers = AgentLauncher.decodeList(rawLaunchers);
+    }
+
     // Notification config: the JSON blob wins; on first run after the update
     // there is none, so the legacy on/off boolean is carried over.
     final rawNotifPrefs = prefs.getString(_kNotificationPrefs);
@@ -1703,6 +1881,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         final hasSystem = _customShortcuts.any((s) => s.value.startsWith('system:'));
         if (!hasSystem) {
           final systemShortcuts = [
+            TerminalShortcut(label: 'AGENTES', value: 'system:agents'),
             TerminalShortcut(label: 'ADJUNTAR', value: 'system:attach'),
             TerminalShortcut(label: 'PROMPTS', value: 'system:prompts'),
             TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
@@ -1764,6 +1943,39 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
             json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
       }
       await prefs.setBool('settings_shortcuts_migrated_v5', true);
+    }
+
+    // Migration v7: `system:agents` opens the agent launcher. Added to existing
+    // setups too — the whole point is that starting an agent stops being a
+    // typed command line, and a user who never opens the shortcut manager is
+    // exactly the one that helps most.
+    final migratedV7 = prefs.getBool('settings_shortcuts_migrated_v7') ?? false;
+    if (!migratedV7) {
+      if (!_customShortcuts.any((s) => s.value == 'system:agents')) {
+        _customShortcuts.insert(
+            0, TerminalShortcut(label: 'AGENTES', value: 'system:agents'));
+        await prefs.setString(_kCustomShortcuts,
+            json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      }
+      await prefs.setBool('settings_shortcuts_migrated_v7', true);
+    }
+
+    // Migration v6: `system:select` starts a text selection without a long
+    // press. It is added to existing setups rather than only to fresh ones
+    // because the problem it solves is one every install has: copying depends
+    // on winning a gesture the touch pad also wants.
+    final migratedV6 = prefs.getBool('settings_shortcuts_migrated_v6') ?? false;
+    if (!migratedV6) {
+      if (!_customShortcuts.any((s) => s.value == 'system:select')) {
+        final entry =
+            TerminalShortcut(label: 'SELECCIONAR', value: 'system:select');
+        final after =
+            _customShortcuts.indexWhere((s) => s.value == 'system:links');
+        _customShortcuts.insert(after >= 0 ? after + 1 : 0, entry);
+        await prefs.setString(_kCustomShortcuts,
+            json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      }
+      await prefs.setBool('settings_shortcuts_migrated_v6', true);
     }
 
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
@@ -1955,10 +2167,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   List<TerminalShortcut> getDefaultShortcuts() {
     return [
+      TerminalShortcut(label: 'AGENTES', value: 'system:agents'),
       TerminalShortcut(label: 'ADJUNTAR', value: 'system:attach'),
       TerminalShortcut(label: 'PROMPTS', value: 'system:prompts'),
       TerminalShortcut(label: 'COMMIT', value: 'system:commit'),
       TerminalShortcut(label: 'ENLACES', value: 'system:links'),
+      TerminalShortcut(label: 'SELECCIONAR', value: 'system:select'),
       TerminalShortcut(label: 'AJUSTES', value: 'system:settings'),
       // The control codes that used to be here are built into the CTRL layer
       // now (see `terminal_key_layer.dart`); this list is only what the user
@@ -2082,6 +2296,59 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kTerminalGestureDeadzone, deadzone);
+  }
+
+  Future<void> setTerminalPadEnabled(bool value) async {
+    if (_terminalPadEnabled == value) return;
+    _terminalPadEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kPadEnabled, value);
+  }
+
+  Future<void> setTerminalPadHoldMs(int ms) async {
+    final clamped = ms.clamp(
+        JoystickGestureRecognizer.minHoldMs, JoystickGestureRecognizer.maxHoldMs);
+    if (_terminalPadHoldMs == clamped) return;
+    _terminalPadHoldMs = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPadHoldMs, clamped);
+  }
+
+  Future<void> setTerminalPadRadialEnabled(bool value) async {
+    if (_terminalPadRadialEnabled == value) return;
+    _terminalPadRadialEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kPadRadial, value);
+  }
+
+  Future<void> setTerminalPadRadialMs(int ms) async {
+    final clamped = ms.clamp(minPadRadialMs, maxPadRadialMs);
+    if (_terminalPadRadialMs == clamped) return;
+    _terminalPadRadialMs = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPadRadialMs, clamped);
+  }
+
+  /// Rebinds one slot (null empties it). The whole pad is persisted as one
+  /// blob: eight entries are not worth eight prefs keys, and they are always
+  /// read together.
+  Future<void> setTerminalPadSlot(
+      PadDirection direction, TerminalShortcut? shortcut) async {
+    _terminalPadConfig = _terminalPadConfig.withSlot(direction, shortcut);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPadSlots, _terminalPadConfig.encode());
+  }
+
+  Future<void> resetTerminalPadSlots() async {
+    _terminalPadConfig = TouchPadConfig.defaults;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPadSlots, _terminalPadConfig.encode());
   }
 
   Future<void> setTerminalScheme(String id) async {
@@ -2346,11 +2613,47 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> deleteProfile(String id) async {
+  /// Profiles that reach the internet through [id] as their jump host.
+  ///
+  /// Deleting a bastion is not a local edit: every machine behind it becomes
+  /// unreachable. The confirmation says so, and [deleteProfile] unlinks them
+  /// rather than leaving a dangling reference that only surfaces as a failed
+  /// connection days later.
+  List<ConnectionProfile> profilesJumpingThrough(String id) =>
+      _profiles.where((p) => p.jumpProfileId == id).toList(growable: false);
+
+  /// Deletes a profile and returns the ids of the profiles that were using it
+  /// as their jump host — they are left connecting directly.
+  ///
+  /// The caller needs those ids because deletion is undoable: re-saving the
+  /// profile alone would bring the bastion back with nothing pointing at it.
+  Future<List<String>> deleteProfile(String id) async {
+    final orphaned = profilesJumpingThrough(id).map((p) => p.id).toList();
     _profiles.removeWhere((p) => p.id == id);
+    for (var i = 0; i < _profiles.length; i++) {
+      if (_profiles[i].jumpProfileId == id) {
+        _profiles[i] = _profiles[i].copyWith(clearJump: true);
+      }
+    }
     _favoriteProfiles.remove(id);
     _profileLastUsed.remove(id);
     await SecureStore.instance.deleteSecrets(id);
+    final prefs = await SharedPreferences.getInstance();
+    await _persistProfiles(prefs);
+    notifyListeners();
+    return orphaned;
+  }
+
+  /// Points [profileIds] back at [jumpId]. The undo half of [deleteProfile].
+  Future<void> relinkJumpHost(List<String> profileIds, String jumpId) async {
+    if (profileIds.isEmpty) return;
+    var changed = false;
+    for (var i = 0; i < _profiles.length; i++) {
+      if (!profileIds.contains(_profiles[i].id)) continue;
+      _profiles[i] = _profiles[i].copyWith(jumpProfileId: jumpId);
+      changed = true;
+    }
+    if (!changed) return;
     final prefs = await SharedPreferences.getInstance();
     await _persistProfiles(prefs);
     notifyListeners();
@@ -2579,6 +2882,60 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.terminal.paste(text);
   }
 
+  /// Answers the agent in [sessionId] **without switching to it** — the agents
+  /// dashboard replying to a question from its card.
+  ///
+  /// Returns false when there is nothing to write to, so the caller can say so
+  /// instead of silently swallowing a keystroke the user believes they sent.
+  ///
+  /// This is the first path in the app that types into a session the user is
+  /// *not looking at*, which is why the caller is expected to put the screen
+  /// snippet above the button and to confirm on a production profile. Here the
+  /// care is mechanical:
+  ///
+  /// - It does **not** go through [sendTerminalInput]: that applies the sticky
+  ///   CTRL modifier, and a modifier left armed in the terminal would silently
+  ///   turn a "y" typed on another screen into a `^Y`.
+  /// - [asPaste] routes through [Terminal.paste] so a bracketed-paste-aware TUI
+  ///   (every modern agent) sees one insertion. Control sequences must never
+  ///   take that path — wrapped in paste markers, an Esc is just text.
+  /// - It still feeds [_noteInputEvidence], so a reply sent from the dashboard
+  ///   keeps agent detection and command history as accurate as one typed into
+  ///   the terminal.
+  bool sendToSession(String sessionId, String text,
+      {bool submit = false, bool asPaste = false}) {
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (session == null) return false;
+    if (session.connectionStatus != ConnectionStatus.remote ||
+        session.sshSession == null) {
+      return false;
+    }
+    if (text.isEmpty && !submit) return false;
+
+    if (text.isNotEmpty) {
+      if (asPaste) {
+        // paste() emits through Terminal.onOutput, which is already wired to
+        // _noteInputEvidence and the SSH write in [createNewSession].
+        session.terminal.paste(text);
+      } else {
+        _noteInputEvidence(session, text);
+        session.sshSession!.write(utf8.encode(text));
+      }
+    }
+    if (submit) {
+      _noteInputEvidence(session, '\r');
+      session.sshSession!.write(utf8.encode('\r'));
+    }
+
+    // Whatever the notification claimed this session wanted, it has now been
+    // answered: leaving the badge and the posted alert behind would send the
+    // user to a session that is no longer asking anything.
+    session.hasPendingAlert = false;
+    NotificationService.cancelAlert(session.id);
+    notifyListeners();
+    return true;
+  }
+
   /// The session's SFTP channel, opening one on demand. Pass [fresh] to force a
   /// new channel: a cached client can belong to a connection that has since
   /// dropped, and every operation on it then hangs instead of failing.
@@ -2605,15 +2962,115 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   ServerController get server =>
       _server ??= ServerController(openClient: openClient);
 
+  /// How long a single hop gets: the TCP connect to the first machine, and
+  /// each `direct-tcpip` forward opened through the previous one. Per hop
+  /// rather than for the whole chain, so a three-hop chain over a slow link
+  /// isn't cut off halfway by a budget sized for one.
+  static const Duration _kHopTimeout = Duration(seconds: 15);
+
   /// Opens and authenticates a standalone [SSHClient] for [profile], without
   /// tying it to a terminal session. Non-fatal notices (missing device key,
   /// unparseable PEM) are reported through [onNotice]; auth/connect failures
   /// throw. Callers own the returned client and must close() it.
+  ///
+  /// When the profile declares a jump host (see [JumpChain]) the chain is
+  /// dialled first and the returned client runs **inside** a forward from the
+  /// last hop. The hops are owned by the returned client: closing it — or the
+  /// server closing it, or a hop dying under it — tears the whole chain down,
+  /// so callers keep the one-client contract they always had.
   Future<SSHClient> openClient(ConnectionProfile profile,
       {void Function(String msg)? onNotice}) async {
-    final socket = await SSHSocket.connect(profile.host, profile.port,
-        timeout: const Duration(seconds: 15));
+    // Configuration errors (missing hop, cycle, too deep) are raised here,
+    // before any socket exists, so nothing has to be unwound.
+    final chain = JumpChain.resolve(profile, _profiles);
 
+    final hops = <SSHClient>[];
+    try {
+      SSHSocket socket;
+      if (chain.isEmpty) {
+        socket = await SSHSocket.connect(profile.host, profile.port,
+            timeout: _kHopTimeout);
+      } else {
+        SSHClient? previous;
+        for (final hop in chain) {
+          // Announced *before* dialling: a hop that is down burns the whole
+          // timeout, and a silent terminal for 15 seconds looks like a hang.
+          onNotice?.call(
+              tr('Saltando por {0} ({1}:{2})…', [hop.name, hop.host, hop.port]));
+          try {
+            final hopSocket = previous == null
+                ? await SSHSocket.connect(hop.host, hop.port,
+                    timeout: _kHopTimeout)
+                // A forward through an already-authenticated hop: this is the
+                // `-J` chain proper. dartssh2's SSHForwardChannel *is* an
+                // SSHSocket, so the next client speaks SSH over it unchanged.
+                : await previous
+                    .forwardLocal(hop.host, hop.port)
+                    .timeout(_kHopTimeout);
+            previous = await _authenticateClient(hop, hopSocket,
+                onNotice: onNotice);
+            hops.add(previous);
+          } catch (e) {
+            // Name the machine that actually refused. Three hosts were dialled;
+            // "no se pudo conectar" would not say which one broke.
+            if (e is JumpHopError) rethrow;
+            throw JumpHopError(hop.name, e);
+          }
+        }
+        // The last hop opening the channel to the destination. Wrapped like
+        // the others: when a bastion is configured to forward nowhere, the raw
+        // "channel open failed: administratively prohibited" names neither the
+        // machine that refused nor what it refused to do.
+        try {
+          socket = await previous!
+              .forwardLocal(profile.host, profile.port)
+              .timeout(_kHopTimeout);
+        } catch (e) {
+          throw JumpHopError(chain.last.name, e);
+        }
+      }
+
+      final client =
+          await _authenticateClient(profile, socket, onNotice: onNotice);
+      if (hops.isNotEmpty) _bindHopsTo(client, hops);
+      return client;
+    } catch (_) {
+      // Unwind the chain in reverse: an outer hop closing first would tear
+      // down the forward the inner one still lives in.
+      for (final hop in hops.reversed) {
+        hop.close();
+      }
+      rethrow;
+    }
+  }
+
+  /// Ties the lifetime of [hops] to [client]: when the client is closed, dies,
+  /// or its transport goes away, every hop behind it is closed too.
+  ///
+  /// This is what keeps the chain from leaking. It also covers the reverse
+  /// direction for free: if a hop drops, the forward carrying [client] closes,
+  /// [client] completes, and the rest of the chain is released here.
+  void _bindHopsTo(SSHClient client, List<SSHClient> hops) {
+    unawaited(client.done
+        // The client's own failure is reported to whoever awaited it; here it
+        // must not become an unhandled async error.
+        .catchError((_) {})
+        .whenComplete(() {
+      for (final hop in hops.reversed) {
+        try {
+          hop.close();
+        } catch (_) {
+          // Already gone: closing is best-effort cleanup, never a failure.
+        }
+      }
+    }));
+  }
+
+  /// Builds and authenticates a client for [profile] over an already-open
+  /// [socket] — a plain TCP socket, or a forward through the previous hop.
+  Future<SSHClient> _authenticateClient(
+      ConnectionProfile profile, SSHSocket socket,
+      {void Function(String msg)? onNotice}) async {
     // Public-key auth: the phone's own device key (opt-in per profile) plus
     // any per-profile PEM. dartssh2 tries identities first and falls back to
     // the password automatically, so a profile can carry both. A PEM that
@@ -2647,14 +3104,23 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       username: profile.username,
       identities: identities.isEmpty ? null : identities,
       onPasswordRequest: () => profile.password ?? '',
-      // Host key pinning. Without this dartssh2 accepts any key, so anyone able
-      // to intercept the connection could impersonate the server and harvest
-      // the password (and everything sent through the tunnels).
+      // Host key pinning, per hop: each machine of the chain is checked and
+      // pinned under its own host:port. Without this dartssh2 accepts any key,
+      // so anyone able to intercept the connection could impersonate the server
+      // and harvest the password (and everything sent through the tunnels).
       onVerifyHostkeyBlob: (type, blob) =>
           _verifyHostKey(profile, type, blob, onNotice: onNotice),
     );
-    // Fail fast on bad credentials instead of on the first channel open.
-    await client.authenticated;
+    try {
+      // Fail fast on bad credentials instead of on the first channel open.
+      await client.authenticated;
+    } catch (_) {
+      // The socket is ours until authentication succeeds; a rejected password
+      // would otherwise leave it (and, in a chain, the forward carrying it)
+      // open until the server timed it out.
+      client.close();
+      rethrow;
+    }
     return client;
   }
 
@@ -2671,10 +3137,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// profile as recently used: a test is not a connection.
   Future<({bool ok, String message})> testProfile(
       ConnectionProfile profile) async {
+    // One budget per machine that has to be dialled. A fixed 20s would fail a
+    // perfectly good two-hop chain over a slow link and blame the target.
+    var hops = 0;
+    try {
+      hops = JumpChain.resolve(profile, _profiles).length;
+    } on JumpChainError {
+      // Leave it to openClient, which reports the broken link properly.
+    }
     SSHClient? client;
     try {
       client = await openClient(profile, onNotice: (_) {})
-          .timeout(const Duration(seconds: 20));
+          .timeout(Duration(seconds: 20 + 15 * hops));
       // Authentication is what we actually care about, and openClient only
       // returns once it succeeded.
       final banner = client.remoteVersion;
@@ -2757,6 +3231,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.sshClient = null;
     session.connectionStatus = ConnectionStatus.connecting;
     session.lastError = null;
+    _noteActivity(session, AgentState.connecting);
     notifyListeners();
 
     session.terminal.write(
@@ -2765,6 +3240,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           profile.host,
           profile.port
         ])}\r\n');
+    final route = JumpChain.describe(profile, _profiles);
+    if (route != null) {
+      session.terminal.write('${tr('Ruta: {0} → {1}', [route, profile.name])}\r\n');
+    }
 
     try {
       session.sshClient = await openClient(
@@ -2813,6 +3292,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.connectionStatus = ConnectionStatus.remote;
       session.started = true;
       session.lastError = null;
+      // A fresh shell is at its prompt. The watch loop takes over from here and
+      // will say otherwise the moment anything is launched in it.
+      _noteActivity(session, AgentState.prompt, snippet: '', clearAgent: true);
       _noteProfileConnected(profile);
       // First live SSH session → keep the process alive while backgrounded.
       _ensureBackgroundService();
@@ -2855,6 +3337,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           tunnels.onSessionLost(session.id);
+          _noteActivity(session, AgentState.disconnected);
           session.terminal.write(
               '\r\n${tr('Conexión cerrada por el servidor.')}\r\n');
           _onSessionAlert(session,
@@ -2866,6 +3349,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (session.connectionStatus == ConnectionStatus.remote) {
           session.connectionStatus = ConnectionStatus.disconnected;
           tunnels.onSessionLost(session.id);
+          _noteActivity(session, AgentState.disconnected);
           session.lastError = ConnectionError.from(e as Object);
           session.terminal.write(
               '\r\n${tr('Error de conexión: {0}', [session.lastError!.title])}\r\n');
@@ -2894,6 +3378,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.connectionStatus = ConnectionStatus.disconnected;
       final failure = ConnectionError.from(e);
       session.lastError = failure;
+      _noteActivity(session, AgentState.disconnected);
       // The classified reason first (that's the actionable part), then the raw
       // text — it stays in the scrollback for a bug report.
       session.terminal.write(
@@ -3016,6 +3501,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _sessionResizeTimers[session.id] =
         Timer(const Duration(milliseconds: 150), () {
       _sessionResizeTimers.remove(session.id);
+      // Everything the remote repaints in response is old content in a new
+      // shape — see [TerminalSession.redrawGraceUntil].
+      session.redrawGraceUntil = DateTime.now().add(_redrawGrace);
       session.sshSession?.resizeTerminal(width, height, pixelWidth, pixelHeight);
     });
   }
@@ -3026,6 +3514,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _sessionResizeTimers.remove(session.id)?.cancel();
     _disposeWriters(session);
     tunnels.removeSession(session.id);
+    agents.removeSession(session.id);
     session.sftpClient?.close();
     session.sshSession?.close();
     session.sshClient?.close();
