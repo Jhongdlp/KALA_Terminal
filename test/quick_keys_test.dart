@@ -79,6 +79,11 @@ void main() {
     final state = await _state();
     await _pump(tester, state);
 
+    // ACCIONES leads the strip, so the CTRL grid — the fullest one, and the
+    // one this is really measuring — has to be selected first.
+    await tester.tap(find.text('CTRL').last);
+    await tester.pumpAndSettle();
+
     final screen = tester.view.physicalSize.width / tester.view.devicePixelRatio;
     for (final key in kControlKeys) {
       final finder = find.text(key.label);
@@ -95,7 +100,12 @@ void main() {
     final sent = await _pump(tester, state);
 
     expect(find.text('ESC'), findsOneWidget);
-    expect(find.text('^A'), findsOneWidget); // CTRL layer is first
+    // ACCIONES is the layer the bar opens on.
+    expect(state.activeShortcutLayer, QuickKeyLayer.actions);
+
+    await tester.tap(find.text('CTRL').last);
+    await tester.pumpAndSettle();
+    expect(find.text('^A'), findsOneWidget);
 
     await tester.tap(find.text('FN'));
     await tester.pumpAndSettle();
@@ -146,6 +156,9 @@ void main() {
     final state = await _state();
     await state.setShortcutRows(1);
     await _pump(tester, state);
+
+    await tester.tap(find.text('CTRL').last);
+    await tester.pumpAndSettle();
 
     // `findsWidgets` alone would pass on a key parked outside a scroll
     // viewport, which is exactly the failure mode being ruled out — so the

@@ -89,6 +89,22 @@ class ReleaseNote {
 /// shown as if it had shipped.
 const List<ReleaseNote> kChangelog = [
   ReleaseNote(
+    version: '2.10.1',
+    date: '2026-08-27',
+    changes: [
+      ChangeEntry(ChangeKind.fixed,
+          'El scroll dejaba de funcionar en agentes que activan y desactivan el ratón (Antigravity y otros): deslizar mandaba flechas al prompt y te reescribía lo que estabas tecleando. Arreglado.'),
+      ChangeEntry(ChangeKind.fixed,
+          'El lanzador de Antigravity usaba un comando que no existe; ahora abre «agy».'),
+      ChangeEntry(ChangeKind.improved,
+          'Mantén pulsado en la terminal y el menú radial del pad se abre solo, sin el gesto oculto de antes.'),
+      ChangeEntry(ChangeKind.improved,
+          'La capa ACCIONES del teclado rápido va primero y es la que aparece al abrir la barra.'),
+      ChangeEntry(ChangeKind.added,
+          'Nuevo ajuste para desactivar el scroll con flechas en apps de pantalla completa (Ajustes → Terminal).'),
+    ],
+  ),
+  ReleaseNote(
     version: '2.10.0',
     date: '2026-08-26',
     changes: [

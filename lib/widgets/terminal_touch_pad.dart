@@ -95,15 +95,25 @@ class TouchPadOverlay extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppColors.ink.withValues(alpha: radial ? 0.92 : 0.55),
+          // Ink over a terminal that is already ink does nothing, so the scrim
+          // is only there to lift the ring off the text; the ring itself is
+          // what has to be seen.
+          color: AppColors.ink.withValues(alpha: radial ? 0.92 : 0.7),
           border: Border.all(
-            color: hot
-                ? AppColors.accent
-                : (radial || active != null)
-                    ? AppColors.bone
-                    : AppColors.hairline,
-            width: hot ? 1.6 : 1,
+            // Armed used to be drawn in `hairline` (#262626) on a black
+            // terminal — the affordance existed in the code and not on the
+            // screen. The armed ring is the one state that MUST be obvious:
+            // it is the only thing telling the user the pad is listening.
+            color: hot ? AppColors.accent : AppColors.bone,
+            width: hot ? 2 : 1.5,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.bone.withValues(alpha: radial ? 0.22 : 0.14),
+              blurRadius: 12,
+              spreadRadius: 1,
+            ),
+          ],
         ),
         child: Center(
           child: radial
@@ -117,7 +127,9 @@ class TouchPadOverlay extends StatelessWidget {
   /// A dot that grows with the pull, so the speed ramp is visible before the
   /// keys start flying.
   Widget _tensionDot() {
-    final scale = 4.0 + 6.0 * tension.clamp(0.0, 1.0);
+    // Starts at 7, not 4: at rest this dot *is* the "pad is armed" signal, and
+    // a 4px speck inside a 44px ring reads as a rendering artefact.
+    final scale = 7.0 + 5.0 * tension.clamp(0.0, 1.0);
     return Container(
       width: scale,
       height: scale,

@@ -667,7 +667,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       Duration(milliseconds: _terminalPadRadialMs);
 
   static const int minPadRadialMs = 250;
-  static const int maxPadRadialMs = 1200;
+
+  /// Ceiling matched to [JoystickGestureRecognizer.maxRadialDelay]. Past it the
+  /// long press has already taken the pointer for a text selection, so a larger
+  /// value would simply mean "the radial never opens" — a slider that promises
+  /// 1200ms and silently does nothing above 440 is worse than a shorter one.
+  static const int maxPadRadialMs = 440;
 
   TouchPadConfig _terminalPadConfig = TouchPadConfig.defaults;
   TouchPadConfig get terminalPadConfig => _terminalPadConfig;
@@ -851,11 +856,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Visible layers, in tab order. Persisted by id so reordering the enum
   /// can't scramble a user's setup.
-  List<QuickKeyLayer> _shortcutLayers = List.of(QuickKeyLayer.values);
+  List<QuickKeyLayer> _shortcutLayers = List.of(kDefaultShortcutLayers);
   List<QuickKeyLayer> get shortcutLayers => List.unmodifiable(_shortcutLayers);
 
   /// The layer whose grid is on screen. Index into [shortcutLayers]; clamped
   /// on read because a layer can be hidden while it is the active one.
+  ///
+  /// Deliberately **not restored** from preferences on launch: the bar always
+  /// opens on ACCIONES. Remembering the last layer meant an app reopened hours
+  /// later came back on whatever page happened to be up when it was closed,
+  /// which is never the page you want first. It is still persisted, because
+  /// [setShortcutLayers] needs somewhere to keep the current layer across a
+  /// reorder.
   int _shortcutLayerIndex = 0;
   int get shortcutLayerIndex {
     if (_shortcutLayers.isEmpty) return 0;
@@ -1986,12 +1998,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setBool('settings_shortcuts_migrated_v7', true);
     }
 
-    // Migration v6: `system:select` starts a text selection without a long
+    // Migration v8: `system:select` starts a text selection without a long
     // press. It is added to existing setups rather than only to fresh ones
     // because the problem it solves is one every install has: copying depends
     // on winning a gesture the touch pad also wants.
-    final migratedV6 = prefs.getBool('settings_shortcuts_migrated_v6') ?? false;
-    if (!migratedV6) {
+    final migratedV8 = prefs.getBool('settings_shortcuts_migrated_v8') ?? false;
+    if (!migratedV8) {
       if (!_customShortcuts.any((s) => s.value == 'system:select')) {
         final entry =
             TerminalShortcut(label: 'SELECCIONAR', value: 'system:select');
@@ -2001,7 +2013,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         await prefs.setString(_kCustomShortcuts,
             json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
       }
-      await prefs.setBool('settings_shortcuts_migrated_v6', true);
+      await prefs.setBool('settings_shortcuts_migrated_v8', true);
     }
 
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
@@ -2018,7 +2030,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // or fully-emptied setting as "everything visible".
       if (restored.isNotEmpty) _shortcutLayers = restored;
     }
-    _shortcutLayerIndex = prefs.getInt(_kShortcutLayer) ?? 0;
+
+    // Migration: ACCIONES leads the strip. Applied to existing setups too,
+    // because the layer that starts the work was buried fourth for everyone
+    // who already had the app — a default nobody chose is not a preference
+    // worth preserving. Only the *position* moves; a user who hid the layer
+    // keeps it hidden, and their order is otherwise untouched.
+    final layersActionsFirst =
+        prefs.getBool('settings_layers_actions_first') ?? false;
+    if (!layersActionsFirst) {
+      if (_shortcutLayers.remove(QuickKeyLayer.actions)) {
+        _shortcutLayers.insert(0, QuickKeyLayer.actions);
+        await prefs.setStringList(
+            _kShortcutLayers, _shortcutLayers.map((l) => l.id).toList());
+      }
+      await prefs.setBool('settings_layers_actions_first', true);
+    }
+
+    // Always ACCIONES on launch — see [_shortcutLayerIndex].
+    _shortcutLayerIndex = 0;
 
     _explorerDockLeft = prefs.getBool(_kDockLeft) ?? true;
     _explorerDockY = (prefs.getDouble(_kDockY) ?? 0).clamp(-1.0, 1.0);

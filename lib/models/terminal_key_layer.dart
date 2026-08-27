@@ -29,6 +29,25 @@ class QuickKey {
 /// what order; [mine] holds their own shortcuts, the rest are built in.
 enum QuickKeyLayer { control, nav, fn, actions, mine }
 
+/// The layer order a fresh install gets, and the order a reset restores.
+///
+/// ACCIONES leads because it is the one that *starts* work — the agent
+/// launcher, the prompts, the git panel — while CTRL, NAV and FN support work
+/// already under way. It is also the layer whose keys have no equivalent
+/// anywhere else on screen, so burying it fourth made the app's own features
+/// the hardest thing in the bar to reach.
+///
+/// Separate from the enum's declaration order on purpose: that order is what
+/// `toggleShortcutLayer` restores a hidden layer into, and reordering the enum
+/// to change a default would drag that along with it.
+const List<QuickKeyLayer> kDefaultShortcutLayers = [
+  QuickKeyLayer.actions,
+  QuickKeyLayer.control,
+  QuickKeyLayer.nav,
+  QuickKeyLayer.fn,
+  QuickKeyLayer.mine,
+];
+
 extension QuickKeyLayerInfo on QuickKeyLayer {
   /// Stable id used in shared_preferences — never reorder the enum instead.
   String get id {

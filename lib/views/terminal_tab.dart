@@ -225,6 +225,25 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
     _clearPad();
   }
 
+  /// The finger rested long enough that the pad claimed the pointer: open the
+  /// radial straight away.
+  ///
+  /// Called right after [_handleJoystickStart], which has already set the
+  /// origin and armed a *second* radial timer — cancel it, or the menu would
+  /// re-open under itself and reset the picked slot.
+  void _handleRadialDwell(AppState state) {
+    if (_padOrigin == null) return;
+    _padRadialTimer?.cancel();
+    _padRadialTimer = null;
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _padMode = TouchPadMode.radial;
+      _padDirection = null;
+      _padAccelerated = false;
+      _padTension = 0;
+    });
+  }
+
   void _handleJoystickStart(Offset global, AppState state) {
     if (_terminalController.selection != null) return;
     setState(() {
@@ -455,7 +474,13 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                           onHoldQualified: (pos) =>
                               _handleHoldQualified(pos, state),
                           onHoldCancelled: _handleHoldCancelled,
+                          onRadialDwell: () => _handleRadialDwell(state),
                           holdDelay: state.terminalPadHoldDelay,
+                          // Null when the radial is off, which is what hands
+                          // the long press back to text selection.
+                          radialDelay: state.terminalPadRadialEnabled
+                              ? state.terminalPadRadialDelay
+                              : null,
                           isSelectionActive: () =>
                               _terminalController.selection != null ||
                               !state.terminalPadEnabled,
@@ -467,7 +492,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                           instance.onHoldQualified = (pos) =>
                               _handleHoldQualified(pos, state);
                           instance.onHoldCancelled = _handleHoldCancelled;
+                          instance.onRadialDwell = () => _handleRadialDwell(state);
                           instance.holdDelay = state.terminalPadHoldDelay;
+                          instance.radialDelay = state.terminalPadRadialEnabled
+                              ? state.terminalPadRadialDelay
+                              : null;
                           instance.isSelectionActive = () =>
                               _terminalController.selection != null ||
                               !state.terminalPadEnabled;

@@ -20,7 +20,9 @@ void main() {
   late List<String> joystick;
   late List<String> hold;
   late List<String> output;
+  late List<String> radial;
   Duration? holdDelay;
+  Duration? radialDelay;
 
   Future<void> pumpTerminal(WidgetTester tester) async {
     await tester.pumpWidget(
@@ -41,7 +43,9 @@ void main() {
                     onJoystickEnd: () => joystick.add('end'),
                     onHoldQualified: (_) => hold.add('qualified'),
                     onHoldCancelled: () => hold.add('cancelled'),
+                    onRadialDwell: () => radial.add('dwell'),
                     holdDelay: holdDelay,
+                    radialDelay: radialDelay,
                     isSelectionActive: () => controller.selection != null,
                   ),
                   (JoystickGestureRecognizer instance) {},
@@ -68,7 +72,9 @@ void main() {
     scrollController = ScrollController();
     joystick = <String>[];
     hold = <String>[];
+    radial = <String>[];
     holdDelay = null;
+    radialDelay = null;
     output = <String>[];
     terminal.onOutput = output.add;
   });

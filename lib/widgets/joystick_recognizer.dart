@@ -30,7 +30,9 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
     this.onHoldQualified,
     this.onHoldCancelled,
     this.isSelectionActive,
+    this.onRadialDwell,
     Duration? holdDelay,
+    this.radialDelay,
     super.debugOwner,
   }) : holdDelay = holdDelay ?? defaultHoldDelay;
 
@@ -83,7 +85,34 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
   /// down then, so the selection handles and tap-to-dismiss keep working.
   bool Function()? isSelectionActive;
 
+  /// The finger sat still past [radialDelay] without ever dragging: the pad
+  /// claims the pointer and the caller opens the radial menu.
+  ///
+  /// This is what makes "hold and the quick slots appear" true. Before it, the
+  /// radial could only be reached by holding, *nudging* past [dragThreshold] to
+  /// win the arena, and then bringing the finger back inside the deadzone — a
+  /// sequence nobody performs by accident and therefore nobody discovered.
+  /// Holding still simply aborted at [armWindowEnd] and handed the pointer to
+  /// the long press.
+  ///
+  /// Fired only when [radialDelay] is set, so a caller with the radial turned
+  /// off keeps the old contract and the long press keeps selecting text.
+  void Function()? onRadialDwell;
+
+  /// How long the finger must rest, **measured from touch-down**, before the
+  /// radial claims it. Null disables the dwell entirely.
+  ///
+  /// Capped at [maxRadialDelay] on use: past that, xterm's long press has
+  /// already won the arena and a later `resolve` would be shouting at a closed
+  /// door.
+  Duration? radialDelay;
+
+  /// The ceiling on [radialDelay]. A hair under [armWindowEnd], which is
+  /// itself a hair under `kLongPressTimeout`.
+  static const maxRadialDelay = Duration(milliseconds: 440);
+
   Timer? _holdTimer;
+  Timer? _dwellTimer;
   Timer? _abortTimer;
   Offset? _origin;
 
@@ -132,6 +161,25 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
         onHoldQualified?.call(_holdOrigin ?? event.position);
       }
     });
+    final dwell = radialDelay;
+    if (dwell != null) {
+      final capped = dwell > maxRadialDelay ? maxRadialDelay : dwell;
+      _dwellTimer = Timer(capped, () {
+        _dwellTimer = null;
+        // Only a finger that has already qualified as *held* may claim: a
+        // radial delay shorter than the hold must not skip the hold.
+        if (_active || _disqualified || !_qualified) return;
+        if (isSelectionActive?.call() == true) return;
+        _active = true;
+        _qualifiedNotified = false;
+        _holdTimer?.cancel();
+        _abortTimer?.cancel();
+        resolve(GestureDisposition.accepted);
+        onJoystickStart(_holdOrigin ?? _lastPosition ?? event.position);
+        onRadialDwell?.call();
+      });
+    }
+
     // Past this deadline the finger belongs to text selection.
     _abortTimer = Timer(armWindowEnd, () {
       if (!_active) _abort();
@@ -167,6 +215,8 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
         _active = true;
         _qualifiedNotified = false;
         _holdTimer?.cancel();
+        _dwellTimer?.cancel();
+        _dwellTimer = null;
         _abortTimer?.cancel();
         resolve(GestureDisposition.accepted);
         onJoystickStart(holdOrigin);
@@ -189,6 +239,8 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
     _disqualified = true;
     _holdTimer?.cancel();
     _holdTimer = null;
+    _dwellTimer?.cancel();
+    _dwellTimer = null;
     _abortTimer?.cancel();
     _abortTimer = null;
     if (_pointer != null) resolve(GestureDisposition.rejected);
@@ -209,6 +261,8 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
   void _reset() {
     _holdTimer?.cancel();
     _holdTimer = null;
+    _dwellTimer?.cancel();
+    _dwellTimer = null;
     _abortTimer?.cancel();
     _abortTimer = null;
     final wasActive = _active;
@@ -228,6 +282,7 @@ class JoystickGestureRecognizer extends OneSequenceGestureRecognizer {
   @override
   void dispose() {
     _holdTimer?.cancel();
+    _dwellTimer?.cancel();
     _abortTimer?.cancel();
     super.dispose();
   }
