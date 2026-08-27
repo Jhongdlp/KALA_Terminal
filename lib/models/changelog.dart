@@ -89,6 +89,16 @@ class ReleaseNote {
 /// shown as if it had shipped.
 const List<ReleaseNote> kChangelog = [
   ReleaseNote(
+    version: '2.10.2',
+    date: '2026-08-27',
+    changes: [
+      ChangeEntry(ChangeKind.improved,
+          'Coherencia de marca: se sustituyeron las últimas referencias internas al nombre anterior del proyecto por «Kammel».'),
+      ChangeEntry(ChangeKind.added,
+          'Enlace a kammel.app en la pantalla «Acerca de».'),
+    ],
+  ),
+  ReleaseNote(
     version: '2.10.1',
     date: '2026-08-27',
     changes: [

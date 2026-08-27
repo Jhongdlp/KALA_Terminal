@@ -22,14 +22,14 @@ import android.os.Build
  */
 object AlertNotifier {
 
-    private const val CHANNEL_ID = "kala_alerts"
-    const val EXTRA_SESSION_ID = "kala_session_id"
+    private const val CHANNEL_ID = "kammel_alerts"
+    const val EXTRA_SESSION_ID = "kammel_session_id"
 
     // Per-kind channels. A channel's importance is fixed when it is created and
     // cannot be raised afterwards, so a level change is applied by moving to a
     // channel whose id encodes the level and deleting the previous one. Kind
     // ids match Dart's AlertKind.name; levels match AlertIntensity.name.
-    private const val CHANNEL_PREFIX = "kala_alert"
+    private const val CHANNEL_PREFIX = "kammel_alert"
 
     private fun channelId(kind: String, level: String) = "${CHANNEL_PREFIX}_${kind}_$level"
 
@@ -73,7 +73,7 @@ object AlertNotifier {
 
     // Stack key + summary id so alerts from several sessions collapse into one
     // expandable group instead of flooding the shade.
-    private const val GROUP_KEY = "kala_agent_alerts"
+    private const val GROUP_KEY = "kammel_agent_alerts"
     private const val SUMMARY_ID = 1999
 
     /**

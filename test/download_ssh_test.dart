@@ -11,14 +11,14 @@ import 'package:terminal_agent/providers/app_state.dart';
 /// End-to-end download test against a real SSH/SFTP server.
 ///
 /// It needs an sshd listening on 127.0.0.1:2222 that accepts the key in
-/// $KALA_TEST_KEY, plus $KALA_TEST_TREE (the remote folder to download) and
-/// $KALA_TEST_OUT (the local destination). Skipped when those aren't set, so a
+/// $KAMMEL_TEST_KEY, plus $KAMMEL_TEST_TREE (the remote folder to download) and
+/// $KAMMEL_TEST_OUT (the local destination). Skipped when those aren't set, so a
 /// plain `flutter test` run stays hermetic — see scripts in the PR description
 /// for how the fixture server is started.
 void main() {
-  final keyPath = Platform.environment['KALA_TEST_KEY'];
-  final treeDir = Platform.environment['KALA_TEST_TREE'];
-  final outDir = Platform.environment['KALA_TEST_OUT'];
+  final keyPath = Platform.environment['KAMMEL_TEST_KEY'];
+  final treeDir = Platform.environment['KAMMEL_TEST_TREE'];
+  final outDir = Platform.environment['KAMMEL_TEST_OUT'];
 
   if (keyPath == null || treeDir == null || outDir == null) {
     test('ssh download (skipped: no fixture server)', () {}, skip: true);

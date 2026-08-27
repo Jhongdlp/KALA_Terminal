@@ -29,7 +29,7 @@ class TerminalService : Service() {
         const val ACTION_TOGGLE_WAKELOCK =
             "com.antigravity.terminalagent.action.TOGGLE_WAKELOCK"
 
-        private const val CHANNEL_ID = "kala_background"
+        private const val CHANNEL_ID = "kammel_background"
         private const val NOTIFICATION_ID = 1001
         private const val WAKELOCK_TAG = "KAMMEL::BackgroundWakeLock"
     }

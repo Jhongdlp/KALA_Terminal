@@ -74,6 +74,8 @@ class AboutTab extends StatelessWidget {
               Hairline(),
               _InfoRow(label: tr('PAQUETE'), value: 'terminal_agent'),
               Hairline(),
+              _InfoRow(label: tr('SITIO WEB'), value: 'kammel.app'),
+              Hairline(),
               const _VersionRow(),
               Hairline(),
               const _ChangelogRow(),

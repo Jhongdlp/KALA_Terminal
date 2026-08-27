@@ -1,6 +1,6 @@
 # Security policy
 
-KALA is an SSH client. It holds passwords and private keys, pins host keys, and
+Kammel is an SSH client. It holds passwords and private keys, pins host keys, and
 opens tunnels through the device. A bug in any of those is a real risk to the
 people using it, so security reports get priority over everything else.
 

@@ -8,8 +8,9 @@
 
 Multi-session terminal · SFTP explorer · code editor · Docker & database console — in one Flutter app for Android and Linux.
 
-[Leer en español](README.es.md)
+[Leer en español](README.es.md) · [kammel.app](https://www.kammel.app/)
 
+[![Website](https://img.shields.io/badge/web-kammel.app-007AFF)](https://www.kammel.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter)](https://flutter.dev)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20Linux-green)]()

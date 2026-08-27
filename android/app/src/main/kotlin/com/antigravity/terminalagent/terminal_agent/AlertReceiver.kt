@@ -18,8 +18,8 @@ class AlertReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_AGENT_INPUT =
             "com.antigravity.terminalagent.action.AGENT_INPUT"
-        const val EXTRA_INPUT = "kala_input"
-        const val REMOTE_INPUT_KEY = "kala_reply"
+        const val EXTRA_INPUT = "kammel_input"
+        const val REMOTE_INPUT_KEY = "kammel_reply"
     }
 
     override fun onReceive(context: Context, intent: Intent) {

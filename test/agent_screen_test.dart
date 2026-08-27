@@ -9,14 +9,14 @@ void main() {
   group('looksLikeShellPrompt', () {
     test('recognises the usual idle prompts', () {
       for (final prompt in const [
-        r'jhon@phone:~/dev/kala$',
-        r'jhon@phone:~/dev/kala$   ',
+        r'jhon@phone:~/dev/kammel$',
+        r'jhon@phone:~/dev/kammel$   ',
         '# ',
         '[root@server ~]#',
-        '~/dev/kala %',
+        '~/dev/kammel %',
         '❯',
         '~/dev ❯ ',
-        '➜  kala git:(main) ➜',
+        '➜  kammel git:(main) ➜',
       ]) {
         expect(AgentScreen.looksLikeShellPrompt(['some output', prompt]), isTrue,
             reason: 'should be a prompt: "$prompt"');

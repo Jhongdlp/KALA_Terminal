@@ -65,7 +65,7 @@ void showGitPanel(BuildContext context, AppState state,
 
 /// Source-control panel: the staged / unstaged split, per-file stage, unstage
 /// and discard, a diff viewer, the commit box and branch sync — the git client
-/// KALA used to delegate to whatever was typed in the terminal.
+/// Kammel used to delegate to whatever was typed in the terminal.
 ///
 /// Every command runs through [GitService], which is rebuilt on each refresh
 /// from the *active* session, so the panel follows reconnects instead of

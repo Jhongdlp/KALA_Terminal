@@ -222,7 +222,7 @@ class PersonalizationTab extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                 child: Text(
-                  tr(r'user@kala:~$ echo "Hola"'),
+                  tr(r'user@kammel:~$ echo "Hola"'),
                   style: AppText.mono(terminalFontSize,
                       color: AppColors.bone),
                 ),

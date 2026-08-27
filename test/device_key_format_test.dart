@@ -30,7 +30,7 @@ void main() {
     expect(pair.type, 'ssh-ed25519');
 
     // And its signature over arbitrary data must verify with the public key.
-    final data = utf8.encode('kala device key roundtrip');
+    final data = utf8.encode('kammel device key roundtrip');
     final sigEncoded = pair.sign(Uint8List.fromList(data)).encode();
     final verified = signingKey.verifyKey.verify(
       signature: nacl.Signature(_ed25519SigBytes(sigEncoded)),
@@ -45,7 +45,7 @@ void main() {
 
     final line = DeviceKey.publicLineForTest(publicKey);
     expect(line, startsWith('ssh-ed25519 '));
-    expect(line, endsWith(' kala@device'));
+    expect(line, endsWith(' kammel@device'));
 
     // The base64 blob must decode to {string "ssh-ed25519", string pub}.
     final blob = base64.decode(line.split(' ')[1]);

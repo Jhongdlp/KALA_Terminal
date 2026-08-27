@@ -31,7 +31,7 @@ sed -i.bak "s/^version: .*/version: ${new_name}+${new_build}/" pubspec.yaml && r
 
 # Compile APK
 echo "==> Building APK..."
-export JAVA_HOME="/home/emi/StudioProjects/KALA_Terminal/sdk/jdk"
+export JAVA_HOME="/home/emi/StudioProjects/Kammel/sdk/jdk"
 sdk/flutter/bin/flutter build apk --release
 
 apk="build/app/outputs/flutter-apk/app-release.apk"

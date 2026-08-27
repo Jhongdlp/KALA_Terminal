@@ -127,7 +127,7 @@ class ConnectionProfile {
   String get tmuxSessionName {
     var slug = name.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
     if (slug.isEmpty) slug = id.length >= 8 ? id.substring(0, 8) : id;
-    return 'kala-$slug';
+    return 'kammel-$slug';
   }
 
   Map<String, dynamic> toMap() {

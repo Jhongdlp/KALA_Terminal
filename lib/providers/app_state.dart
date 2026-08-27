@@ -4715,7 +4715,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         // create() succeeds on a read-only path on some Android volumes; only a
         // real write proves the folder is usable, and failing here (instead of
         // on the first file) keeps the error understandable.
-        final probe = File('$finalDir/.kala_write_test');
+        final probe = File('$finalDir/.kammel_write_test');
         await probe.writeAsBytes(const [0]);
         await probe.delete();
       } catch (e) {

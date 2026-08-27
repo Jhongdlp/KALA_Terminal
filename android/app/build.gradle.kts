@@ -12,7 +12,7 @@ plugins {
 // `flutter run` still works. Distributed APKs must always be signed with the
 // SAME keystore across releases so the in-app updater can install updates over
 // the installed app. Current releases are signed with android/app/debug.keystore
-// (the key the published KALA builds already use — SHA-1 81:F2:49:94…).
+// (the key the published builds have always used — SHA-1 81:F2:49:94…).
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
@@ -34,8 +34,8 @@ android {
     }
 
     defaultConfig {
-        // Unchanged from KALA so this SSH-only build updates the installed app
-        // in place (same signing key required — see android/key.properties).
+        // Kept unchanged across the rebrand so this build updates the installed
+        // app in place (same signing key required — see android/key.properties).
         applicationId = "com.antigravity.terminalagent.terminal_agent"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.

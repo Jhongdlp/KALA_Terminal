@@ -26,10 +26,10 @@ void main() {
   });
 
   setUp(() async {
-    repo = await Directory.systemTemp.createTemp('kala_git_test_');
+    repo = await Directory.systemTemp.createTemp('kammel_git_test_');
     await raw(['init', '-q', '-b', 'main']);
-    await raw(['config', 'user.email', 'test@kala.local']);
-    await raw(['config', 'user.name', 'KALA Test']);
+    await raw(['config', 'user.email', 'test@kammel.local']);
+    await raw(['config', 'user.name', 'Kammel Test']);
     git = GitService.local(workdir: repo.path);
   });
 
@@ -49,7 +49,7 @@ void main() {
 
   test('a directory outside any repository has no root and no status',
       () async {
-    final plain = await Directory.systemTemp.createTemp('kala_not_a_repo_');
+    final plain = await Directory.systemTemp.createTemp('kammel_not_a_repo_');
     addTearDown(() => plain.delete(recursive: true));
     final outside = GitService.local(workdir: plain.path);
     expect(await outside.repoRoot(), isNull);
