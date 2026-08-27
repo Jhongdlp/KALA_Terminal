@@ -496,6 +496,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
                         deleteDetection: true,
                         autocorrect: state.terminalKeyboardAutocorrect,
                         enableSuggestions: state.terminalKeyboardAutocorrect,
+                        // Ajustes → Terminal. Off means a swipe inside a TUI
+                        // that ignores the wheel does nothing, instead of
+                        // walking an agent's prompt history.
+                        simulateScroll: state.terminalAltScrollKeys,
                         theme: AppTerminalTheme.byId(state.terminalScheme,
                             Theme.of(context).brightness,
                             accentColor: AppColors.accent),

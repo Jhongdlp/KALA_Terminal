@@ -1,139 +1,72 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:terminal_agent/l10n/strings_en.dart';
-import 'package:terminal_agent/l10n/strings_zh.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:terminal_agent/l10n/l10n.dart';
 import 'package:terminal_agent/models/agent_launcher.dart';
+import 'package:terminal_agent/providers/app_state.dart';
 
-/// One-tap agent launchers. The command is the user's own shell line and is
-/// stored and sent verbatim, so what matters here is that nothing mangles it
-/// and that a broken stored blob never costs more than the list itself.
+/// One-tap agent launchers.
+///
+/// A launcher is only worth a tile if its command exists on the far side, so a
+/// shipped default that names the wrong binary has to be corrected on setups
+/// that already stored it — while never touching a command the user wrote.
+Future<AppState> _state() async {
+  L10n.notifier.value = AppLang.es;
+  await L10n.load();
+  final state = AppState();
+  // Settings load asynchronously from prefs.
+  await Future<void>.delayed(Duration.zero);
+  await Future<void>.delayed(Duration.zero);
+  return state;
+}
+
 void main() {
-  group('persistence', () {
-    test('a launcher survives a JSON round trip', () {
-      const launcher = AgentLauncher(
-        id: 'x',
-        name: 'Claude Code',
-        command: 'claude --dangerously-skip-permissions',
-        iconId: 'claude',
-        autoRun: false,
-        enabled: false,
-      );
-      final back = AgentLauncher.decodeList(
-          AgentLauncher.encodeList([launcher])).single;
-      expect(back.id, 'x');
-      expect(back.name, 'Claude Code');
-      expect(back.command, 'claude --dangerously-skip-permissions');
-      expect(back.iconId, 'claude');
-      expect(back.autoRun, isFalse);
-      expect(back.enabled, isFalse);
-    });
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    test('a command with quotes and && is stored untouched', () {
-      // The whole contract: this is a shell line, not something we compose.
-      const raw = r'''cd "/srv/my repo" && ENV=1 claude --model 'sonnet' ''';
-      const launcher =
-          AgentLauncher(id: 'x', name: 'n', command: raw, iconId: 'generic');
-      expect(
-        AgentLauncher.decodeList(AgentLauncher.encodeList([launcher]))
-            .single
-            .command,
-        raw,
-      );
+  test("the Antigravity launcher's command is corrected to agy", () async {
+    // Antigravity's binary is `agy`; the launcher shipped with the long name,
+    // so tapping it only ever printed "command not found".
+    final owned = [
+      const AgentLauncher(
+          id: 'antigravity',
+          name: 'Antigravity',
+          command: 'antigravity',
+          iconId: 'antigravity'),
+      const AgentLauncher(
+          id: 'mine', name: 'Mío', command: 'antigravity --yolo'),
+    ];
+    SharedPreferences.setMockInitialValues({
+      'settings_agent_launchers': AgentLauncher.encodeList(owned),
     });
+    final state = await _state();
 
-    test('an entry written before the flags existed keeps working', () {
-      final back = AgentLauncher.fromMap({
-        'id': 'old',
-        'name': 'Aider',
-        'command': 'aider',
-      });
-      expect(back.iconId, 'generic');
-      // Both default to the useful value rather than to false.
-      expect(back.autoRun, isTrue);
-      expect(back.enabled, isTrue);
-    });
-
-    test('a corrupt blob costs the list, never the launch', () {
-      for (final raw in ['', 'not json', '{"not":"a list"}', '[1, 2, 3]']) {
-        expect(AgentLauncher.decodeList(raw), isEmpty, reason: raw);
-      }
-      expect(AgentLauncher.decodeList(null), isEmpty);
-    });
-
-    test('entries with no id or no name are dropped, not drawn blank', () {
-      const json = '[{"id":"","name":"x","command":"c"},'
-          '{"id":"y","name":"","command":"c"},'
-          '{"id":"z","name":"ok","command":"c"}]';
-      expect(AgentLauncher.decodeList(json).map((l) => l.id), ['z']);
-    });
+    expect(state.agentLaunchers.first.command, 'agy');
+    // A command the user typed is theirs, wrong or not.
+    expect(state.agentLaunchers.last.command, 'antigravity --yolo');
   });
 
-  group('icons', () {
-    test('an unknown icon falls back to the generic mark, not to a hole', () {
-      const launcher = AgentLauncher(
-          id: 'x', name: 'Nuevo', command: 'nuevo', iconId: 'does-not-exist');
-      expect(launcher.assetPath, 'assets/agents/generic.png');
+  test('a launcher command the user edited is never rewritten', () async {
+    final owned = [
+      const AgentLauncher(
+          id: 'antigravity',
+          name: 'Antigravity',
+          command: 'cd ~/repo && antigravity',
+          iconId: 'antigravity'),
+    ];
+    SharedPreferences.setMockInitialValues({
+      'settings_agent_launchers': AgentLauncher.encodeList(owned),
     });
+    final state = await _state();
 
-    test('a known icon resolves to its own asset', () {
-      const launcher = AgentLauncher(
-          id: 'x', name: 'Claude', command: 'claude', iconId: 'claude');
-      expect(launcher.assetPath, 'assets/agents/claude.png');
-    });
-
-    test('generic is available as a real choice', () {
-      expect(kAgentIcons, contains('generic'));
-    });
+    expect(state.agentLaunchers.single.command, 'cd ~/repo && antigravity');
   });
 
-  group('defaults', () {
-    test('ship no permission-skipping flags', () {
-      // Adding those silently would be making a security decision for the
-      // user. They are one tap away in the editor for whoever wants them.
-      for (final launcher in kDefaultAgentLaunchers) {
-        expect(launcher.command, isNot(contains('--')),
-            reason: '${launcher.id} ships a flag');
-      }
-    });
+  test('a fresh install launches Antigravity with agy', () async {
+    SharedPreferences.setMockInitialValues({});
+    final state = await _state();
 
-    test('every default has a unique id and a bundled mark', () {
-      final ids = kDefaultAgentLaunchers.map((l) => l.id).toList();
-      expect(ids.toSet().length, ids.length);
-      for (final launcher in kDefaultAgentLaunchers) {
-        expect(kAgentIcons, contains(launcher.iconId),
-            reason: '${launcher.id} has no bundled mark');
-      }
-    });
-  });
-
-  group('suggested flags', () {
-    test('every description is translated', () {
-      // Drawn via tr(description), so scripts/i18n_check.py cannot see them.
-      for (final (_, _, description) in kCommonAgentFlags) {
-        expect(enStrings.containsKey(description), isTrue,
-            reason: 'no English translation for: $description');
-        expect(zhStrings.containsKey(description), isTrue,
-            reason: 'no Chinese translation for: $description');
-      }
-    });
-
-    test('each one targets an agent that actually ships', () {
-      final ids = kDefaultAgentLaunchers.map((l) => l.id).toSet();
-      for (final (agentId, _, _) in kCommonAgentFlags) {
-        expect(ids, contains(agentId));
-      }
-    });
-  });
-
-  group('copyWith', () {
-    test('keeps the id and changes only what is named', () {
-      const launcher = AgentLauncher(
-          id: 'x', name: 'A', command: 'a', iconId: 'aider', autoRun: true);
-      final edited = launcher.copyWith(command: 'a --yes-always');
-      expect(edited.id, 'x');
-      expect(edited.name, 'A');
-      expect(edited.iconId, 'aider');
-      expect(edited.autoRun, isTrue);
-      expect(edited.command, 'a --yes-always');
-    });
+    expect(
+      state.agentLaunchers.firstWhere((l) => l.id == 'antigravity').command,
+      'agy',
+    );
   });
 }

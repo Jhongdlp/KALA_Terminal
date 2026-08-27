@@ -28,6 +28,8 @@ class SettingsTab extends StatelessWidget {
         context.select<AppState, bool>((s) => s.agentAlertsEnabled);
     final commandHistoryEnabled =
         context.select<AppState, bool>((s) => s.commandHistoryEnabled);
+    final altScrollKeys =
+        context.select<AppState, bool>((s) => s.terminalAltScrollKeys);
     final restoreSessions =
         context.select<AppState, bool>((s) => s.restoreSessionsEnabled);
     final keyboardAutocorrect =
@@ -89,6 +91,14 @@ class SettingsTab extends StatelessWidget {
                     'Vuelve a abrir las pestañas de la última vez, desconectadas y listas para reconectar de un toque. No se conecta solo a ningún servidor.'),
                 value: restoreSessions,
                 onChanged: state.setRestoreSessionsEnabled,
+              ),
+              Hairline(),
+              ToggleRow(
+                label: tr('DESPLAZAR CON FLECHAS EN PANTALLA COMPLETA'),
+                description: tr(
+                    'Dentro de una app de pantalla completa que no entiende la rueda del ratón (tmux sin ratón, un agente TUI), deslizar envía flechas ↑↓. Es lo que hace que less o man se desplacen con el dedo; en el cuadro de texto de un agente, en cambio, recorre su historial. Desactívalo si deslizar te cambia lo que estabas escribiendo.'),
+                value: altScrollKeys,
+                onChanged: state.setTerminalAltScrollKeys,
               ),
               Hairline(),
               ToggleRow(

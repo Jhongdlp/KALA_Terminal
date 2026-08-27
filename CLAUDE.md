@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-"KALA" (package name `terminal_agent`) is a Flutter app that combines an SSH connection manager, a multi-session terminal emulator (SSH), a remote file explorer (SFTP), and a code editor into a single mobile-first IDE-like tool. Configured platforms are **Android** and **Linux** only.
+"Kammel" (package name `terminal_agent`) is a Flutter app that combines an SSH connection manager, a multi-session terminal emulator (SSH), a remote file explorer (SFTP), and a code editor into a single mobile-first IDE-like tool. Configured platforms are **Android** and **Linux** only.
 
 ## Commands
 
@@ -64,7 +64,7 @@ Copying is the one thing on that table with **no second entrance**, so it gets d
 
 The other half is not losing the selection in the first place. `_onKeyboardShow` (vendored `terminal_view.dart`) used to jump the viewport to the bottom of the buffer unconditionally; since the tap that begins a long press is also the tap that raises the keyboard, selecting anything in the scrollback yanked the view out from under it. It now chases the prompt **only if the viewport was already at the bottom** (asked *before* the frame that applies the new insets, while `maxScrollExtent` still describes the old layout) and never while a selection is on screen. Typing still snaps back — `_onInsert` scrolls to the bottom on the first keystroke. `test/terminal_selection_test.dart` pins both halves.
 
-`system:select` is the entrance that no gesture can take away: it selects the word under the finger that armed the pad (so it belongs on a radial slot — hold, lean, release, and the handles are up), or, fired from the ACCIONES layer where there is nothing to point at, the last non-empty line. Migration `settings_shortcuts_migrated_v6` adds it to setups that already exist, since the problem it solves is not one only fresh installs have.
+`system:select` is the entrance that no gesture can take away: it selects the word under the finger that armed the pad (so it belongs on a radial slot — hold, lean, release, and the handles are up), or, fired from the ACCIONES layer where there is nothing to point at, the last non-empty line. Migration `settings_shortcuts_migrated_v8` adds it to setups that already exist, since the problem it solves is not one only fresh installs have.
 
 ### The touch pad
 
@@ -81,6 +81,14 @@ The radial deliberately escalates from the *armed pad* rather than from a longer
 `PadDirection` and the slot map live in `lib/models/touch_pad.dart` and are covered by `test/touch_pad_test.dart`. Two geometries, on purpose: the drag resolves on the **dominant axis** (a sloppy upward swipe is still "up"), the radial on **eight equal 45° sectors**. Slots hold `TerminalShortcut`s — the same vocabulary as the quick keyboard, so anything that can sit on a key can sit on the pad — persisted as one blob under `settings_pad_slots`, with raw bytes stored in their escaped form (`padEscape`) so preferences stay readable text. Everything else about the pad is a setting under `settings_pad_*` (Personalizar → Pad táctil): on/off, hold time, deadzone, radial on/off and its delay. They are settings because the gesture shares its pixels with the scroll and the long press, and where one hand draws the line between them is not where another does.
 
 Alt-buffer scrolling (tmux, and any TUI agent running under it) lives in the vendored `TerminalScrollGestureHandler`. Upstream wrapped the terminal in a second `Scrollable` that swallowed the drag before xterm's own recognisers saw it; it now runs a plain `VerticalDragGestureRecognizer` that competes fairly, so a long press still selects instead of scrolling. Its fling is gated on `terminal.mouseMode.reportScroll` — without mouse reporting `_sendScrollEvent` falls back to arrow keys, and a fling would dump a hundred of them into whatever holds the prompt.
+
+**A swipe inside a full-screen app is a guess**, and the whole of `_sendScrollEvent` is about narrowing it. If the application reports the wheel, it gets a wheel event and there is nothing to decide. If it doesn't, the fallback types `↑`/`↓` — which is a scroll in `less` and *history navigation* in a TUI agent's input box, where it silently replaces what the user was writing. Three things gate it:
+
+- **`Terminal.mouseMode` is derived from a set, not from the last escape sequence.** DEC modes 9 / 1000 / 1002 / 1003 are independent switches and programs disable defensively (`CSI ? 1003 l` after asking for 1000). Upstream mapped every "off" onto `MouseMode.none`, so one such line silenced wheel reporting for good and every later swipe went out as arrow keys. `setMouseMode` now takes `enabled:` and picks the most specific mode still on. This is the bug behind "scrolling misbehaves in *other* agents" — the ones that touch mouse modes at all.
+- **DEC mode 1007** (`altBufferMouseScrollMode`) is honoured and now defaults to **on**, matching modern terminals: an application that says it does its own scrolling is obeyed.
+- **`AppState.terminalAltScrollKeys`** (Ajustes → Terminal, default on) is the user's own switch, for the agents that declare nothing at all.
+
+`test/terminal_mouse_modes_test.dart` covers the mode algebra and what each combination actually puts on the wire.
 
 ### Soft keyboard, dictation and the IME
 
@@ -292,7 +300,7 @@ Typing `claude --dangerously-skip-permissions` on a phone keyboard is a thing no
 
 Two deliberate refusals: the **defaults ship no flags at all** (a launcher that silently added `--dangerously-skip-permissions` would be making a security decision for the user — the editor offers it, with the consequence written out in words), and the command field is **free text** rather than a picker, because the app does not know next year's CLI and a new agent has to be addable without a release. `AgentMark` draws the marks **untinted**, the only images in the app that escape the palette: they are brand logos, and recolouring them is what would stop them being recognisable at a glance.
 
-Editable in Personalizar → Agentes (`lib/views/agent_launchers_panel.dart`). Migration `settings_shortcuts_migrated_v7` adds the key to existing setups, not just fresh ones.
+Editable in Personalizar → Agentes (`lib/views/agent_launchers_panel.dart`). Migration `settings_shortcuts_migrated_v7` adds the key to existing setups, not just fresh ones. A shipped default whose *command* turns out to be wrong is corrected on load the same way (Antigravity's binary is `agy`, not `antigravity`) — but only while the stored command is still byte-identical to the old default, since a line the user edited is theirs, wrong or not. `test/agent_launcher_test.dart`.
 
 ### Backup and restore
 

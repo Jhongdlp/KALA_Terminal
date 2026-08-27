@@ -123,7 +123,12 @@ abstract class EscapeHandler {
 
   void setAutoWrapMode(bool enabled);
 
-  void setMouseMode(MouseMode mode);
+  /// Turns one mouse tracking mode on or off.
+  ///
+  /// The DEC modes behind these (9, 1000/1001, 1002, 1003) are **independent
+  /// switches**, so [enabled] carries which way this one moved instead of the
+  /// caller collapsing an "off" into [MouseMode.none].
+  void setMouseMode(MouseMode mode, {bool enabled});
 
   void setCursorBlinkMode(bool enabled);
 

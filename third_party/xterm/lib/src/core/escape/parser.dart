@@ -965,9 +965,7 @@ class EscapeParser {
       case 7:
         return handler.setAutoWrapMode(enabled);
       case 9:
-        return enabled
-            ? handler.setMouseMode(MouseMode.clickOnly)
-            : handler.setMouseMode(MouseMode.none);
+        return handler.setMouseMode(MouseMode.clickOnly, enabled: enabled);
       case 12:
       case 13:
         return handler.setCursorBlinkMode(enabled);
@@ -981,23 +979,22 @@ class EscapeParser {
         }
       case 66:
         return handler.setAppKeypadMode(enabled);
+      // Patched for KALA: these four are independent switches and a program
+      // may turn one off while leaving another on — `CSI ? 1003 l` after
+      // `CSI ? 1000 h` still leaves wheel reporting enabled everywhere else.
+      // Mapping every "off" onto MouseMode.none silently stopped reporting the
+      // wheel, and the terminal then fell back to sending arrow keys into
+      // whatever held the prompt.
       case 1000:
       case 10061000:
-        return enabled
-            ? handler.setMouseMode(MouseMode.upDownScroll)
-            : handler.setMouseMode(MouseMode.none);
       case 1001:
-        return enabled
-            ? handler.setMouseMode(MouseMode.upDownScroll)
-            : handler.setMouseMode(MouseMode.none);
+        return handler.setMouseMode(MouseMode.upDownScroll, enabled: enabled);
       case 1002:
-        return enabled
-            ? handler.setMouseMode(MouseMode.upDownScrollDrag)
-            : handler.setMouseMode(MouseMode.none);
+        return handler.setMouseMode(MouseMode.upDownScrollDrag,
+            enabled: enabled);
       case 1003:
-        return enabled
-            ? handler.setMouseMode(MouseMode.upDownScrollMove)
-            : handler.setMouseMode(MouseMode.none);
+        return handler.setMouseMode(MouseMode.upDownScrollMove,
+            enabled: enabled);
       case 1004:
         return handler.setReportFocusMode(enabled);
       case 1005:

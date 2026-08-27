@@ -579,6 +579,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kBackGestureFolders = 'settings_back_gesture_folders';
   static const String _kSyncTerminalPath = 'settings_sync_terminal_path';
   static const String _kTerminalKeyboardAutocorrect = 'settings_terminal_keyboard_autocorrect';
+  static const String _kAltScrollKeys = 'settings_alt_scroll_keys';
   static const String _kAppLockEnabled = 'settings_app_lock_enabled';
   static const String _kAgentAlerts = 'settings_agent_alerts';
   static const String _kAgentDashboard = 'settings_agent_dashboard';
@@ -688,6 +689,18 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _terminalKeyboardAutocorrect = false;
   bool get terminalKeyboardAutocorrect => _terminalKeyboardAutocorrect;
+
+  /// Whether a swipe inside a full-screen app that does **not** report the
+  /// mouse wheel is translated into arrow keys.
+  ///
+  /// It is the only thing that makes `less`, `man` and `vim` scrollable with a
+  /// thumb, and it is also how a swipe inside a TUI agent walks its prompt
+  /// history instead of scrolling: the same two keys mean different things to
+  /// a pager and to a text box, and nothing in the escape stream says which
+  /// one is on screen. Applications that know they handle their own scrolling
+  /// opt out with DEC mode 1007 and are obeyed regardless of this switch.
+  bool _terminalAltScrollKeys = true;
+  bool get terminalAltScrollKeys => _terminalAltScrollKeys;
 
   // Everything about agent notifications: which kinds fire, how loudly, when,
   // and how sensitive the autodetector is. See [NotificationPrefs].
@@ -1823,6 +1836,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _terminalKeyboardAutocorrect =
         prefs.getBool(_kTerminalKeyboardAutocorrect) ?? false;
 
+    _terminalAltScrollKeys = prefs.getBool(_kAltScrollKeys) ?? true;
+
     _appLockEnabled = prefs.getBool(_kAppLockEnabled) ?? false;
 
     _agentDashboardEnabled = prefs.getBool(_kAgentDashboard) ?? true;
@@ -1832,6 +1847,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final rawLaunchers = prefs.getString(_kAgentLaunchers);
     if (rawLaunchers != null) {
       _agentLaunchers = AgentLauncher.decodeList(rawLaunchers);
+      // Antigravity's binary is `agy`; the launcher shipped with the long name
+      // and never ran. Only an entry still byte-identical to that default is
+      // corrected — a command the user has edited is theirs, wrong or not.
+      final wrong = _agentLaunchers
+          .indexWhere((l) => l.id == 'antigravity' && l.command == 'antigravity');
+      if (wrong >= 0) {
+        _agentLaunchers[wrong] =
+            _agentLaunchers[wrong].copyWith(command: 'agy');
+        await prefs.setString(
+            _kAgentLaunchers, AgentLauncher.encodeList(_agentLaunchers));
+      }
     }
 
     // Notification config: the JSON blob wins; on first run after the update
@@ -2268,6 +2294,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kTerminalKeyboardAutocorrect, value);
+  }
+
+  Future<void> setTerminalAltScrollKeys(bool value) async {
+    if (_terminalAltScrollKeys == value) return;
+    _terminalAltScrollKeys = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAltScrollKeys, value);
   }
 
   Future<void> setThemeChoice(AppThemeChoice choice) async {

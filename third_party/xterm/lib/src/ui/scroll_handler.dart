@@ -118,7 +118,14 @@ class _TerminalScrollGestureHandlerState
       position,
     );
 
-    if (!handled && widget.simulateScroll) {
+    // The fallback types arrow keys into whatever holds the prompt, which is
+    // a scroll in `less` and history navigation in an agent's input box. So it
+    // needs two permissions: the user's (`simulateScroll`) and the running
+    // application's — DEC mode 1007, which is how a program says it handles
+    // its own scrolling and does not want the wheel translated.
+    if (!handled &&
+        widget.simulateScroll &&
+        widget.terminal.altBufferMouseScrollMode) {
       widget.terminal.keyInput(
         up ? TerminalKey.arrowUp : TerminalKey.arrowDown,
       );

@@ -131,10 +131,13 @@ const List<String> kAgentIcons = [
 const List<AgentLauncher> kDefaultAgentLaunchers = [
   AgentLauncher(
       id: 'claude', name: 'Claude Code', command: 'claude', iconId: 'claude'),
+  // `agy`, not `antigravity`: the binary Google ships is the short one, and a
+  // launcher whose command does not exist is a tile that only ever prints
+  // "command not found".
   AgentLauncher(
       id: 'antigravity',
       name: 'Antigravity',
-      command: 'antigravity',
+      command: 'agy',
       iconId: 'antigravity'),
   AgentLauncher(id: 'codex', name: 'Codex', command: 'codex', iconId: 'codex'),
   AgentLauncher(

@@ -133,6 +133,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   MouseMode _mouseMode = MouseMode.none;
 
+  /// Which tracking modes the application currently has switched on.
+  ///
+  /// They are separate DEC modes and a program may hold several at once, so
+  /// [_mouseMode] is *derived* from this set rather than being whatever the
+  /// last escape sequence happened to say.
+  final _activeMouseModes = <MouseMode>{};
+
   MouseReportMode _mouseReportMode = MouseReportMode.normal;
 
   bool _cursorBlinkMode = false;
@@ -143,7 +150,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   bool _reportFocusMode = false;
 
-  bool _altBufferMouseScrollMode = false;
+  /// DEC mode 1007 (alternate scroll): whether the wheel may be translated
+  /// into arrow keys while the alternate buffer is up.
+  ///
+  /// Patched for KALA: defaults to **on**, the way every modern terminal
+  /// ships it, so `less` and `man` still scroll by swipe — and so an
+  /// application that sends `CSI ? 1007 l` because it does its own scrolling
+  /// is actually obeyed instead of being fed arrow keys.
+  bool _altBufferMouseScrollMode = true;
 
   bool _bracketedPasteMode = false;
 
@@ -696,8 +710,21 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
-  void setMouseMode(MouseMode mode) {
-    _mouseMode = mode;
+  void setMouseMode(MouseMode mode, {bool enabled = true}) {
+    if (mode == MouseMode.none) {
+      _activeMouseModes.clear();
+    } else if (enabled) {
+      _activeMouseModes.add(mode);
+    } else {
+      _activeMouseModes.remove(mode);
+    }
+    // The most specific mode still on wins — declaration order runs from the
+    // narrowest report (clicks only) to the widest (every motion), which is
+    // the same precedence a real terminal applies.
+    _mouseMode = _activeMouseModes.isEmpty
+        ? MouseMode.none
+        : _activeMouseModes
+            .reduce((a, b) => a.index >= b.index ? a : b);
   }
 
   @override
